@@ -4,7 +4,7 @@ import {
   Printer, Trash2, Edit3, Search, X, Check, AlertCircle, TrendingUp,
   Receipt, FileText, ChevronRight, Save, Loader2, Plus,
   Eye, EyeOff, ArrowLeft, RefreshCw, Download, Upload, HardDrive, Image as ImageIcon,
-  Activity
+  Activity, Banknote, ArrowDownLeft, ArrowUpRight, Scale
 } from 'lucide-react';
 import {
   BarChart, Bar, PieChart, Pie, Cell, ResponsiveContainer, XAxis, YAxis,
@@ -47,7 +47,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v2.0 · Sales Check';
+const APP_VERSION = 'v2.1 · Money Tracker';
 
 const THEME = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -257,6 +257,7 @@ export default function App() {
   const [expenses, setExpenses] = useState([]);
   const [inventory, setInventory] = useState({});
   const [meta, setMeta] = useState({ lastOrderNum: 0 });
+  const [money, setMoney] = useState(null);
   const [saving, setSaving] = useState(false);
   const [showBackup, setShowBackup] = useState(false);
   const [privacy, setPrivacy] = useState(false);
@@ -270,11 +271,21 @@ export default function App() {
     const e = storage.load('expenses', []);
     const i = storage.load('inventory', null);
     const m = storage.load('meta', { lastOrderNum: 0 });
+    const mon = storage.load('money', null);
     setCatalog(c || SEED_PRODUCTS);
     setOrders(o || {});
     setExpenses(e || []);
     setInventory(i || Object.fromEntries(SEED_PRODUCTS.map(p => [p.name, { qty: 0, dateAdded: '', notes: '' }])));
     setMeta(m || { lastOrderNum: 0 });
+    // Money ledger: wallets with a starting balance + a list of movement entries.
+    // Seeded once with the real balances the owner gave (as of first run).
+    setMoney(mon || {
+      wallets: [
+        { id: 'cash', name: 'Cash on Hand', opening: 5575, openingDate: today() },
+        { id: 'gcash', name: 'GCash', opening: 2865.50, openingDate: today() },
+      ],
+      entries: [],
+    });
     // Work out how long since the last backup, for the reminder
     try {
       const last = localStorage.getItem(STORAGE_PREFIX + 'lastBackup');
@@ -298,10 +309,11 @@ export default function App() {
     storage.save('expenses', expenses);
     storage.save('inventory', inventory);
     storage.save('meta', meta);
+    if (money) storage.save('money', money);
     lastSaveRef.current = Date.now();
     const t = setTimeout(() => setSaving(false), 300);
     return () => clearTimeout(t);
-  }, [catalog, orders, expenses, inventory, meta, loaded]);
+  }, [catalog, orders, expenses, inventory, meta, money, loaded]);
 
   const productByName = useMemo(() => Object.fromEntries(catalog.map(p => [p.name, p])), [catalog]);
 
@@ -309,7 +321,7 @@ export default function App() {
     const data = {
       version: 1,
       exported_at: new Date().toISOString(),
-      catalog, orders, expenses, inventory, meta,
+      catalog, orders, expenses, inventory, meta, money,
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -340,6 +352,7 @@ export default function App() {
         setExpenses(data.expenses || []);
         setInventory(data.inventory || {});
         setMeta(data.meta || { lastOrderNum: 0 });
+        if (data.money) setMoney(data.money);
         setShowBackup(false);
         alert('Backup restored successfully!');
       } catch (err) {
@@ -366,6 +379,7 @@ export default function App() {
     { id: 'orders', label: 'Orders', icon: ListOrdered },
     { id: 'pickup', label: 'Pickup Check', icon: Truck },
     { id: 'salescheck', label: 'Sales Check', icon: Receipt },
+    { id: 'money', label: 'Money', icon: Banknote },
     { id: 'expenses', label: 'Expenses', icon: Wallet },
     { id: 'inventory', label: 'Inventory', icon: Snowflake },
     { id: 'products', label: 'Price List', icon: Tag },
@@ -440,10 +454,11 @@ export default function App() {
           )}
           {view === 'dashboard' && <Dashboard orders={orders} expenses={expenses} catalog={catalog} setView={setView} privacy={privacy} setPrivacy={setPrivacy} />}
           {view === 'new' && <NewOrder catalog={catalog} meta={meta} setMeta={setMeta} orders={orders} setOrders={setOrders} onSaved={() => setView('orders')} />}
-          {view === 'orders' && <Orders orders={orders} setOrders={setOrders} productByName={productByName} catalog={catalog} />}
+          {view === 'orders' && <Orders orders={orders} setOrders={setOrders} productByName={productByName} catalog={catalog} money={money} setMoney={setMoney} />}
           {view === 'pickup' && <Pickup orders={orders} />}
           {view === 'salescheck' && <SalesCheck orders={orders} privacy={privacy} />}
-          {view === 'expenses' && <Expenses expenses={expenses} setExpenses={setExpenses} />}
+          {view === 'money' && money && <Money money={money} setMoney={setMoney} privacy={privacy} />}
+          {view === 'expenses' && <Expenses expenses={expenses} setExpenses={setExpenses} money={money} setMoney={setMoney} />}
           {view === 'inventory' && <Inventory inventory={inventory} setInventory={setInventory} catalog={catalog} />}
           {view === 'products' && <Products catalog={catalog} setCatalog={setCatalog} />}
         </main>
@@ -1074,7 +1089,7 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
    ORDERS LIST
    ============================================================ */
 
-function Orders({ orders, setOrders, productByName, catalog }) {
+function Orders({ orders, setOrders, productByName, catalog, money, setMoney }) {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all');
   const [deliveryFilter, setDeliveryFilter] = useState('all');
@@ -1211,6 +1226,8 @@ function Orders({ orders, setOrders, productByName, catalog }) {
             order={selected}
             catalog={catalog}
             productByName={productByName}
+            money={money}
+            setMoney={setMoney}
             onClose={() => setSelected(null)}
             onDelete={() => deleteOrder(selected.id)}
             onPrint={(mode) => setPrintMode(mode)}
@@ -1223,7 +1240,7 @@ function Orders({ orders, setOrders, productByName, catalog }) {
   );
 }
 
-function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint, onUpdate, onSaveFull }) {
+function OrderDetail({ order, catalog, productByName, money, setMoney, onClose, onDelete, onPrint, onUpdate, onSaveFull }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(null);
   const [err, setErr] = useState('');
@@ -1467,6 +1484,52 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
               </div>
             </div>
           </div>
+        )}
+
+        {/* ===== Hybrid: log this payment to a money wallet ===== */}
+        {!editing && money && money.wallets && money.wallets.length > 0 &&
+         (order.payment_status === 'Paid' || order.payment_status === 'Partial') && (
+          order.money_logged ? (
+            <div className="mb-5 px-4 py-2.5 rounded-md flex items-center gap-2 text-sm" style={{ background: '#E5EDDE', color: THEME.green }}>
+              <Check size={15} /> This payment was logged to your {money.wallets.find(w => w.id === order.money_logged_wallet)?.name || 'wallet'}.
+            </div>
+          ) : (
+            <div className="mb-5 px-4 py-3 rounded-md" style={{ background: THEME.bg, border: `1px solid ${THEME.line}` }}>
+              <div className="text-sm mb-2" style={{ color: THEME.ink }}>
+                Log this {order.payment_status === 'Partial' ? 'partial payment' : 'payment'} to your money tracker?
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                {money.wallets.map((w) => {
+                  const payAmt = order.payment_status === 'Partial'
+                    ? (Number(order.amount_paid) || 0)
+                    : total;
+                  return (
+                    <button
+                      key={w.id}
+                      onClick={() => {
+                        if (payAmt <= 0) { alert('No amount to log yet (enter the amount paid first).'); return; }
+                        const entry = {
+                          id: 'MV-' + Date.now(),
+                          date: order.date || today(),
+                          wallet: w.id,
+                          kind: 'Customer Payment',
+                          amount: Math.abs(payAmt),
+                          description: `Payment from ${order.customer} (${order.id})`,
+                          created_at: new Date().toISOString(),
+                        };
+                        setMoney({ ...money, entries: [entry, ...(money.entries || [])] });
+                        onUpdate({ money_logged: true, money_logged_wallet: w.id });
+                      }}
+                      className="px-3.5 py-1.5 text-sm rounded-md font-medium"
+                      style={{ background: THEME.brand, color: 'white' }}
+                    >
+                      + {peso(order.payment_status === 'Partial' ? (Number(order.amount_paid) || 0) : total)} to {w.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )
         )}
         {editing ? (
           <div className="mb-5">
@@ -1958,10 +2021,305 @@ function SalesCheck({ orders, privacy }) {
 }
 
 /* ============================================================
+   MONEY (cash & GCash balance tracking)
+   ============================================================ */
+
+// Compute current balance of a wallet = opening + sum of all its entries.
+// Entry amount is signed: positive = money in, negative = money out.
+function walletBalance(wallet, entries) {
+  const base = Number(wallet.opening) || 0;
+  const moves = entries
+    .filter(e => e.wallet === wallet.id)
+    .reduce((s, e) => s + (Number(e.amount) || 0), 0);
+  return base + moves;
+}
+
+const MONEY_IN_TYPES = ['Customer Payment', 'Top-up', 'Other Income'];
+const MONEY_OUT_TYPES = ['Expense', 'Cash-out / Transfer', 'Other'];
+
+function Money({ money, setMoney, privacy }) {
+  const [showForm, setShowForm] = useState(false);
+  const [editId, setEditId] = useState(null);
+  const [showReconcile, setShowReconcile] = useState(false);
+  const [filterWallet, setFilterWallet] = useState('all');
+
+  // form state
+  const [date, setDate] = useState(today());
+  const [wallet, setWallet] = useState('cash');
+  const [direction, setDirection] = useState('in'); // in | out
+  const [kind, setKind] = useState('Customer Payment');
+  const [amount, setAmount] = useState('');
+  const [desc, setDesc] = useState('');
+
+  // reconcile state
+  const [recWallet, setRecWallet] = useState('cash');
+  const [recCounted, setRecCounted] = useState('');
+
+  const m = (n) => privacy ? '₱•••••' : peso(n);
+
+  const wallets = money.wallets || [];
+  const entries = money.entries || [];
+
+  const balances = useMemo(
+    () => Object.fromEntries(wallets.map(w => [w.id, walletBalance(w, entries)])),
+    [wallets, entries]
+  );
+  const grandTotal = Object.values(balances).reduce((s, v) => s + v, 0);
+
+  const sortedEntries = useMemo(() => {
+    let list = [...entries];
+    if (filterWallet !== 'all') list = list.filter(e => e.wallet === filterWallet);
+    return list.sort((a, b) => {
+      const da = a.date || '', db = b.date || '';
+      if (da !== db) return db.localeCompare(da);
+      return (b.id || '').localeCompare(a.id || '');
+    });
+  }, [entries, filterWallet]);
+
+  const openAdd = () => {
+    setEditId(null);
+    setDate(today()); setWallet('cash'); setDirection('in');
+    setKind('Customer Payment'); setAmount(''); setDesc('');
+    setShowForm(true);
+  };
+
+  const openEdit = (e) => {
+    setEditId(e.id);
+    setDate(e.date || today());
+    setWallet(e.wallet || 'cash');
+    setDirection((Number(e.amount) || 0) >= 0 ? 'in' : 'out');
+    setKind(e.kind || (((Number(e.amount) || 0) >= 0) ? 'Customer Payment' : 'Other'));
+    setAmount(String(Math.abs(Number(e.amount) || 0)));
+    setDesc(e.description || '');
+    setShowForm(true);
+  };
+
+  const saveEntry = () => {
+    const amt = Number(amount);
+    if (!amt || amt <= 0) return;
+    const signed = direction === 'in' ? amt : -amt;
+    if (editId) {
+      setMoney({
+        ...money,
+        entries: entries.map(e => e.id === editId
+          ? { ...e, date, wallet, kind, amount: signed, description: desc.trim() }
+          : e),
+      });
+    } else {
+      const entry = {
+        id: 'MV-' + Date.now(),
+        date, wallet, kind, amount: signed, description: desc.trim(),
+        created_at: new Date().toISOString(),
+      };
+      setMoney({ ...money, entries: [entry, ...entries] });
+    }
+    setShowForm(false);
+  };
+
+  const deleteEntry = (id) => {
+    if (!confirm('Delete this money movement?')) return;
+    setMoney({ ...money, entries: entries.filter(e => e.id !== id) });
+  };
+
+  const doReconcile = () => {
+    const counted = Number(recCounted);
+    if (isNaN(counted)) return;
+    const current = balances[recWallet] || 0;
+    const diff = counted - current;
+    if (Math.abs(diff) < 0.005) {
+      alert('Counted amount matches the system balance. Nothing to adjust.');
+      setShowReconcile(false);
+      return;
+    }
+    const w = wallets.find(x => x.id === recWallet);
+    const entry = {
+      id: 'MV-' + Date.now(),
+      date: today(),
+      wallet: recWallet,
+      kind: 'Reconcile Adjustment',
+      amount: diff,
+      description: `Recount of ${w ? w.name : recWallet}: system said ${peso(current)}, actual ${peso(counted)}`,
+      created_at: new Date().toISOString(),
+    };
+    setMoney({ ...money, entries: [entry, ...entries] });
+    setRecCounted('');
+    setShowReconcile(false);
+  };
+
+  const inTypes = MONEY_IN_TYPES;
+  const outTypes = MONEY_OUT_TYPES;
+
+  return (
+    <div>
+      <Header title="Money" subtitle="Track cash and GCash balances over time"
+        right={
+          <div className="flex gap-2">
+            <Btn variant="secondary" onClick={() => { setRecWallet('cash'); setRecCounted(''); setShowReconcile(true); }}>
+              <Scale size={15} className="inline -mt-0.5 mr-1" />Reconcile
+            </Btn>
+            <Btn variant="primary" onClick={openAdd}><Plus size={15} className="inline -mt-0.5 mr-1" />Add Movement</Btn>
+          </div>
+        } />
+
+      {/* Balance cards */}
+      <div className="grid grid-cols-3 gap-4 mb-6">
+        {wallets.map((w, i) => (
+          <Card key={w.id} className="p-6">
+            <div className="flex items-center gap-2 text-xs uppercase tracking-wider mb-2" style={{ color: THEME.inkSoft, letterSpacing: '0.06em' }}>
+              <Banknote size={14} style={{ color: i === 0 ? THEME.green : THEME.accent }} /> {w.name}
+            </div>
+            <div className="font-display text-3xl" style={{ color: i === 0 ? THEME.green : THEME.accent }}>
+              {m(balances[w.id] || 0)}
+            </div>
+            <div className="text-xs mt-1.5" style={{ color: THEME.inkSoft }}>
+              Opening {peso(w.opening)} on {fmtDateShort(w.openingDate)}
+            </div>
+          </Card>
+        ))}
+        <Card className="p-6" style={{ background: `linear-gradient(135deg, ${THEME.brand} 0%, ${THEME.brandSoft} 100%)`, border: 'none' }}>
+          <div className="text-xs uppercase tracking-wider mb-2" style={{ color: 'rgba(255,255,255,0.75)' }}>Total Money on Hand</div>
+          <div className="font-display text-3xl text-white">{m(grandTotal)}</div>
+          <div className="text-xs mt-1.5" style={{ color: 'rgba(255,255,255,0.7)' }}>Cash + GCash combined</div>
+        </Card>
+      </div>
+
+      {/* Ledger */}
+      <Card className="p-5">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <div className="font-display text-lg">Movement History</div>
+            <div className="text-xs" style={{ color: THEME.inkSoft }}>Every peso in and out, newest first</div>
+          </div>
+          <div className="flex gap-1">
+            {[{ id: 'all', label: 'All' }, ...wallets.map(w => ({ id: w.id, label: w.name.replace(' on Hand', '') }))].map(f => (
+              <button key={f.id} onClick={() => setFilterWallet(f.id)}
+                className="px-3 py-1.5 text-sm rounded-md"
+                style={{ background: filterWallet === f.id ? THEME.brand : 'transparent', color: filterWallet === f.id ? 'white' : THEME.ink, border: `1px solid ${filterWallet === f.id ? THEME.brand : THEME.line}` }}>
+                {f.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {sortedEntries.length === 0 ? (
+          <EmptyHint>No movements yet. Your balances reflect the opening amounts. Click "Add Movement" to log money in or out.</EmptyHint>
+        ) : (
+          <div className="max-h-[480px] overflow-y-auto">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0" style={{ background: THEME.card }}>
+                <tr style={{ color: THEME.inkSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                  <th className="text-left pb-2 font-medium">Date</th>
+                  <th className="text-left pb-2 font-medium">Wallet</th>
+                  <th className="text-left pb-2 font-medium">Type</th>
+                  <th className="text-left pb-2 font-medium">Description</th>
+                  <th className="text-right pb-2 font-medium">Amount</th>
+                  <th className="pb-2 font-medium"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedEntries.map((e) => {
+                  const w = wallets.find(x => x.id === e.wallet);
+                  const isIn = (Number(e.amount) || 0) >= 0;
+                  return (
+                    <tr key={e.id} style={{ borderTop: `1px solid ${THEME.line}` }}>
+                      <td className="py-2.5" style={{ color: THEME.inkSoft }}>{fmtDateShort(e.date)}</td>
+                      <td className="py-2.5"><Badge color="gray">{w ? w.name.replace(' on Hand', '') : e.wallet}</Badge></td>
+                      <td className="py-2.5">
+                        <span className="inline-flex items-center gap-1">
+                          {isIn ? <ArrowDownLeft size={13} style={{ color: THEME.green }} /> : <ArrowUpRight size={13} style={{ color: THEME.red }} />}
+                          {e.kind || (isIn ? 'In' : 'Out')}
+                        </span>
+                      </td>
+                      <td className="py-2.5" style={{ color: e.description ? THEME.ink : THEME.inkSoft }}>{e.description || '—'}</td>
+                      <td className="py-2.5 text-right font-medium" style={{ color: isIn ? THEME.green : THEME.red }}>
+                        {isIn ? '+' : '−'}{m(Math.abs(Number(e.amount) || 0))}
+                      </td>
+                      <td className="py-2.5 text-right whitespace-nowrap">
+                        <button onClick={() => openEdit(e)} style={{ color: THEME.inkSoft }} className="p-1 mr-1 hover:opacity-70" title="Edit"><Edit3 size={13} /></button>
+                        <button onClick={() => deleteEntry(e.id)} style={{ color: THEME.red }} className="p-1 hover:opacity-70" title="Delete"><Trash2 size={13} /></button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      {/* Add / Edit movement modal */}
+      <Modal open={showForm} onClose={() => setShowForm(false)} maxWidth="max-w-lg">
+        <div className="px-6 py-5">
+          <div className="font-display text-xl mb-5">{editId ? 'Edit Movement' : 'Add Money Movement'}</div>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div><Label>Date</Label><Input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></div>
+              <div><Label>Wallet</Label><Select value={wallet} onChange={(e) => setWallet(e.target.value)} options={wallets.map(w => ({ value: w.id, label: w.name }))} /></div>
+            </div>
+            <div>
+              <Label>Direction</Label>
+              <div className="flex gap-2">
+                <button onClick={() => { setDirection('in'); setKind(inTypes[0]); }}
+                  className="flex-1 px-3 py-2 text-sm rounded-md"
+                  style={{ background: direction === 'in' ? THEME.green : 'transparent', color: direction === 'in' ? 'white' : THEME.ink, border: `1px solid ${direction === 'in' ? THEME.green : THEME.line}` }}>
+                  <ArrowDownLeft size={14} className="inline -mt-0.5 mr-1" /> Money In
+                </button>
+                <button onClick={() => { setDirection('out'); setKind(outTypes[0]); }}
+                  className="flex-1 px-3 py-2 text-sm rounded-md"
+                  style={{ background: direction === 'out' ? THEME.red : 'transparent', color: direction === 'out' ? 'white' : THEME.ink, border: `1px solid ${direction === 'out' ? THEME.red : THEME.line}` }}>
+                  <ArrowUpRight size={14} className="inline -mt-0.5 mr-1" /> Money Out
+                </button>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div><Label>Type</Label><Select value={kind} onChange={(e) => setKind(e.target.value)} options={direction === 'in' ? inTypes : outTypes} /></div>
+              <div><Label>Amount (₱)</Label><Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" /></div>
+            </div>
+            <div><Label>Description</Label><Input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="e.g. Payment from Maria for ORD-041" /></div>
+          </div>
+          <div className="flex justify-end gap-2 mt-6">
+            <Btn variant="secondary" onClick={() => setShowForm(false)}>Cancel</Btn>
+            <Btn variant="primary" onClick={saveEntry}><Save size={14} className="inline -mt-0.5 mr-1" />{editId ? 'Save Changes' : 'Save'}</Btn>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Reconcile modal */}
+      <Modal open={showReconcile} onClose={() => setShowReconcile(false)} maxWidth="max-w-md">
+        <div className="px-6 py-5">
+          <div className="font-display text-xl mb-2">Reconcile Balance</div>
+          <div className="text-sm mb-5" style={{ color: THEME.inkSoft }}>
+            Physically count the wallet, type the real amount, and any difference is logged as an adjustment so the history stays honest.
+          </div>
+          <div className="space-y-4">
+            <div><Label>Wallet</Label><Select value={recWallet} onChange={(e) => setRecWallet(e.target.value)} options={wallets.map(w => ({ value: w.id, label: w.name }))} /></div>
+            <div className="text-sm px-3 py-2 rounded-md" style={{ background: THEME.bg, color: THEME.inkSoft }}>
+              System balance: <span className="font-medium" style={{ color: THEME.ink }}>{peso(balances[recWallet] || 0)}</span>
+            </div>
+            <div><Label>Actual Counted Amount (₱)</Label><Input type="number" step="0.01" value={recCounted} onChange={(e) => setRecCounted(e.target.value)} placeholder="0.00" /></div>
+            {recCounted !== '' && !isNaN(Number(recCounted)) && (
+              <div className="text-sm" style={{ color: THEME.inkSoft }}>
+                Difference: <span className="font-medium" style={{ color: (Number(recCounted) - (balances[recWallet] || 0)) >= 0 ? THEME.green : THEME.red }}>
+                  {(Number(recCounted) - (balances[recWallet] || 0)) >= 0 ? '+' : '−'}{peso(Math.abs(Number(recCounted) - (balances[recWallet] || 0)))}
+                </span> will be logged as an adjustment
+              </div>
+            )}
+          </div>
+          <div className="flex justify-end gap-2 mt-6">
+            <Btn variant="secondary" onClick={() => setShowReconcile(false)}>Cancel</Btn>
+            <Btn variant="primary" onClick={doReconcile}><Check size={14} className="inline -mt-0.5 mr-1" />Apply</Btn>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+/* ============================================================
    EXPENSES
    ============================================================ */
 
-function Expenses({ expenses, setExpenses }) {
+function Expenses({ expenses, setExpenses, money, setMoney }) {
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState(null);   // null = adding, otherwise editing this id
   const [date, setDate] = useState(today());
@@ -2001,6 +2359,26 @@ function Expenses({ expenses, setExpenses }) {
         description: description.trim(), amount: Number(amount), payment, notes: notes.trim(),
       };
       setExpenses([newExpense, ...expenses]);
+
+      // Ask whether this expense should also come out of a money wallet
+      if (money && money.wallets && money.wallets.length) {
+        const guess = payment === 'Gcash' ? 'gcash' : (payment === 'Cash' ? 'cash' : null);
+        if (guess) {
+          const w = money.wallets.find(x => x.id === guess);
+          if (w && confirm(`Deduct ${peso(Number(amount))} from your ${w.name} balance for "${description.trim()}"?`)) {
+            const entry = {
+              id: 'MV-' + Date.now(),
+              date,
+              wallet: guess,
+              kind: 'Expense',
+              amount: -Math.abs(Number(amount)),
+              description: `Expense: ${description.trim()}`,
+              created_at: new Date().toISOString(),
+            };
+            setMoney({ ...money, entries: [entry, ...(money.entries || [])] });
+          }
+        }
+      }
     }
     setShowForm(false);
   };
