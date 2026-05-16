@@ -47,7 +47,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v1.9 · Expenses + Backup Reminder';
+const APP_VERSION = 'v2.0 · Sales Check';
 
 const THEME = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -365,6 +365,7 @@ export default function App() {
     { id: 'new', label: 'New Order', icon: PlusCircle },
     { id: 'orders', label: 'Orders', icon: ListOrdered },
     { id: 'pickup', label: 'Pickup Check', icon: Truck },
+    { id: 'salescheck', label: 'Sales Check', icon: Receipt },
     { id: 'expenses', label: 'Expenses', icon: Wallet },
     { id: 'inventory', label: 'Inventory', icon: Snowflake },
     { id: 'products', label: 'Price List', icon: Tag },
@@ -441,6 +442,7 @@ export default function App() {
           {view === 'new' && <NewOrder catalog={catalog} meta={meta} setMeta={setMeta} orders={orders} setOrders={setOrders} onSaved={() => setView('orders')} />}
           {view === 'orders' && <Orders orders={orders} setOrders={setOrders} productByName={productByName} catalog={catalog} />}
           {view === 'pickup' && <Pickup orders={orders} />}
+          {view === 'salescheck' && <SalesCheck orders={orders} privacy={privacy} />}
           {view === 'expenses' && <Expenses expenses={expenses} setExpenses={setExpenses} />}
           {view === 'inventory' && <Inventory inventory={inventory} setInventory={setInventory} catalog={catalog} />}
           {view === 'products' && <Products catalog={catalog} setCatalog={setCatalog} />}
@@ -1821,6 +1823,130 @@ function Pickup({ orders }) {
                     <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>{selected.size} order{selected.size !== 1 ? 's' : ''} · {rollup.length} product{rollup.length !== 1 ? 's' : ''}</div>
                   </div>
                   <div className="font-display text-3xl" style={{ color: THEME.brand }}>{peso(grandTotal)}</div>
+                </div>
+              </>
+            )}
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   SALES CROSS-CHECK (customer side — selling price)
+   ============================================================ */
+
+function SalesCheck({ orders, privacy }) {
+  const [selected, setSelected] = useState(new Set());
+  const m = (n) => privacy ? '₱•••••' : peso(n);
+
+  const ordersList = useMemo(
+    () => Object.values(orders)
+      .filter(o => o.delivery_status !== 'Cancelled')
+      .sort((a, b) => (b.id || '').localeCompare(a.id || '')),
+    [orders]
+  );
+
+  const toggle = (id) => {
+    const next = new Set(selected);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelected(next);
+  };
+  const selectAll = () => setSelected(new Set(ordersList.map(o => o.id)));
+  const clear = () => setSelected(new Set());
+
+  const rollup = useMemo(() => {
+    const byProduct = {};
+    selected.forEach((id) => {
+      const order = orders[id];
+      if (!order) return;
+      (order.items || []).forEach((it) => {
+        if (!byProduct[it.product]) {
+          byProduct[it.product] = { product: it.product, qty: 0, price: 0, totalPrice: 0, unit: it.unit };
+        }
+        byProduct[it.product].qty += it.qty;
+        byProduct[it.product].price = it.price;
+        byProduct[it.product].totalPrice += it.qty * it.price;
+      });
+    });
+    return Object.values(byProduct).sort((a, b) => a.product.localeCompare(b.product));
+  }, [selected, orders]);
+
+  const grandTotal = rollup.reduce((s, r) => s + r.totalPrice, 0);
+
+  return (
+    <div>
+      <Header title="Sales Cross-Check" subtitle="Select multiple orders to roll up quantities and totals at your selling price" />
+
+      <div className="grid grid-cols-5 gap-6">
+        <div className="col-span-2">
+          <Card className="p-5">
+            <div className="flex items-center justify-between mb-3">
+              <div className="font-display text-lg">Select Orders</div>
+              <div className="flex gap-1.5">
+                <button onClick={selectAll} className="text-xs px-2 py-1 rounded" style={{ color: THEME.brand, border: `1px solid ${THEME.line}` }}>All</button>
+                <button onClick={clear} className="text-xs px-2 py-1 rounded" style={{ color: THEME.inkSoft, border: `1px solid ${THEME.line}` }}>Clear</button>
+              </div>
+            </div>
+            <div className="text-xs mb-3" style={{ color: THEME.inkSoft }}>{selected.size} selected</div>
+            <div className="max-h-96 overflow-y-auto -mx-2">
+              {ordersList.length === 0 && <EmptyHint>No orders yet.</EmptyHint>}
+              {ordersList.map((o) => {
+                const total = (o.items || []).reduce((s, i) => s + i.qty * i.price, 0);
+                const isSel = selected.has(o.id);
+                return (
+                  <label key={o.id} className="flex items-center gap-3 px-2 py-2 rounded cursor-pointer" style={{ background: isSel ? '#F5E6E1' : 'transparent' }}>
+                    <input type="checkbox" checked={isSel} onChange={() => toggle(o.id)} style={{ accentColor: THEME.brand }} />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="font-medium">{o.id}</span>
+                        <span style={{ color: THEME.inkSoft }}>{m(total)}</span>
+                      </div>
+                      <div className="text-xs truncate" style={{ color: THEME.inkSoft }}>{fmtDateShort(o.date)} · {o.customer}</div>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+          </Card>
+        </div>
+
+        <div className="col-span-3">
+          <Card className="p-5">
+            <div className="font-display text-lg mb-1">Sales Roll-up</div>
+            <div className="text-xs mb-4" style={{ color: THEME.inkSoft }}>Total quantity & value at your selling price for the selected orders</div>
+            {rollup.length === 0 ? (
+              <EmptyHint>Select orders to see the sales roll-up.</EmptyHint>
+            ) : (
+              <>
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr style={{ color: THEME.inkSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                      <th className="text-left pb-2 font-medium">Product</th>
+                      <th className="text-right pb-2 font-medium">Total Qty</th>
+                      <th className="text-right pb-2 font-medium">Unit Price</th>
+                      <th className="text-right pb-2 font-medium">Total Sales</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rollup.map((r) => (
+                      <tr key={r.product} style={{ borderTop: `1px solid ${THEME.line}` }}>
+                        <td className="py-2.5">{r.product}</td>
+                        <td className="py-2.5 text-right font-medium">{r.qty} {r.unit}</td>
+                        <td className="py-2.5 text-right">{m(r.price)}</td>
+                        <td className="py-2.5 text-right font-medium">{m(r.totalPrice)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div className="mt-4 pt-4 flex items-center justify-between" style={{ borderTop: `2px solid ${THEME.brand}` }}>
+                  <div>
+                    <div className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft }}>Total sales value</div>
+                    <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>{selected.size} order{selected.size !== 1 ? 's' : ''} · {rollup.length} product{rollup.length !== 1 ? 's' : ''}</div>
+                  </div>
+                  <div className="font-display text-3xl" style={{ color: THEME.brand }}>{m(grandTotal)}</div>
                 </div>
               </>
             )}
