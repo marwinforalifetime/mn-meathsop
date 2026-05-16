@@ -47,7 +47,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v1.4 · Edit + Hide';
+const APP_VERSION = 'v1.5 · No Ref ID';
 
 const THEME = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -1402,7 +1402,6 @@ function PrintableView({ order, mode, onBack }) {
             <div className="text-right">
               <div className="text-xs uppercase tracking-wider mb-1" style={{ color: THEME.inkSoft }}>Date</div>
               <div className="text-lg">{fmtDate(order.date)}</div>
-              {isInvoice && <div className="text-xs mt-1" style={{ color: THEME.inkSoft }}>Ref: {order.id}</div>}
             </div>
           </div>
 
