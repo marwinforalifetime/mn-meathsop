@@ -393,7 +393,7 @@ export default function App() {
         <main className="flex-1 p-8">
           {view === 'dashboard' && <Dashboard orders={orders} expenses={expenses} catalog={catalog} setView={setView} privacy={privacy} setPrivacy={setPrivacy} />}
           {view === 'new' && <NewOrder catalog={catalog} meta={meta} setMeta={setMeta} orders={orders} setOrders={setOrders} onSaved={() => setView('orders')} />}
-          {view === 'orders' && <Orders orders={orders} setOrders={setOrders} productByName={productByName} />}
+          {view === 'orders' && <Orders orders={orders} setOrders={setOrders} productByName={productByName} catalog={catalog} />}
           {view === 'pickup' && <Pickup orders={orders} />}
           {view === 'expenses' && <Expenses expenses={expenses} setExpenses={setExpenses} />}
           {view === 'inventory' && <Inventory inventory={inventory} setInventory={setInventory} catalog={catalog} />}
@@ -925,7 +925,7 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
    ORDERS LIST
    ============================================================ */
 
-function Orders({ orders, setOrders, productByName }) {
+function Orders({ orders, setOrders, productByName, catalog }) {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all');
   const [selected, setSelected] = useState(null);
@@ -956,6 +956,11 @@ function Orders({ orders, setOrders, productByName }) {
   const updateOrderStatus = (id, patch) => {
     setOrders({ ...orders, [id]: { ...orders[id], ...patch } });
     if (selected && selected.id === id) setSelected({ ...selected, ...patch });
+  };
+
+  const saveFullOrder = (id, updatedOrder) => {
+    setOrders({ ...orders, [id]: updatedOrder });
+    setSelected(updatedOrder);
   };
 
   if (printMode && selected) {
@@ -1026,16 +1031,96 @@ function Orders({ orders, setOrders, productByName }) {
 
       <Modal open={!!selected} onClose={() => setSelected(null)} maxWidth="max-w-3xl">
         {selected && (
-          <OrderDetail order={selected} onClose={() => setSelected(null)} onDelete={() => deleteOrder(selected.id)} onPrint={(mode) => setPrintMode(mode)} onUpdate={(patch) => updateOrderStatus(selected.id, patch)} />
+          <OrderDetail
+            order={selected}
+            catalog={catalog}
+            productByName={productByName}
+            onClose={() => setSelected(null)}
+            onDelete={() => deleteOrder(selected.id)}
+            onPrint={(mode) => setPrintMode(mode)}
+            onUpdate={(patch) => updateOrderStatus(selected.id, patch)}
+            onSaveFull={(updated) => saveFullOrder(selected.id, updated)}
+          />
         )}
       </Modal>
     </div>
   );
 }
 
-function OrderDetail({ order, onClose, onDelete, onPrint, onUpdate }) {
-  const total = (order.items || []).reduce((s, i) => s + i.qty * i.price, 0);
-  const cost = (order.items || []).reduce((s, i) => s + i.qty * i.cost, 0);
+function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint, onUpdate, onSaveFull }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(null);
+  const [err, setErr] = useState('');
+
+  const startEdit = () => {
+    setDraft({
+      date: order.date || today(),
+      customer: order.customer || '',
+      phone: order.phone || '',
+      payment_status: order.payment_status || 'Paid',
+      payment_method: order.payment_method || 'Cash',
+      delivery_status: order.delivery_status || 'Pending',
+      notes: order.notes || '',
+      items: (order.items || []).map((it) => ({ ...it })),
+    });
+    setErr('');
+    setEditing(true);
+  };
+
+  const cancelEdit = () => { setEditing(false); setDraft(null); setErr(''); };
+
+  const dUpdateItem = (idx, patch) => {
+    setDraft({ ...draft, items: draft.items.map((it, i) => i === idx ? { ...it, ...patch } : it) });
+  };
+  const dChangeProduct = (idx, name) => {
+    const p = productByName[name];
+    const it = draft.items[idx];
+    // Re-price to the product's current price/cost when product changes
+    const updated = p
+      ? { ...it, product: name, price: p.price, cost: p.cost, unit: p.unit }
+      : { ...it, product: name };
+    setDraft({ ...draft, items: draft.items.map((x, i) => i === idx ? updated : x) });
+  };
+  const dAddItem = () => setDraft({ ...draft, items: [...draft.items, { product: '', qty: 1, note: '', price: 0, cost: 0, unit: 'kg' }] });
+  const dRemoveItem = (idx) => setDraft({ ...draft, items: draft.items.filter((_, i) => i !== idx) });
+
+  const saveEdit = () => {
+    setErr('');
+    if (!draft.customer.trim()) { setErr('Customer name is required'); return; }
+    const cleanItems = draft.items
+      .filter(it => it.product && Number(it.qty) > 0)
+      .map(it => {
+        const p = productByName[it.product];
+        return {
+          product: it.product,
+          qty: Number(it.qty),
+          price: p ? p.price : Number(it.price) || 0,
+          cost: p ? p.cost : Number(it.cost) || 0,
+          unit: p ? p.unit : (it.unit || 'kg'),
+          note: (it.note || '').trim(),
+        };
+      });
+    if (cleanItems.length === 0) { setErr('Add at least one product with quantity > 0'); return; }
+    const updated = {
+      ...order,
+      date: draft.date,
+      customer: draft.customer.trim(),
+      phone: draft.phone.trim(),
+      payment_status: draft.payment_status,
+      payment_method: draft.payment_method,
+      delivery_status: draft.delivery_status,
+      notes: draft.notes.trim(),
+      items: cleanItems,
+      edited_at: new Date().toISOString(),
+    };
+    onSaveFull(updated);
+    setEditing(false);
+    setDraft(null);
+  };
+
+  const view = editing ? draft : order;
+  const total = (view.items || []).reduce((s, i) => s + (Number(i.qty) || 0) * (i.price || 0), 0);
+  const cost = (view.items || []).reduce((s, i) => s + (Number(i.qty) || 0) * (i.cost || 0), 0);
   const profit = total - cost;
 
   return (
@@ -1044,35 +1129,102 @@ function OrderDetail({ order, onClose, onDelete, onPrint, onUpdate }) {
         <div>
           <div className="font-display text-2xl" style={{ color: THEME.brand }}>{order.id}</div>
           <div className="text-sm" style={{ color: THEME.inkSoft }}>
-            {fmtDate(order.date)} · {order.customer}{order.phone ? ` · ${order.phone}` : ''}
+            {editing ? 'Editing order' : `${fmtDate(order.date)} · ${order.customer}${order.phone ? ` · ${order.phone}` : ''}`}
           </div>
         </div>
-        <button onClick={onClose} className="p-2 rounded hover:bg-amber-50"><X size={18} /></button>
+        <div className="flex items-center gap-2">
+          {!editing && (
+            <Btn variant="secondary" size="sm" onClick={startEdit}><Edit3 size={14} className="inline -mt-0.5 mr-1" /> Edit</Btn>
+          )}
+          <button onClick={onClose} className="p-2 rounded hover:bg-amber-50"><X size={18} /></button>
+        </div>
       </div>
 
       <div className="px-6 py-5">
-        <table className="w-full text-sm mb-4">
-          <thead>
-            <tr style={{ color: THEME.inkSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-              <th className="text-left pb-2 font-medium">Product</th>
-              <th className="text-right pb-2 font-medium">Qty</th>
-              <th className="text-left pb-2 font-medium pl-4">Notes / Special Cut</th>
-              <th className="text-right pb-2 font-medium">Unit Price</th>
-              <th className="text-right pb-2 font-medium">Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(order.items || []).map((it, i) => (
-              <tr key={i} style={{ borderTop: `1px solid ${THEME.line}` }}>
-                <td className="py-2.5">{it.product}</td>
-                <td className="py-2.5 text-right">{it.qty} {it.unit}</td>
-                <td className="py-2.5 pl-4" style={{ color: it.note ? THEME.ink : THEME.inkSoft }}>{it.note || '—'}</td>
-                <td className="py-2.5 text-right">{peso(it.price)}</td>
-                <td className="py-2.5 text-right font-medium">{peso(it.qty * it.price)}</td>
+        {/* ===== Edit mode: customer + date ===== */}
+        {editing && (
+          <div className="grid grid-cols-3 gap-4 mb-5">
+            <div><Label>Date</Label><Input type="date" value={draft.date} onChange={(e) => setDraft({ ...draft, date: e.target.value })} /></div>
+            <div><Label>Customer Name</Label><Input value={draft.customer} onChange={(e) => setDraft({ ...draft, customer: e.target.value })} /></div>
+            <div><Label>Phone</Label><Input value={draft.phone} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} placeholder="optional" /></div>
+          </div>
+        )}
+
+        {/* ===== Items ===== */}
+        {!editing ? (
+          <table className="w-full text-sm mb-4">
+            <thead>
+              <tr style={{ color: THEME.inkSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                <th className="text-left pb-2 font-medium">Product</th>
+                <th className="text-right pb-2 font-medium">Qty</th>
+                <th className="text-left pb-2 font-medium pl-4">Notes / Special Cut</th>
+                <th className="text-right pb-2 font-medium">Unit Price</th>
+                <th className="text-right pb-2 font-medium">Total</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {(order.items || []).map((it, i) => (
+                <tr key={i} style={{ borderTop: `1px solid ${THEME.line}` }}>
+                  <td className="py-2.5">{it.product}</td>
+                  <td className="py-2.5 text-right">{it.qty} {it.unit}</td>
+                  <td className="py-2.5 pl-4" style={{ color: it.note ? THEME.ink : THEME.inkSoft }}>{it.note || '—'}</td>
+                  <td className="py-2.5 text-right">{peso(it.price)}</td>
+                  <td className="py-2.5 text-right font-medium">{peso(it.qty * it.price)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <div className="mb-4">
+            <div className="flex items-center justify-between mb-3">
+              <Label>Order Items</Label>
+              <Btn variant="secondary" size="sm" onClick={dAddItem}><Plus size={13} className="inline -mt-0.5" /> Add item</Btn>
+            </div>
+            <div className="space-y-3">
+              {draft.items.map((it, idx) => {
+                const lt = (Number(it.qty) || 0) * (it.price || 0);
+                return (
+                  <div key={idx} className="grid grid-cols-12 gap-3 items-start">
+                    <div className="col-span-4">
+                      {idx === 0 && <Label>Product</Label>}
+                      <select value={it.product} onChange={(e) => dChangeProduct(idx, e.target.value)}
+                        className="w-full px-3 py-2 rounded-md outline-none text-sm"
+                        style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink }}>
+                        <option value="">— Select product —</option>
+                        {['Pork', 'Chicken', 'Beef'].map((group) => (
+                          <optgroup key={group} label={group}>
+                            {catalog.filter(c => c.group === group).map(c => (<option key={c.name} value={c.name}>{c.name}</option>))}
+                          </optgroup>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="col-span-2">
+                      {idx === 0 && <Label>Qty</Label>}
+                      <Input type="number" step="0.01" min="0" value={it.qty} onChange={(e) => dUpdateItem(idx, { qty: e.target.value })} />
+                    </div>
+                    <div className="col-span-3">
+                      {idx === 0 && <Label>Notes / Special Cut</Label>}
+                      <Input value={it.note || ''} onChange={(e) => dUpdateItem(idx, { note: e.target.value })} placeholder="e.g. thin slice" />
+                    </div>
+                    <div className="col-span-2">
+                      {idx === 0 && <Label>Line</Label>}
+                      <div className="px-2 py-2 text-sm font-medium">{lt > 0 ? peso(lt) : '—'}</div>
+                    </div>
+                    <div className="col-span-1">
+                      {idx === 0 && <Label>&nbsp;</Label>}
+                      {draft.items.length > 1 && (
+                        <button onClick={() => dRemoveItem(idx)} className="p-2 rounded hover:bg-red-50" style={{ color: THEME.red }}><X size={14} /></button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="text-xs mt-2" style={{ color: THEME.inkSoft }}>
+              Note: changing a product re-prices that line to the product's current price.
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-3 gap-4 mb-5 py-3" style={{ borderTop: `1px solid ${THEME.line}`, borderBottom: `1px solid ${THEME.line}` }}>
           <div><div className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft }}>Sales</div><div className="font-display text-lg" style={{ color: THEME.brand }}>{peso(total)}</div></div>
@@ -1080,23 +1232,67 @@ function OrderDetail({ order, onClose, onDelete, onPrint, onUpdate }) {
           <div><div className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft }}>Profit</div><div className="font-display text-lg" style={{ color: THEME.green }}>{peso(profit)}</div></div>
         </div>
 
+        {/* ===== Status fields ===== */}
         <div className="grid grid-cols-3 gap-4 mb-5">
-          <div><Label>Payment Status</Label><Select value={order.payment_status} onChange={(e) => onUpdate({ payment_status: e.target.value })} options={PAYMENT_STATUSES} /></div>
-          <div><Label>Payment Method</Label><Select value={order.payment_method} onChange={(e) => onUpdate({ payment_method: e.target.value })} options={PAYMENT_METHODS} /></div>
-          <div><Label>Delivery</Label><Select value={order.delivery_status} onChange={(e) => onUpdate({ delivery_status: e.target.value })} options={DELIVERY_STATUSES} /></div>
-        </div>
-
-        {order.notes && (
-          <div className="mb-5"><Label>Notes</Label><div className="text-sm" style={{ color: THEME.ink }}>{order.notes}</div></div>
-        )}
-
-        <div className="flex items-center justify-between gap-2">
-          <Btn variant="danger" size="sm" onClick={onDelete}><Trash2 size={14} className="inline -mt-0.5 mr-1" /> Delete</Btn>
-          <div className="flex gap-2">
-            <Btn variant="secondary" onClick={() => onPrint('supplier')}><FileText size={14} className="inline -mt-0.5 mr-1" /> Supplier Copy</Btn>
-            <Btn variant="primary" onClick={() => onPrint('invoice')}><Receipt size={14} className="inline -mt-0.5 mr-1" /> Invoice</Btn>
+          <div>
+            <Label>Payment Status</Label>
+            <Select
+              value={editing ? draft.payment_status : order.payment_status}
+              onChange={(e) => editing ? setDraft({ ...draft, payment_status: e.target.value }) : onUpdate({ payment_status: e.target.value })}
+              options={PAYMENT_STATUSES} />
+          </div>
+          <div>
+            <Label>Payment Method</Label>
+            <Select
+              value={editing ? draft.payment_method : order.payment_method}
+              onChange={(e) => editing ? setDraft({ ...draft, payment_method: e.target.value }) : onUpdate({ payment_method: e.target.value })}
+              options={PAYMENT_METHODS} />
+          </div>
+          <div>
+            <Label>Delivery</Label>
+            <Select
+              value={editing ? draft.delivery_status : order.delivery_status}
+              onChange={(e) => editing ? setDraft({ ...draft, delivery_status: e.target.value }) : onUpdate({ delivery_status: e.target.value })}
+              options={DELIVERY_STATUSES} />
           </div>
         </div>
+
+        {/* ===== Order notes ===== */}
+        {editing ? (
+          <div className="mb-5">
+            <Label>Order Notes</Label>
+            <textarea value={draft.notes} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} rows={2}
+              className="w-full px-3 py-2 rounded-md outline-none text-sm"
+              style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink, fontFamily: 'DM Sans' }}
+              placeholder="Optional" />
+          </div>
+        ) : (
+          order.notes && (
+            <div className="mb-5"><Label>Notes</Label><div className="text-sm" style={{ color: THEME.ink }}>{order.notes}</div></div>
+          )
+        )}
+
+        {err && (
+          <div className="px-4 py-3 rounded-md flex items-start gap-2 text-sm mb-4" style={{ background: '#F5DDE0', color: THEME.red }}>
+            <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />{err}
+          </div>
+        )}
+
+        {/* ===== Actions ===== */}
+        {editing ? (
+          <div className="flex items-center justify-end gap-2">
+            <Btn variant="secondary" onClick={cancelEdit}>Cancel</Btn>
+            <Btn variant="primary" onClick={saveEdit}><Save size={14} className="inline -mt-0.5 mr-1" /> Save Changes</Btn>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between gap-2">
+            <Btn variant="danger" size="sm" onClick={onDelete}><Trash2 size={14} className="inline -mt-0.5 mr-1" /> Delete</Btn>
+            <div className="flex gap-2">
+              <Btn variant="secondary" onClick={() => onPrint('supplier')}><FileText size={14} className="inline -mt-0.5 mr-1" /> Supplier Copy</Btn>
+              <Btn variant="primary" onClick={() => onPrint('invoice')}><Receipt size={14} className="inline -mt-0.5 mr-1" /> Invoice</Btn>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
