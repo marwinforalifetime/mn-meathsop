@@ -47,7 +47,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v1.7 · Cancel + Today + Partial';
+const APP_VERSION = 'v1.8 · Round Icon + Customer Autofill';
 
 const THEME = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -804,10 +804,43 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
   const [date, setDate] = useState(today());
   const [customer, setCustomer] = useState('');
   const [phone, setPhone] = useState('');
+  const [showSuggest, setShowSuggest] = useState(false);
   const [paymentStatus, setPaymentStatus] = useState('Paid');
   const [paymentMethod, setPaymentMethod] = useState('Cash');
   const [deliveryStatus, setDeliveryStatus] = useState('Pending');
   const [notes, setNotes] = useState('');
+
+  // Build a directory of past customers (most recent phone wins)
+  const pastCustomers = useMemo(() => {
+    const map = new Map();
+    Object.values(orders)
+      .sort((a, b) => (a.id || '').localeCompare(b.id || '')) // oldest first so latest overwrites
+      .forEach((o) => {
+        const name = (o.customer || '').trim();
+        if (!name) return;
+        const prev = map.get(name.toLowerCase()) || { name, phone: '', count: 0 };
+        map.set(name.toLowerCase(), {
+          name,
+          phone: (o.phone || '').trim() || prev.phone,
+          count: prev.count + 1,
+        });
+      });
+    return Array.from(map.values()).sort((a, b) => b.count - a.count);
+  }, [orders]);
+
+  const customerMatches = useMemo(() => {
+    const q = customer.trim().toLowerCase();
+    if (!q) return [];
+    return pastCustomers
+      .filter(c => c.name.toLowerCase().includes(q) && c.name.toLowerCase() !== q)
+      .slice(0, 6);
+  }, [customer, pastCustomers]);
+
+  const pickCustomer = (c) => {
+    setCustomer(c.name);
+    if (c.phone) setPhone(c.phone);
+    setShowSuggest(false);
+  };
   const [items, setItems] = useState([{ product: '', qty: 1, note: '' }]);
   const [error, setError] = useState('');
   const [hideAmounts, setHideAmounts] = useState(false);
@@ -866,7 +899,33 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
           <Card className="p-6">
             <div className="grid grid-cols-3 gap-4">
               <div><Label>Date</Label><Input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></div>
-              <div><Label>Customer Name</Label><Input value={customer} onChange={(e) => setCustomer(e.target.value)} placeholder="Juan Dela Cruz" /></div>
+              <div className="relative">
+                <Label>Customer Name</Label>
+                <Input
+                  value={customer}
+                  onChange={(e) => { setCustomer(e.target.value); setShowSuggest(true); }}
+                  onFocus={() => setShowSuggest(true)}
+                  onBlur={() => setTimeout(() => setShowSuggest(false), 150)}
+                  placeholder="Juan Dela Cruz"
+                />
+                {showSuggest && customerMatches.length > 0 && (
+                  <div className="absolute z-20 left-0 right-0 mt-1 rounded-md overflow-hidden shadow-lg"
+                    style={{ background: THEME.card, border: `1px solid ${THEME.line}` }}>
+                    {customerMatches.map((c) => (
+                      <button
+                        key={c.name}
+                        type="button"
+                        onMouseDown={(e) => { e.preventDefault(); pickCustomer(c); }}
+                        className="w-full text-left px-3 py-2 text-sm hover:bg-amber-50 flex items-center justify-between"
+                        style={{ color: THEME.ink }}
+                      >
+                        <span>{c.name}{c.phone ? <span style={{ color: THEME.inkSoft }}> · {c.phone}</span> : ''}</span>
+                        <span className="text-xs" style={{ color: THEME.inkSoft }}>{c.count}x</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
               <div><Label>Phone (optional)</Label><Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="0917 123 4567" /></div>
             </div>
           </Card>
