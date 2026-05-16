@@ -1,0 +1,311 @@
+{
+  "version": 1,
+  "exported_at": "2026-05-16T07:26:53.606Z",
+  "catalog": [
+    {
+      "name": "Pork Kasim / Hamleg",
+      "unit": "kg",
+      "cost": 190,
+      "price": 259,
+      "group": "Pork"
+    },
+    {
+      "name": "Pork Chop",
+      "unit": "kg",
+      "cost": 183,
+      "price": 269,
+      "group": "Pork"
+    },
+    {
+      "name": "Pork Liver",
+      "unit": "kg",
+      "cost": 103,
+      "price": 155,
+      "group": "Pork"
+    },
+    {
+      "name": "Pork Liempo",
+      "unit": "kg",
+      "cost": 263,
+      "price": 339,
+      "group": "Pork"
+    },
+    {
+      "name": "Pork Ribs Malaman",
+      "unit": "kg",
+      "cost": 186,
+      "price": 299,
+      "group": "Pork"
+    },
+    {
+      "name": "Pork Riblets",
+      "unit": "kg",
+      "cost": 170,
+      "price": 265,
+      "group": "Pork"
+    },
+    {
+      "name": "Pork Jowls / Pisngi",
+      "unit": "kg",
+      "cost": 193,
+      "price": 255,
+      "group": "Pork"
+    },
+    {
+      "name": "Pork Flower / Chicharon Bulaklak",
+      "unit": "kg",
+      "cost": 110,
+      "price": 195,
+      "group": "Pork"
+    },
+    {
+      "name": "Pork Pata Hock",
+      "unit": "kg",
+      "cost": 153,
+      "price": 239,
+      "group": "Pork"
+    },
+    {
+      "name": "Pork Ear",
+      "unit": "kg",
+      "cost": 158,
+      "price": 229,
+      "group": "Pork"
+    },
+    {
+      "name": "Pork Pata Feet",
+      "unit": "kg",
+      "cost": 100,
+      "price": 179,
+      "group": "Pork"
+    },
+    {
+      "name": "Chicken Leg Quarter",
+      "unit": "kg",
+      "cost": 148,
+      "price": 179,
+      "group": "Chicken"
+    },
+    {
+      "name": "Chicken Wings",
+      "unit": "kg",
+      "cost": 158,
+      "price": 189,
+      "group": "Chicken"
+    },
+    {
+      "name": "Chicken Drumstick",
+      "unit": "kg",
+      "cost": 150,
+      "price": 185,
+      "group": "Chicken"
+    },
+    {
+      "name": "Chicken Breast Fillet",
+      "unit": "kg",
+      "cost": 227,
+      "price": 299,
+      "group": "Chicken"
+    },
+    {
+      "name": "Beef Laman / Beef Cubes",
+      "unit": "kg",
+      "cost": 365,
+      "price": 399,
+      "group": "Beef"
+    },
+    {
+      "name": "Beef Buto-Buto / Soup Bones",
+      "unit": "kg",
+      "cost": 155,
+      "price": 259,
+      "group": "Beef"
+    },
+    {
+      "name": "Beef Tripe / Tuwalya",
+      "unit": "kg",
+      "cost": 152,
+      "price": 259,
+      "group": "Beef"
+    }
+  ],
+  "orders": {
+    "ORD-001": {
+      "id": "ORD-001",
+      "date": "2026-05-10",
+      "customer": "Jenai Bautista",
+      "payment_status": "Paid",
+      "payment_method": "Cash",
+      "delivery_status": "Delivered",
+      "notes": "",
+      "items": [
+        {
+          "product": "Chicken Wings",
+          "qty": 1,
+          "price": 189,
+          "cost": 158,
+          "unit": "kg"
+        },
+        {
+          "product": "Pork Ribs Malaman",
+          "qty": 1,
+          "price": 299,
+          "cost": 186,
+          "unit": "kg"
+        }
+      ],
+      "created_at": "2026-05-16T04:48:04.461Z"
+    },
+    "ORD-002": {
+      "id": "ORD-002",
+      "date": "2026-05-10",
+      "customer": "Danilo Jumawan",
+      "payment_status": "Paid",
+      "payment_method": "Cash",
+      "delivery_status": "Delivered",
+      "notes": "",
+      "items": [
+        {
+          "product": "Chicken Breast Fillet",
+          "qty": 1,
+          "price": 299,
+          "cost": 227,
+          "unit": "kg"
+        },
+        {
+          "product": "Pork Chop",
+          "qty": 2,
+          "price": 269,
+          "cost": 183,
+          "unit": "kg"
+        }
+      ],
+      "created_at": "2026-05-16T07:02:43.657Z"
+    },
+    "ORD-003": {
+      "id": "ORD-003",
+      "date": "2026-05-10",
+      "customer": "Erwin Villanueva",
+      "payment_status": "Paid",
+      "payment_method": "Cash",
+      "delivery_status": "Delivered",
+      "notes": "filllet",
+      "items": [
+        {
+          "product": "Chicken Breast Fillet",
+          "qty": 2,
+          "price": 299,
+          "cost": 227,
+          "unit": "kg"
+        }
+      ],
+      "created_at": "2026-05-16T07:07:18.881Z"
+    }
+  },
+  "expenses": [
+    {
+      "id": "EXP-1778913835523",
+      "date": "2026-05-10",
+      "category": "Stock",
+      "description": "Initial meat stock",
+      "amount": 5499,
+      "payment": "Cash",
+      "notes": ""
+    }
+  ],
+  "inventory": {
+    "Pork Kasim / Hamleg": {
+      "qty": 0,
+      "dateAdded": "2026-05-16",
+      "notes": ""
+    },
+    "Pork Chop": {
+      "qty": 0,
+      "dateAdded": "",
+      "notes": ""
+    },
+    "Pork Liver": {
+      "qty": 0,
+      "dateAdded": "",
+      "notes": ""
+    },
+    "Pork Liempo": {
+      "qty": 0,
+      "dateAdded": "",
+      "notes": ""
+    },
+    "Pork Ribs Malaman": {
+      "qty": 0,
+      "dateAdded": "",
+      "notes": ""
+    },
+    "Pork Riblets": {
+      "qty": 0,
+      "dateAdded": "",
+      "notes": ""
+    },
+    "Pork Jowls / Pisngi": {
+      "qty": 0,
+      "dateAdded": "",
+      "notes": ""
+    },
+    "Pork Flower / Chicharon Bulaklak": {
+      "qty": 0,
+      "dateAdded": "",
+      "notes": ""
+    },
+    "Pork Pata Hock": {
+      "qty": 0,
+      "dateAdded": "",
+      "notes": ""
+    },
+    "Pork Ear": {
+      "qty": 0,
+      "dateAdded": "",
+      "notes": ""
+    },
+    "Pork Pata Feet": {
+      "qty": 0,
+      "dateAdded": "",
+      "notes": ""
+    },
+    "Chicken Leg Quarter": {
+      "qty": 0,
+      "dateAdded": "",
+      "notes": ""
+    },
+    "Chicken Wings": {
+      "qty": 0,
+      "dateAdded": "",
+      "notes": ""
+    },
+    "Chicken Drumstick": {
+      "qty": 0,
+      "dateAdded": "",
+      "notes": ""
+    },
+    "Chicken Breast Fillet": {
+      "qty": 0,
+      "dateAdded": "",
+      "notes": ""
+    },
+    "Beef Laman / Beef Cubes": {
+      "qty": 0,
+      "dateAdded": "",
+      "notes": ""
+    },
+    "Beef Buto-Buto / Soup Bones": {
+      "qty": 0,
+      "dateAdded": "",
+      "notes": ""
+    },
+    "Beef Tripe / Tuwalya": {
+      "qty": 0,
+      "dateAdded": "",
+      "notes": ""
+    }
+  },
+  "meta": {
+    "lastOrderNum": 3
+  }
+}
