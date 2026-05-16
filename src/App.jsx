@@ -1,14 +1,16 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   LayoutDashboard, PlusCircle, ListOrdered, Truck, Wallet, Snowflake, Tag,
-  Printer, Trash2, Edit3, Search, X, Check, AlertCircle, TrendingUp,
+  Printer, Trash2, Edit3, Search, X, Check, AlertCircle, TrendingUp, TrendingDown,
   Receipt, FileText, ChevronRight, Save, Loader2, Plus,
-  Eye, ArrowLeft, RefreshCw, Download, Upload, HardDrive
+  Eye, ArrowLeft, RefreshCw, Download, Upload, HardDrive, Image as ImageIcon,
+  Activity, Target, CalendarClock, Phone, MapPin, Scissors
 } from 'lucide-react';
 import {
   BarChart, Bar, PieChart, Pie, Cell, ResponsiveContainer, XAxis, YAxis,
-  Tooltip, CartesianGrid, LineChart, Line,
+  Tooltip, CartesianGrid, Area, AreaChart,
 } from 'recharts';
+import { toPng } from 'html-to-image';
 
 /* ============================================================
    SEED DATA (from your spreadsheet)
@@ -440,6 +442,7 @@ function Dashboard({ orders, expenses, catalog, setView }) {
     let totalSales = 0, totalCost = 0, paid = 0, unpaid = 0, partial = 0;
     const productSales = {};
     const daily = {};
+    const profitByDay = {};
     ordersList.forEach((o) => {
       const orderSales = (o.items || []).reduce((s, i) => s + (i.qty * i.price), 0);
       const orderCost = (o.items || []).reduce((s, i) => s + (i.qty * i.cost), 0);
@@ -453,19 +456,41 @@ function Dashboard({ orders, expenses, catalog, setView }) {
       });
       const d = o.date || '';
       daily[d] = (daily[d] || 0) + orderSales;
+      profitByDay[d] = (profitByDay[d] || 0) + (orderSales - orderCost);
     });
     const topProducts = Object.entries(productSales)
-      .map(([name, sales]) => ({ name: name.length > 18 ? name.slice(0, 18) + '…' : name, sales: Math.round(sales) }))
+      .map(([name, sales]) => ({ name: name.length > 18 ? name.slice(0, 18) + '…' : name, fullName: name, sales: Math.round(sales) }))
       .sort((a, b) => b.sales - a.sales).slice(0, 6);
     const dailySeries = Object.entries(daily)
-      .map(([date, sales]) => ({ date, sales: Math.round(sales), label: fmtDateShort(date) }))
+      .map(([date, sales]) => ({ date, sales: Math.round(sales), profit: Math.round(profitByDay[date] || 0), label: fmtDateShort(date) }))
       .sort((a, b) => a.date.localeCompare(b.date)).slice(-14);
+
     const totalExpenses = expenses.reduce((s, e) => s + (e.amount || 0), 0);
+    const grossProfit = totalSales - totalCost;          // margin from selling meat
+    const netPosition = grossProfit - totalExpenses;     // after operating expenses
+
+    // Selling days = distinct dates with at least one order
+    const sellingDays = Object.keys(daily).filter(d => d).length;
+    const avgProfitPerDay = sellingDays > 0 ? grossProfit / sellingDays : 0;
+    const avgSalesPerDay = sellingDays > 0 ? totalSales / sellingDays : 0;
+
+    // Break-even: gross profit needs to cover total expenses
+    const amountToBreakEven = Math.max(0, totalExpenses - grossProfit);
+    const isSelfSustaining = netPosition >= 0;
+    const recoveryPct = totalExpenses > 0 ? Math.min(100, (grossProfit / totalExpenses) * 100) : (grossProfit > 0 ? 100 : 0);
+
+    // Estimated days to break even at current avg profit pace
+    const daysToBreakEven = (!isSelfSustaining && avgProfitPerDay > 0)
+      ? Math.ceil(amountToBreakEven / avgProfitPerDay)
+      : 0;
+
     return {
-      totalSales, totalCost, profit: totalSales - totalCost,
-      margin: totalSales > 0 ? ((totalSales - totalCost) / totalSales) * 100 : 0,
+      totalSales, totalCost, grossProfit,
+      margin: totalSales > 0 ? (grossProfit / totalSales) * 100 : 0,
       paid, unpaid, partial, orderCount: ordersList.length,
-      topProducts, dailySeries, totalExpenses,
+      topProducts, dailySeries, totalExpenses, netPosition,
+      sellingDays, avgProfitPerDay, avgSalesPerDay,
+      amountToBreakEven, isSelfSustaining, recoveryPct, daysToBreakEven,
     };
   }, [orders, expenses]);
 
@@ -474,16 +499,97 @@ function Dashboard({ orders, expenses, catalog, setView }) {
     [orders]
   );
 
+  const healthLabel = stats.isSelfSustaining
+    ? 'Self-Sustaining'
+    : stats.recoveryPct >= 60 ? 'Recovering' : 'Building Up';
+
   return (
     <div>
       <Header title="Dashboard" subtitle="Live summary across your business"
         right={<Btn variant="primary" onClick={() => setView('new')}><PlusCircle size={16} className="inline mr-1.5 -mt-0.5" />New Order</Btn>} />
 
+      {/* ===== HERO: Business Health ===== */}
+      <Card className="mb-6 overflow-hidden" style={{ border: `1px solid ${THEME.line}` }}>
+        <div className="px-6 py-5" style={{
+          background: `linear-gradient(135deg, ${THEME.brand} 0%, ${THEME.brandSoft} 100%)`,
+        }}>
+          <div className="flex items-start justify-between">
+            <div>
+              <div className="flex items-center gap-2 text-xs uppercase tracking-widest" style={{ color: 'rgba(255,255,255,0.75)' }}>
+                <Activity size={13} /> Business Health
+              </div>
+              <div className="font-display text-3xl mt-1.5 text-white">{healthLabel}</div>
+              <div className="text-sm mt-1" style={{ color: 'rgba(255,255,255,0.85)' }}>
+                {stats.isSelfSustaining
+                  ? 'The business is covering its own expenses. You are no longer funding it out of pocket.'
+                  : `You've recovered ${stats.recoveryPct.toFixed(0)}% of total expenses through profit so far.`}
+              </div>
+            </div>
+            <div className="text-right">
+              <div className="text-xs uppercase tracking-wider" style={{ color: 'rgba(255,255,255,0.7)' }}>Net Position</div>
+              <div className="font-display text-3xl mt-1 text-white">
+                {stats.netPosition >= 0 ? '+' : '−'}{peso(Math.abs(stats.netPosition))}
+              </div>
+              <div className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.7)' }}>
+                Gross profit minus all expenses
+              </div>
+            </div>
+          </div>
+
+          {/* Recovery progress bar */}
+          <div className="mt-5">
+            <div className="flex justify-between text-xs mb-1.5" style={{ color: 'rgba(255,255,255,0.8)' }}>
+              <span>Expense recovery</span>
+              <span>{peso(stats.grossProfit)} / {peso(stats.totalExpenses)}</span>
+            </div>
+            <div className="h-2.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.2)' }}>
+              <div className="h-full rounded-full transition-all" style={{
+                width: `${stats.recoveryPct}%`,
+                background: stats.isSelfSustaining ? '#A8D5A0' : '#F0C674',
+              }} />
+            </div>
+          </div>
+        </div>
+
+        {/* Health sub-metrics */}
+        <div className="grid grid-cols-4 divide-x" style={{ borderTop: `1px solid ${THEME.line}` }}>
+          <HealthMetric
+            icon={<Target size={15} />}
+            label="To Break Even"
+            value={stats.isSelfSustaining ? 'Reached ✓' : peso(stats.amountToBreakEven)}
+            sub={stats.isSelfSustaining ? 'Fully covered' : 'More profit needed'}
+            color={stats.isSelfSustaining ? THEME.green : THEME.brand}
+          />
+          <HealthMetric
+            icon={<TrendingUp size={15} />}
+            label="Avg Profit / Selling Day"
+            value={peso(stats.avgProfitPerDay)}
+            sub={`Across ${stats.sellingDays} selling day${stats.sellingDays !== 1 ? 's' : ''}`}
+            color={THEME.green}
+          />
+          <HealthMetric
+            icon={<CalendarClock size={15} />}
+            label="Est. Days to Self-Sustain"
+            value={stats.isSelfSustaining ? '0 days' : (stats.daysToBreakEven > 0 ? `~${stats.daysToBreakEven} days` : '—')}
+            sub={stats.isSelfSustaining ? 'Already there' : (stats.daysToBreakEven > 0 ? 'At current pace' : 'Need more data')}
+            color={THEME.accent}
+          />
+          <HealthMetric
+            icon={<Wallet size={15} />}
+            label="Avg Sales / Selling Day"
+            value={peso(stats.avgSalesPerDay)}
+            sub="Revenue pace"
+            color={THEME.inkSoft}
+          />
+        </div>
+      </Card>
+
+      {/* ===== KPI row ===== */}
       <div className="grid grid-cols-4 gap-4 mb-6">
         <KpiCard label="Total Sales" value={peso(stats.totalSales)} sub={`${stats.orderCount} orders`} accent={THEME.brand} />
-        <KpiCard label="Total Cost" value={peso(stats.totalCost)} sub="Supplier cost" accent={THEME.inkSoft} />
-        <KpiCard label="Profit" value={peso(stats.profit)} sub={`${stats.margin.toFixed(1)}% margin`} accent={THEME.green} icon={<TrendingUp size={16} />} />
-        <KpiCard label="Expenses" value={peso(stats.totalExpenses)} sub={`${expenses.length} entries`} accent={THEME.amber} />
+        <KpiCard label="Supplier Cost" value={peso(stats.totalCost)} sub="Cost of meat sold" accent={THEME.inkSoft} />
+        <KpiCard label="Gross Profit" value={peso(stats.grossProfit)} sub={`${stats.margin.toFixed(1)}% margin`} accent={THEME.green} icon={<TrendingUp size={16} />} />
+        <KpiCard label="Total Expenses" value={peso(stats.totalExpenses)} sub={`${expenses.length} entries`} accent={THEME.amber} />
       </div>
 
       <div className="grid grid-cols-3 gap-4 mb-6">
@@ -492,41 +598,59 @@ function Dashboard({ orders, expenses, catalog, setView }) {
         <SmallStat label="Partial" value={peso(stats.partial)} color={THEME.amber} />
       </div>
 
-      <div className="grid grid-cols-2 gap-4 mb-6">
-        <Card className="p-5">
-          <div className="font-display text-lg mb-1" style={{ color: THEME.ink }}>Top Products</div>
-          <div className="text-xs mb-4" style={{ color: THEME.inkSoft }}>By total sales</div>
-          {stats.topProducts.length === 0 ? (
-            <EmptyHint>No sales yet. Add your first order to see top products.</EmptyHint>
-          ) : (
-            <ResponsiveContainer width="100%" height={240}>
-              <BarChart data={stats.topProducts} layout="vertical" margin={{ left: 10 }}>
-                <CartesianGrid strokeDasharray="2 4" stroke={THEME.line} horizontal={false} />
-                <XAxis type="number" tick={{ fill: THEME.inkSoft, fontSize: 11 }} />
-                <YAxis dataKey="name" type="category" width={130} tick={{ fill: THEME.ink, fontSize: 11 }} />
-                <Tooltip cursor={{ fill: '#F5E6E1' }}
-                  contentStyle={{ background: THEME.card, border: `1px solid ${THEME.line}`, borderRadius: 6 }}
-                  formatter={(v) => peso(v)} />
-                <Bar dataKey="sales" fill={THEME.brand} radius={[0, 3, 3, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          )}
-        </Card>
-
-        <Card className="p-5">
-          <div className="font-display text-lg mb-1">Sales Trend</div>
+      {/* ===== Charts ===== */}
+      <div className="grid grid-cols-5 gap-4 mb-6">
+        <Card className="col-span-3 p-5">
+          <div className="font-display text-lg mb-1">Sales & Profit Trend</div>
           <div className="text-xs mb-4" style={{ color: THEME.inkSoft }}>Last 14 active days</div>
           {stats.dailySeries.length === 0 ? (
             <EmptyHint>No sales yet.</EmptyHint>
           ) : (
-            <ResponsiveContainer width="100%" height={240}>
-              <LineChart data={stats.dailySeries}>
-                <CartesianGrid strokeDasharray="2 4" stroke={THEME.line} />
-                <XAxis dataKey="label" tick={{ fill: THEME.inkSoft, fontSize: 11 }} />
-                <YAxis tick={{ fill: THEME.inkSoft, fontSize: 11 }} />
-                <Tooltip contentStyle={{ background: THEME.card, border: `1px solid ${THEME.line}`, borderRadius: 6 }} formatter={(v) => peso(v)} />
-                <Line type="monotone" dataKey="sales" stroke={THEME.brand} strokeWidth={2} dot={{ fill: THEME.brand, r: 3 }} />
-              </LineChart>
+            <ResponsiveContainer width="100%" height={260}>
+              <AreaChart data={stats.dailySeries}>
+                <defs>
+                  <linearGradient id="gSales" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={THEME.brand} stopOpacity={0.25} />
+                    <stop offset="100%" stopColor={THEME.brand} stopOpacity={0} />
+                  </linearGradient>
+                  <linearGradient id="gProfit" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={THEME.green} stopOpacity={0.25} />
+                    <stop offset="100%" stopColor={THEME.green} stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="2 4" stroke={THEME.line} vertical={false} />
+                <XAxis dataKey="label" tick={{ fill: THEME.inkSoft, fontSize: 11 }} axisLine={{ stroke: THEME.line }} tickLine={false} />
+                <YAxis tick={{ fill: THEME.inkSoft, fontSize: 11 }} axisLine={false} tickLine={false} width={50}
+                  tickFormatter={(v) => v >= 1000 ? `${(v/1000).toFixed(0)}k` : v} />
+                <Tooltip contentStyle={{ background: THEME.card, border: `1px solid ${THEME.line}`, borderRadius: 8, fontSize: 13 }} formatter={(v, n) => [peso(v), n === 'sales' ? 'Sales' : 'Profit']} />
+                <Area type="monotone" dataKey="sales" stroke={THEME.brand} strokeWidth={2} fill="url(#gSales)" />
+                <Area type="monotone" dataKey="profit" stroke={THEME.green} strokeWidth={2} fill="url(#gProfit)" />
+              </AreaChart>
+            </ResponsiveContainer>
+          )}
+          <div className="flex gap-4 mt-3 text-xs" style={{ color: THEME.inkSoft }}>
+            <span className="flex items-center gap-1.5"><span className="w-3 h-0.5 inline-block" style={{ background: THEME.brand }} /> Sales</span>
+            <span className="flex items-center gap-1.5"><span className="w-3 h-0.5 inline-block" style={{ background: THEME.green }} /> Profit</span>
+          </div>
+        </Card>
+
+        <Card className="col-span-2 p-5">
+          <div className="font-display text-lg mb-1" style={{ color: THEME.ink }}>Top Products</div>
+          <div className="text-xs mb-4" style={{ color: THEME.inkSoft }}>By total sales</div>
+          {stats.topProducts.length === 0 ? (
+            <EmptyHint>No sales yet.</EmptyHint>
+          ) : (
+            <ResponsiveContainer width="100%" height={260}>
+              <BarChart data={stats.topProducts} layout="vertical" margin={{ left: 0, right: 10 }}>
+                <CartesianGrid strokeDasharray="2 4" stroke={THEME.line} horizontal={false} />
+                <XAxis type="number" tick={{ fill: THEME.inkSoft, fontSize: 11 }} axisLine={false} tickLine={false}
+                  tickFormatter={(v) => v >= 1000 ? `${(v/1000).toFixed(0)}k` : v} />
+                <YAxis dataKey="name" type="category" width={120} tick={{ fill: THEME.ink, fontSize: 10.5 }} axisLine={false} tickLine={false} />
+                <Tooltip cursor={{ fill: '#F5E6E1' }}
+                  contentStyle={{ background: THEME.card, border: `1px solid ${THEME.line}`, borderRadius: 8 }}
+                  formatter={(v) => [peso(v), 'Sales']} />
+                <Bar dataKey="sales" fill={THEME.brand} radius={[0, 4, 4, 0]} barSize={18} />
+              </BarChart>
             </ResponsiveContainer>
           )}
         </Card>
@@ -576,6 +700,18 @@ function Dashboard({ orders, expenses, catalog, setView }) {
   );
 }
 
+function HealthMetric({ icon, label, value, sub, color }) {
+  return (
+    <div className="px-5 py-4" style={{ borderColor: THEME.line }}>
+      <div className="flex items-center gap-1.5 text-xs uppercase tracking-wider mb-2" style={{ color: THEME.inkSoft, letterSpacing: '0.06em' }}>
+        <span style={{ color }}>{icon}</span> {label}
+      </div>
+      <div className="font-display text-xl" style={{ color }}>{value}</div>
+      <div className="text-xs mt-1" style={{ color: THEME.inkSoft }}>{sub}</div>
+    </div>
+  );
+}
+
 /* ============================================================
    NEW ORDER
    ============================================================ */
@@ -583,11 +719,12 @@ function Dashboard({ orders, expenses, catalog, setView }) {
 function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
   const [date, setDate] = useState(today());
   const [customer, setCustomer] = useState('');
+  const [phone, setPhone] = useState('');
   const [paymentStatus, setPaymentStatus] = useState('Paid');
   const [paymentMethod, setPaymentMethod] = useState('Cash');
   const [deliveryStatus, setDeliveryStatus] = useState('Pending');
   const [notes, setNotes] = useState('');
-  const [items, setItems] = useState([{ product: '', qty: 1 }]);
+  const [items, setItems] = useState([{ product: '', qty: 1, note: '' }]);
   const [error, setError] = useState('');
 
   const productByName = useMemo(() => Object.fromEntries(catalog.map(p => [p.name, p])), [catalog]);
@@ -598,7 +735,7 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
   const orderProfit = orderTotal - orderCost;
 
   const updateItem = (idx, patch) => setItems(items.map((it, i) => i === idx ? { ...it, ...patch } : it));
-  const addItem = () => setItems([...items, { product: '', qty: 1 }]);
+  const addItem = () => setItems([...items, { product: '', qty: 1, note: '' }]);
   const removeItem = (idx) => setItems(items.filter((_, i) => i !== idx));
 
   const save = () => {
@@ -610,10 +747,10 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
     const id = nextOrderId(meta.lastOrderNum || 0);
     const snapshotItems = cleanItems.map((it) => {
       const p = productByName[it.product];
-      return { product: it.product, qty: Number(it.qty), price: p.price, cost: p.cost, unit: p.unit };
+      return { product: it.product, qty: Number(it.qty), price: p.price, cost: p.cost, unit: p.unit, note: (it.note || '').trim() };
     });
     const order = {
-      id, date, customer: customer.trim(),
+      id, date, customer: customer.trim(), phone: phone.trim(),
       payment_status: paymentStatus, payment_method: paymentMethod, delivery_status: deliveryStatus,
       notes: notes.trim(), items: snapshotItems, created_at: new Date().toISOString(),
     };
@@ -629,9 +766,10 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
       <div className="grid grid-cols-3 gap-6">
         <div className="col-span-2 space-y-5">
           <Card className="p-6">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-3 gap-4">
               <div><Label>Date</Label><Input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></div>
               <div><Label>Customer Name</Label><Input value={customer} onChange={(e) => setCustomer(e.target.value)} placeholder="Juan Dela Cruz" /></div>
+              <div><Label>Phone (optional)</Label><Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="0917 123 4567" /></div>
             </div>
           </Card>
 
@@ -645,7 +783,7 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
                 const p = productByName[it.product];
                 return (
                   <div key={idx} className="grid grid-cols-12 gap-3 items-start">
-                    <div className="col-span-5">
+                    <div className="col-span-4">
                       {idx === 0 && <Label>Product</Label>}
                       <select value={it.product} onChange={(e) => updateItem(idx, { product: e.target.value })}
                         className="w-full px-3 py-2 rounded-md outline-none"
@@ -662,9 +800,9 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
                       {idx === 0 && <Label>Qty</Label>}
                       <Input type="number" step="0.01" min="0" value={it.qty} onChange={(e) => updateItem(idx, { qty: e.target.value })} />
                     </div>
-                    <div className="col-span-2">
-                      {idx === 0 && <Label>Unit Price</Label>}
-                      <div className="px-2 py-2 text-sm" style={{ color: THEME.inkSoft }}>{p ? peso(p.price) : '—'}</div>
+                    <div className="col-span-3">
+                      {idx === 0 && <Label>Notes / Special Cut</Label>}
+                      <Input value={it.note} onChange={(e) => updateItem(idx, { note: e.target.value })} placeholder="e.g. thin slice" />
                     </div>
                     <div className="col-span-2">
                       {idx === 0 && <Label>Line</Label>}
@@ -854,7 +992,9 @@ function OrderDetail({ order, onClose, onDelete, onPrint, onUpdate }) {
       <div className="px-6 py-4 flex items-center justify-between" style={{ borderBottom: `1px solid ${THEME.line}` }}>
         <div>
           <div className="font-display text-2xl" style={{ color: THEME.brand }}>{order.id}</div>
-          <div className="text-sm" style={{ color: THEME.inkSoft }}>{fmtDate(order.date)} · {order.customer}</div>
+          <div className="text-sm" style={{ color: THEME.inkSoft }}>
+            {fmtDate(order.date)} · {order.customer}{order.phone ? ` · ${order.phone}` : ''}
+          </div>
         </div>
         <button onClick={onClose} className="p-2 rounded hover:bg-amber-50"><X size={18} /></button>
       </div>
@@ -865,6 +1005,7 @@ function OrderDetail({ order, onClose, onDelete, onPrint, onUpdate }) {
             <tr style={{ color: THEME.inkSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
               <th className="text-left pb-2 font-medium">Product</th>
               <th className="text-right pb-2 font-medium">Qty</th>
+              <th className="text-left pb-2 font-medium pl-4">Notes / Special Cut</th>
               <th className="text-right pb-2 font-medium">Unit Price</th>
               <th className="text-right pb-2 font-medium">Total</th>
             </tr>
@@ -874,6 +1015,7 @@ function OrderDetail({ order, onClose, onDelete, onPrint, onUpdate }) {
               <tr key={i} style={{ borderTop: `1px solid ${THEME.line}` }}>
                 <td className="py-2.5">{it.product}</td>
                 <td className="py-2.5 text-right">{it.qty} {it.unit}</td>
+                <td className="py-2.5 pl-4" style={{ color: it.note ? THEME.ink : THEME.inkSoft }}>{it.note || '—'}</td>
                 <td className="py-2.5 text-right">{peso(it.price)}</td>
                 <td className="py-2.5 text-right font-medium">{peso(it.qty * it.price)}</td>
               </tr>
@@ -915,8 +1057,34 @@ function OrderDetail({ order, onClose, onDelete, onPrint, onUpdate }) {
 
 function PrintableView({ order, mode, onBack }) {
   const total = (order.items || []).reduce((s, i) => s + i.qty * i.price, 0);
-  const totalCost = (order.items || []).reduce((s, i) => s + i.qty * i.cost, 0);
+  const totalQty = (order.items || []).reduce((s, i) => s + Number(i.qty || 0), 0);
   const isInvoice = mode === 'invoice';
+  const docRef = useRef(null);
+  const [savingImg, setSavingImg] = useState(false);
+
+  const saveAsImage = async () => {
+    if (!docRef.current) return;
+    setSavingImg(true);
+    try {
+      const dataUrl = await toPng(docRef.current, {
+        quality: 1,
+        pixelRatio: 2,
+        backgroundColor: '#ffffff',
+      });
+      const a = document.createElement('a');
+      const safeName = (order.customer || 'order').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+      a.href = dataUrl;
+      a.download = `${safeName}-${order.id}.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch (e) {
+      alert('Could not save the image. Try the Print button instead.');
+      console.error(e);
+    } finally {
+      setSavingImg(false);
+    }
+  };
 
   return (
     <div style={{ background: THEME.bg, minHeight: '100vh' }}>
@@ -924,96 +1092,131 @@ function PrintableView({ order, mode, onBack }) {
         <button onClick={onBack} className="flex items-center gap-1.5 text-sm" style={{ color: THEME.ink }}>
           <ArrowLeft size={16} /> Back to order
         </button>
-        <Btn variant="primary" onClick={() => window.print()}>
-          <Printer size={15} className="inline -mt-0.5 mr-1.5" /> Print
-        </Btn>
+        <div className="flex gap-2">
+          {isInvoice && (
+            <Btn variant="accent" onClick={saveAsImage} disabled={savingImg}>
+              {savingImg
+                ? <><Loader2 size={15} className="inline -mt-0.5 mr-1.5 animate-spin" /> Saving…</>
+                : <><ImageIcon size={15} className="inline -mt-0.5 mr-1.5" /> Save Order Summary</>}
+            </Btn>
+          )}
+          <Btn variant="primary" onClick={() => window.print()}>
+            <Printer size={15} className="inline -mt-0.5 mr-1.5" /> Print
+          </Btn>
+        </div>
       </div>
 
-      <div className="max-w-3xl mx-auto p-10" style={{ background: 'white', boxShadow: '0 2px 8px rgba(0,0,0,0.04)', marginTop: 24, marginBottom: 24 }}>
-        <div className="text-center mb-8 pb-6" style={{ borderBottom: `2px solid ${THEME.brand}` }}>
-          <div className="font-display text-4xl" style={{ color: THEME.brand }}>M&N MEATSHOP</div>
-          <div className="text-sm mt-1" style={{ color: THEME.inkSoft }}>Your Daily Meat Choice</div>
-          <div className="mt-4 font-display text-xl tracking-wider uppercase" style={{ color: THEME.ink }}>
-            {isInvoice ? 'Official Receipt' : 'Supplier Order Form'}
+      <div ref={docRef} className="max-w-3xl mx-auto p-10" style={{ background: 'white', boxShadow: '0 2px 8px rgba(0,0,0,0.04)', marginTop: 24, marginBottom: 24 }}>
+        <div className="text-center mb-7 pb-5" style={{ borderBottom: `2px solid ${THEME.brand}` }}>
+          <div className="font-display text-4xl" style={{ color: THEME.brand }}>🥩 M&N MEATSHOP</div>
+          <div className="text-sm mt-1" style={{ color: THEME.inkSoft }}>
+            Your Daily Meat Choice  ·  {isInvoice ? 'Order Summary' : 'Supplier Order Form'}
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-6 mb-6">
+        <div className="text-center mb-6">
+          <div className="font-display text-2xl tracking-wide uppercase" style={{ color: THEME.ink }}>
+            {isInvoice ? '🧾  Order Summary' : '📋  Supplier Order Copy'}
+          </div>
+          {!isInvoice && (
+            <div className="text-sm mt-1" style={{ color: THEME.inkSoft }}>
+              Please prepare the following items for the customer below.
+            </div>
+          )}
+        </div>
+
+        {/* Customer name as the main identifier (replaces Order ID prominence) */}
+        <div className="grid grid-cols-2 gap-6 mb-6 pb-4" style={{ borderBottom: `1px solid ${THEME.line}` }}>
           <div>
-            <div className="text-xs uppercase tracking-wider mb-1" style={{ color: THEME.inkSoft }}>Order ID</div>
-            <div className="font-display text-2xl" style={{ color: THEME.brand }}>{order.id}</div>
+            <div className="text-xs uppercase tracking-wider mb-1" style={{ color: THEME.inkSoft }}>Customer</div>
+            <div className="font-display text-2xl" style={{ color: THEME.brand }}>{order.customer}</div>
+            {order.phone && <div className="text-sm mt-0.5" style={{ color: THEME.inkSoft }}>{order.phone}</div>}
           </div>
           <div className="text-right">
             <div className="text-xs uppercase tracking-wider mb-1" style={{ color: THEME.inkSoft }}>Date</div>
             <div className="text-lg">{fmtDate(order.date)}</div>
+            <div className="text-xs mt-1" style={{ color: THEME.inkSoft }}>Ref: {order.id}</div>
           </div>
         </div>
 
-        {isInvoice && (
-          <div className="mb-6 pb-4" style={{ borderBottom: `1px solid ${THEME.line}` }}>
-            <div className="text-xs uppercase tracking-wider mb-1" style={{ color: THEME.inkSoft }}>Customer</div>
-            <div className="text-lg">{order.customer}</div>
-          </div>
-        )}
-
-        <table className="w-full mb-6 text-sm">
-          <thead>
-            <tr style={{ background: '#F5E6E1' }}>
-              <th className="text-left px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Product</th>
-              <th className="text-right px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Qty</th>
-              <th className="text-right px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>{isInvoice ? 'Unit Price' : 'Unit Cost'}</th>
-              <th className="text-right px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(order.items || []).map((it, i) => {
-              const unit = isInvoice ? it.price : it.cost;
-              const line = it.qty * unit;
-              return (
+        {isInvoice ? (
+          /* ===== INVOICE / ORDER SUMMARY: product, qty, unit price, amount, notes ===== */
+          <table className="w-full mb-6 text-sm">
+            <thead>
+              <tr style={{ background: '#F5E6E1' }}>
+                <th className="text-left px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>#</th>
+                <th className="text-left px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Product / Item</th>
+                <th className="text-right px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Qty</th>
+                <th className="text-right px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Unit Price</th>
+                <th className="text-right px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Amount</th>
+                <th className="text-left px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Notes / Special Cut</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(order.items || []).map((it, i) => (
                 <tr key={i} style={{ borderBottom: `1px solid ${THEME.line}` }}>
+                  <td className="px-3 py-3" style={{ color: THEME.inkSoft }}>{i + 1}</td>
                   <td className="px-3 py-3">{it.product}</td>
                   <td className="px-3 py-3 text-right">{it.qty} {it.unit}</td>
-                  <td className="px-3 py-3 text-right">{peso(unit)}</td>
-                  <td className="px-3 py-3 text-right font-medium">{peso(line)}</td>
+                  <td className="px-3 py-3 text-right">{peso(it.price)}</td>
+                  <td className="px-3 py-3 text-right font-medium">{peso(it.qty * it.price)}</td>
+                  <td className="px-3 py-3" style={{ color: it.note ? THEME.ink : THEME.inkSoft }}>{it.note || '-'}</td>
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          /* ===== SUPPLIER COPY: no costs, product + qty + notes ===== */
+          <table className="w-full mb-6 text-sm">
+            <thead>
+              <tr style={{ background: '#F5E6E1' }}>
+                <th className="text-left px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>#</th>
+                <th className="text-left px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Product / Item</th>
+                <th className="text-right px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Qty</th>
+                <th className="text-left px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Notes / Special Cut</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(order.items || []).map((it, i) => (
+                <tr key={i} style={{ borderBottom: `1px solid ${THEME.line}` }}>
+                  <td className="px-3 py-3" style={{ color: THEME.inkSoft }}>{i + 1}</td>
+                  <td className="px-3 py-3">{it.product}</td>
+                  <td className="px-3 py-3 text-right">{it.qty} {it.unit}</td>
+                  <td className="px-3 py-3" style={{ color: it.note ? THEME.ink : THEME.inkSoft }}>{it.note || '-'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
 
-        <div className="flex justify-end mb-8">
-          <div className="w-72">
-            <div className="flex justify-between py-2 text-sm">
-              <span style={{ color: THEME.inkSoft }}>Subtotal</span>
-              <span>{pesoFull(isInvoice ? total : totalCost)}</span>
-            </div>
-            <div className="flex justify-between py-3 font-display text-2xl" style={{ borderTop: `2px solid ${THEME.brand}`, color: THEME.brand }}>
-              <span>TOTAL</span>
-              <span>{pesoFull(isInvoice ? total : totalCost)}</span>
+        {isInvoice ? (
+          <div className="flex justify-end mb-8">
+            <div className="w-72">
+              <div className="flex justify-between py-3 font-display text-2xl" style={{ borderTop: `2px solid ${THEME.brand}`, color: THEME.brand }}>
+                <span>TOTAL</span>
+                <span>{pesoFull(total)}</span>
+              </div>
             </div>
           </div>
-        </div>
-
-        {isInvoice && (
-          <div className="text-center mb-6">
-            <div className="inline-block px-6 py-2 rounded font-medium" style={{
-              background: order.payment_status === 'Paid' ? '#E5EDDE' : '#F5DDE0',
-              color: order.payment_status === 'Paid' ? THEME.green : THEME.red,
-            }}>
-              {order.payment_status === 'Paid' ? '✓ PAID' : `${order.payment_status.toUpperCase()}`}
-              {order.payment_method && order.payment_status === 'Paid' && ` · ${order.payment_method}`}
+        ) : (
+          <div className="flex justify-end mb-8">
+            <div className="w-72">
+              <div className="flex justify-between py-3 font-display text-xl" style={{ borderTop: `2px solid ${THEME.brand}`, color: THEME.brand }}>
+                <span>TOTAL QUANTITY</span>
+                <span>{totalQty} kg</span>
+              </div>
             </div>
           </div>
         )}
 
         {order.notes && (
           <div className="mt-6 pt-4 text-sm" style={{ borderTop: `1px solid ${THEME.line}`, color: THEME.inkSoft }}>
-            <span className="font-medium">Notes: </span>{order.notes}
+            <span className="font-medium">Order Notes: </span>{order.notes}
           </div>
         )}
 
-        <div className="text-center mt-10 pt-6 text-xs" style={{ borderTop: `1px solid ${THEME.line}`, color: THEME.inkSoft }}>
-          {isInvoice ? 'Salamat sa inyong pagtangkilik! · Thank you for your business' : 'Supplier pickup record — M&N Meatshop'}
+        <div className="text-center mt-10 pt-6 text-sm" style={{ borderTop: `1px solid ${THEME.line}`, color: THEME.inkSoft }}>
+          {isInvoice ? 'Thank you for your order!' : 'For supplier use only  ·  M&N Meatshop'}
         </div>
       </div>
     </div>
