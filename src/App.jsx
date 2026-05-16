@@ -763,8 +763,10 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
   const [notes, setNotes] = useState('');
   const [items, setItems] = useState([{ product: '', qty: 1, note: '' }]);
   const [error, setError] = useState('');
+  const [hideAmounts, setHideAmounts] = useState(false);
 
   const productByName = useMemo(() => Object.fromEntries(catalog.map(p => [p.name, p])), [catalog]);
+  const m = (n) => hideAmounts ? '₱•••••' : peso(n);
   const lineTotal = (it) => { const p = productByName[it.product]; return p ? (Number(it.qty) || 0) * p.price : 0; };
   const lineCost = (it) => { const p = productByName[it.product]; return p ? (Number(it.qty) || 0) * p.cost : 0; };
   const orderTotal = items.reduce((s, it) => s + lineTotal(it), 0);
@@ -798,7 +800,19 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
 
   return (
     <div>
-      <Header title="New Order" subtitle="Log a sale. Prices auto-fill from your price list." />
+      <Header title="New Order" subtitle="Log a sale. Prices auto-fill from your price list."
+        right={
+          <button
+            onClick={() => setHideAmounts(!hideAmounts)}
+            className="flex items-center gap-2 px-3.5 py-2 text-sm rounded-md transition-colors"
+            style={{ background: hideAmounts ? THEME.brand : 'transparent', color: hideAmounts ? 'white' : THEME.inkSoft, border: `1px solid ${hideAmounts ? THEME.brand : THEME.line}` }}
+            title={hideAmounts ? 'Show amounts' : 'Hide amounts while customer is picking'}
+          >
+            {hideAmounts ? <EyeOff size={15} /> : <Eye size={15} />}
+            {hideAmounts ? 'Amounts hidden' : 'Hide amounts'}
+          </button>
+        }
+      />
 
       <div className="grid grid-cols-3 gap-6">
         <div className="col-span-2 space-y-5">
@@ -843,7 +857,7 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
                     </div>
                     <div className="col-span-2">
                       {idx === 0 && <Label>Line</Label>}
-                      <div className="px-2 py-2 text-sm font-medium">{lineTotal(it) > 0 ? peso(lineTotal(it)) : '—'}</div>
+                      <div className="px-2 py-2 text-sm font-medium">{lineTotal(it) > 0 ? m(lineTotal(it)) : '—'}</div>
                     </div>
                     <div className="col-span-1">
                       {idx === 0 && <Label>&nbsp;</Label>}
@@ -857,9 +871,9 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
             </div>
 
             <div className="mt-5 pt-4 grid grid-cols-3 gap-4" style={{ borderTop: `1px solid ${THEME.line}` }}>
-              <div><div className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft }}>Total Sales</div><div className="font-display text-xl mt-0.5" style={{ color: THEME.brand }}>{peso(orderTotal)}</div></div>
-              <div><div className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft }}>Supplier Cost</div><div className="font-display text-xl mt-0.5" style={{ color: THEME.inkSoft }}>{peso(orderCost)}</div></div>
-              <div><div className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft }}>Profit</div><div className="font-display text-xl mt-0.5" style={{ color: THEME.green }}>{peso(orderProfit)}</div></div>
+              <div><div className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft }}>Total Sales</div><div className="font-display text-xl mt-0.5" style={{ color: THEME.brand }}>{m(orderTotal)}</div></div>
+              <div><div className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft }}>Supplier Cost</div><div className="font-display text-xl mt-0.5" style={{ color: THEME.inkSoft }}>{m(orderCost)}</div></div>
+              <div><div className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft }}>Profit</div><div className="font-display text-xl mt-0.5" style={{ color: THEME.green }}>{m(orderProfit)}</div></div>
             </div>
           </Card>
         </div>
@@ -1124,7 +1138,7 @@ function PrintableView({ order, mode, onBack }) {
       const a = document.createElement('a');
       const safeName = (order.customer || 'order').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
       a.href = dataUrl;
-      a.download = `order-summary-${safeName}.png`;
+      a.download = `${isInvoice ? 'order-summary' : 'supplier-copy'}-${safeName}.png`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -1143,13 +1157,11 @@ function PrintableView({ order, mode, onBack }) {
           <ArrowLeft size={16} /> Back to order
         </button>
         <div className="flex gap-2">
-          {isInvoice && (
-            <Btn variant="accent" onClick={saveAsImage} disabled={savingImg}>
-              {savingImg
-                ? <><Loader2 size={15} className="inline -mt-0.5 mr-1.5 animate-spin" /> Saving…</>
-                : <><ImageIcon size={15} className="inline -mt-0.5 mr-1.5" /> Save Order Summary</>}
-            </Btn>
-          )}
+          <Btn variant="accent" onClick={saveAsImage} disabled={savingImg}>
+            {savingImg
+              ? <><Loader2 size={15} className="inline -mt-0.5 mr-1.5 animate-spin" /> Saving…</>
+              : <><ImageIcon size={15} className="inline -mt-0.5 mr-1.5" /> {isInvoice ? 'Save Order Summary' : 'Save Supplier Copy'}</>}
+          </Btn>
           <Btn variant="primary" onClick={() => window.print()}>
             <Printer size={15} className="inline -mt-0.5 mr-1.5" /> Print
           </Btn>
