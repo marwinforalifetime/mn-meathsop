@@ -1,16 +1,17 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   LayoutDashboard, PlusCircle, ListOrdered, Truck, Wallet, Snowflake, Tag,
-  Printer, Trash2, Edit3, Search, X, Check, AlertCircle, TrendingUp, TrendingDown,
+  Printer, Trash2, Edit3, Search, X, Check, AlertCircle, TrendingUp,
   Receipt, FileText, ChevronRight, Save, Loader2, Plus,
-  Eye, ArrowLeft, RefreshCw, Download, Upload, HardDrive, Image as ImageIcon,
-  Activity, Target, CalendarClock, Phone, MapPin, Scissors
+  Eye, EyeOff, ArrowLeft, RefreshCw, Download, Upload, HardDrive, Image as ImageIcon,
+  Activity
 } from 'lucide-react';
 import {
   BarChart, Bar, PieChart, Pie, Cell, ResponsiveContainer, XAxis, YAxis,
   Tooltip, CartesianGrid, Area, AreaChart,
 } from 'recharts';
 import { toPng } from 'html-to-image';
+import { LOGO_DATA_URL } from './logo.js';
 
 /* ============================================================
    SEED DATA (from your spreadsheet)
@@ -256,6 +257,7 @@ export default function App() {
   const [meta, setMeta] = useState({ lastOrderNum: 0 });
   const [saving, setSaving] = useState(false);
   const [showBackup, setShowBackup] = useState(false);
+  const [privacy, setPrivacy] = useState(false);
   const lastSaveRef = useRef(Date.now());
 
   useEffect(() => {
@@ -353,10 +355,10 @@ export default function App() {
     <div className="min-h-screen" style={{ background: THEME.bg, color: THEME.ink, fontFamily: 'DM Sans, sans-serif' }}>
       <div className="flex">
         <aside className="w-60 min-h-screen border-r flex flex-col no-print" style={{ borderColor: THEME.line, background: THEME.card }}>
-          <div className="px-6 py-6 border-b" style={{ borderColor: THEME.line }}>
-            <div className="font-display text-2xl leading-tight" style={{ color: THEME.brand }}>M&N</div>
-            <div className="font-display text-lg leading-tight" style={{ color: THEME.ink }}>Meatshop</div>
-            <div className="text-xs mt-1" style={{ color: THEME.inkSoft }}>Your daily meat choice</div>
+          <div className="px-6 py-6 border-b flex flex-col items-center text-center" style={{ borderColor: THEME.line }}>
+            <img src={LOGO_DATA_URL} alt="M&N Meatshop" className="w-28 h-28 rounded-full object-cover mb-3" style={{ boxShadow: '0 2px 10px rgba(122,46,51,0.18)' }} />
+            <div className="font-display text-xl leading-tight" style={{ color: THEME.brand }}>M&N Meatshop</div>
+            <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>Your daily meat choice</div>
           </div>
           <nav className="flex-1 py-4">
             {navItems.map((item) => {
@@ -389,7 +391,7 @@ export default function App() {
         </aside>
 
         <main className="flex-1 p-8">
-          {view === 'dashboard' && <Dashboard orders={orders} expenses={expenses} catalog={catalog} setView={setView} />}
+          {view === 'dashboard' && <Dashboard orders={orders} expenses={expenses} catalog={catalog} setView={setView} privacy={privacy} setPrivacy={setPrivacy} />}
           {view === 'new' && <NewOrder catalog={catalog} meta={meta} setMeta={setMeta} orders={orders} setOrders={setOrders} onSaved={() => setView('orders')} />}
           {view === 'orders' && <Orders orders={orders} setOrders={setOrders} productByName={productByName} />}
           {view === 'pickup' && <Pickup orders={orders} />}
@@ -435,233 +437,243 @@ export default function App() {
    DASHBOARD
    ============================================================ */
 
-function Dashboard({ orders, expenses, catalog, setView }) {
+function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy }) {
   const ordersList = Object.values(orders);
 
+  // Privacy-aware money formatter
+  const m = (n) => privacy ? '₱•••••' : peso(n);
+
+  const now = new Date();
+  const thisMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
   const stats = useMemo(() => {
-    let totalSales = 0, totalCost = 0, paid = 0, unpaid = 0, partial = 0;
-    const productSales = {};
+    let totalSales = 0, totalCost = 0, unpaid = 0;
+    let monthSales = 0, monthCost = 0;
+    const productQty = {};
     const daily = {};
     const profitByDay = {};
     ordersList.forEach((o) => {
-      const orderSales = (o.items || []).reduce((s, i) => s + (i.qty * i.price), 0);
-      const orderCost = (o.items || []).reduce((s, i) => s + (i.qty * i.cost), 0);
-      totalSales += orderSales;
-      totalCost += orderCost;
-      if (o.payment_status === 'Paid') paid += orderSales;
-      else if (o.payment_status === 'Unpaid') unpaid += orderSales;
-      else if (o.payment_status === 'Partial') partial += orderSales;
+      const oSales = (o.items || []).reduce((s, i) => s + i.qty * i.price, 0);
+      const oCost = (o.items || []).reduce((s, i) => s + i.qty * i.cost, 0);
+      totalSales += oSales;
+      totalCost += oCost;
+      if (o.payment_status === 'Unpaid') unpaid += oSales;
+      else if (o.payment_status === 'Partial') unpaid += oSales / 2;
+      if ((o.date || '').startsWith(thisMonthKey)) {
+        monthSales += oSales;
+        monthCost += oCost;
+      }
       (o.items || []).forEach((it) => {
-        productSales[it.product] = (productSales[it.product] || 0) + it.qty * it.price;
+        productQty[it.product] = (productQty[it.product] || 0) + it.qty * it.price;
       });
       const d = o.date || '';
-      daily[d] = (daily[d] || 0) + orderSales;
-      profitByDay[d] = (profitByDay[d] || 0) + (orderSales - orderCost);
+      daily[d] = (daily[d] || 0) + oSales;
+      profitByDay[d] = (profitByDay[d] || 0) + (oSales - oCost);
     });
-    const topProducts = Object.entries(productSales)
-      .map(([name, sales]) => ({ name: name.length > 18 ? name.slice(0, 18) + '…' : name, fullName: name, sales: Math.round(sales) }))
-      .sort((a, b) => b.sales - a.sales).slice(0, 6);
-    const dailySeries = Object.entries(daily)
-      .map(([date, sales]) => ({ date, sales: Math.round(sales), profit: Math.round(profitByDay[date] || 0), label: fmtDateShort(date) }))
-      .sort((a, b) => a.date.localeCompare(b.date)).slice(-14);
 
+    const grossProfit = totalSales - totalCost;
+    const monthProfit = monthSales - monthCost;
     const totalExpenses = expenses.reduce((s, e) => s + (e.amount || 0), 0);
-    const grossProfit = totalSales - totalCost;          // margin from selling meat
-    const netPosition = grossProfit - totalExpenses;     // after operating expenses
-
-    // Selling days = distinct dates with at least one order
-    const sellingDays = Object.keys(daily).filter(d => d).length;
+    const netPosition = grossProfit - totalExpenses;
+    const sellingDays = Object.keys(daily).filter(Boolean).length;
     const avgProfitPerDay = sellingDays > 0 ? grossProfit / sellingDays : 0;
-    const avgSalesPerDay = sellingDays > 0 ? totalSales / sellingDays : 0;
-
-    // Break-even: gross profit needs to cover total expenses
-    const amountToBreakEven = Math.max(0, totalExpenses - grossProfit);
+    const recoveryPct = totalExpenses > 0
+      ? Math.min(100, Math.max(0, (grossProfit / totalExpenses) * 100))
+      : (grossProfit > 0 ? 100 : 0);
     const isSelfSustaining = netPosition >= 0;
-    const recoveryPct = totalExpenses > 0 ? Math.min(100, (grossProfit / totalExpenses) * 100) : (grossProfit > 0 ? 100 : 0);
+    const amountToBreakEven = Math.max(0, totalExpenses - grossProfit);
 
-    // Estimated days to break even at current avg profit pace
-    const daysToBreakEven = (!isSelfSustaining && avgProfitPerDay > 0)
-      ? Math.ceil(amountToBreakEven / avgProfitPerDay)
-      : 0;
+    const topProducts = Object.entries(productQty)
+      .map(([name, v]) => ({ name: name.length > 16 ? name.slice(0, 16) + '…' : name, value: Math.round(v) }))
+      .sort((a, b) => b.value - a.value).slice(0, 5);
+
+    const trend = Object.entries(daily)
+      .map(([date, sales]) => ({ date, sales: Math.round(sales), profit: Math.round(profitByDay[date] || 0), label: fmtDateShort(date) }))
+      .sort((a, b) => a.date.localeCompare(b.date)).slice(-10);
 
     return {
-      totalSales, totalCost, grossProfit,
-      margin: totalSales > 0 ? (grossProfit / totalSales) * 100 : 0,
-      paid, unpaid, partial, orderCount: ordersList.length,
-      topProducts, dailySeries, totalExpenses, netPosition,
-      sellingDays, avgProfitPerDay, avgSalesPerDay,
-      amountToBreakEven, isSelfSustaining, recoveryPct, daysToBreakEven,
+      totalSales, grossProfit, monthSales, monthProfit, totalExpenses,
+      netPosition, unpaid, orderCount: ordersList.length,
+      sellingDays, avgProfitPerDay, recoveryPct, isSelfSustaining, amountToBreakEven,
+      topProducts, trend,
     };
-  }, [orders, expenses]);
+  }, [orders, expenses, thisMonthKey]);
 
-  const recentOrders = useMemo(
-    () => ordersList.sort((a, b) => (b.id || '').localeCompare(a.id || '')).slice(0, 6),
+  const unpaidOrders = useMemo(() =>
+    ordersList
+      .filter(o => o.payment_status === 'Unpaid' || o.payment_status === 'Partial')
+      .sort((a, b) => (b.id || '').localeCompare(a.id || ''))
+      .slice(0, 5),
     [orders]
   );
 
-  const healthLabel = stats.isSelfSustaining
-    ? 'Self-Sustaining'
-    : stats.recoveryPct >= 60 ? 'Recovering' : 'Building Up';
+  const recentOrders = useMemo(
+    () => ordersList.sort((a, b) => (b.id || '').localeCompare(a.id || '')).slice(0, 5),
+    [orders]
+  );
+
+  const monthName = now.toLocaleString('en-PH', { month: 'long' });
 
   return (
     <div>
-      <Header title="Dashboard" subtitle="Live summary across your business"
-        right={<Btn variant="primary" onClick={() => setView('new')}><PlusCircle size={16} className="inline mr-1.5 -mt-0.5" />New Order</Btn>} />
+      {/* ===== Clean header: logo + title + privacy toggle ===== */}
+      <div className="flex items-center justify-between mb-7 no-print">
+        <div className="flex items-center gap-4">
+          <img src={LOGO_DATA_URL} alt="M&N Meatshop" className="w-14 h-14 rounded-full object-cover" style={{ boxShadow: '0 2px 8px rgba(122,46,51,0.15)' }} />
+          <div>
+            <h1 className="font-display text-3xl leading-tight" style={{ color: THEME.ink }}>Dashboard</h1>
+            <div className="text-sm" style={{ color: THEME.inkSoft }}>{monthName} {now.getFullYear()} · {stats.orderCount} orders all-time</div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setPrivacy(!privacy)}
+            className="flex items-center gap-2 px-3.5 py-2 text-sm rounded-md transition-colors"
+            style={{ background: privacy ? THEME.brand : 'transparent', color: privacy ? 'white' : THEME.inkSoft, border: `1px solid ${privacy ? THEME.brand : THEME.line}` }}
+            title={privacy ? 'Show amounts' : 'Hide amounts'}
+          >
+            {privacy ? <EyeOff size={15} /> : <Eye size={15} />}
+            {privacy ? 'Amounts hidden' : 'Hide amounts'}
+          </button>
+          <Btn variant="primary" onClick={() => setView('new')}><PlusCircle size={16} className="inline mr-1.5 -mt-0.5" />New Order</Btn>
+        </div>
+      </div>
 
-      {/* ===== HERO: Business Health ===== */}
-      <Card className="mb-6 overflow-hidden" style={{ border: `1px solid ${THEME.line}` }}>
-        <div className="px-6 py-5" style={{
-          background: `linear-gradient(135deg, ${THEME.brand} 0%, ${THEME.brandSoft} 100%)`,
-        }}>
-          <div className="flex items-start justify-between">
-            <div>
-              <div className="flex items-center gap-2 text-xs uppercase tracking-widest" style={{ color: 'rgba(255,255,255,0.75)' }}>
-                <Activity size={13} /> Business Health
+      {/* ===== Hero: This month's profit (the one number that matters most) ===== */}
+      <div className="grid grid-cols-3 gap-4 mb-4">
+        <Card className="col-span-2 p-6 relative overflow-hidden" style={{ background: `linear-gradient(135deg, ${THEME.brand} 0%, ${THEME.brandSoft} 100%)`, border: 'none' }}>
+          <div className="relative z-10">
+            <div className="text-xs uppercase tracking-widest" style={{ color: 'rgba(255,255,255,0.75)' }}>{monthName} Profit</div>
+            <div className="font-display text-5xl mt-2 text-white">{m(stats.monthProfit)}</div>
+            <div className="flex gap-6 mt-4">
+              <div>
+                <div className="text-xs" style={{ color: 'rgba(255,255,255,0.7)' }}>Sales this month</div>
+                <div className="text-lg font-medium text-white">{m(stats.monthSales)}</div>
               </div>
-              <div className="font-display text-3xl mt-1.5 text-white">{healthLabel}</div>
-              <div className="text-sm mt-1" style={{ color: 'rgba(255,255,255,0.85)' }}>
-                {stats.isSelfSustaining
-                  ? 'The business is covering its own expenses. You are no longer funding it out of pocket.'
-                  : `You've recovered ${stats.recoveryPct.toFixed(0)}% of total expenses through profit so far.`}
-              </div>
-            </div>
-            <div className="text-right">
-              <div className="text-xs uppercase tracking-wider" style={{ color: 'rgba(255,255,255,0.7)' }}>Net Position</div>
-              <div className="font-display text-3xl mt-1 text-white">
-                {stats.netPosition >= 0 ? '+' : '−'}{peso(Math.abs(stats.netPosition))}
-              </div>
-              <div className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.7)' }}>
-                Gross profit minus all expenses
+              <div>
+                <div className="text-xs" style={{ color: 'rgba(255,255,255,0.7)' }}>Money owed to you</div>
+                <div className="text-lg font-medium" style={{ color: stats.unpaid > 0 ? '#F0C674' : 'rgba(255,255,255,0.9)' }}>{m(stats.unpaid)}</div>
               </div>
             </div>
           </div>
-
-          {/* Recovery progress bar */}
-          <div className="mt-5">
-            <div className="flex justify-between text-xs mb-1.5" style={{ color: 'rgba(255,255,255,0.8)' }}>
-              <span>Expense recovery</span>
-              <span>{peso(stats.grossProfit)} / {peso(stats.totalExpenses)}</span>
-            </div>
-            <div className="h-2.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.2)' }}>
-              <div className="h-full rounded-full transition-all" style={{
-                width: `${stats.recoveryPct}%`,
-                background: stats.isSelfSustaining ? '#A8D5A0' : '#F0C674',
-              }} />
-            </div>
-          </div>
-        </div>
-
-        {/* Health sub-metrics */}
-        <div className="grid grid-cols-4 divide-x" style={{ borderTop: `1px solid ${THEME.line}` }}>
-          <HealthMetric
-            icon={<Target size={15} />}
-            label="To Break Even"
-            value={stats.isSelfSustaining ? 'Reached ✓' : peso(stats.amountToBreakEven)}
-            sub={stats.isSelfSustaining ? 'Fully covered' : 'More profit needed'}
-            color={stats.isSelfSustaining ? THEME.green : THEME.brand}
-          />
-          <HealthMetric
-            icon={<TrendingUp size={15} />}
-            label="Avg Profit / Selling Day"
-            value={peso(stats.avgProfitPerDay)}
-            sub={`Across ${stats.sellingDays} selling day${stats.sellingDays !== 1 ? 's' : ''}`}
-            color={THEME.green}
-          />
-          <HealthMetric
-            icon={<CalendarClock size={15} />}
-            label="Est. Days to Self-Sustain"
-            value={stats.isSelfSustaining ? '0 days' : (stats.daysToBreakEven > 0 ? `~${stats.daysToBreakEven} days` : '—')}
-            sub={stats.isSelfSustaining ? 'Already there' : (stats.daysToBreakEven > 0 ? 'At current pace' : 'Need more data')}
-            color={THEME.accent}
-          />
-          <HealthMetric
-            icon={<Wallet size={15} />}
-            label="Avg Sales / Selling Day"
-            value={peso(stats.avgSalesPerDay)}
-            sub="Revenue pace"
-            color={THEME.inkSoft}
-          />
-        </div>
-      </Card>
-
-      {/* ===== KPI row ===== */}
-      <div className="grid grid-cols-4 gap-4 mb-6">
-        <KpiCard label="Total Sales" value={peso(stats.totalSales)} sub={`${stats.orderCount} orders`} accent={THEME.brand} />
-        <KpiCard label="Supplier Cost" value={peso(stats.totalCost)} sub="Cost of meat sold" accent={THEME.inkSoft} />
-        <KpiCard label="Gross Profit" value={peso(stats.grossProfit)} sub={`${stats.margin.toFixed(1)}% margin`} accent={THEME.green} icon={<TrendingUp size={16} />} />
-        <KpiCard label="Total Expenses" value={peso(stats.totalExpenses)} sub={`${expenses.length} entries`} accent={THEME.amber} />
-      </div>
-
-      <div className="grid grid-cols-3 gap-4 mb-6">
-        <SmallStat label="Paid" value={peso(stats.paid)} color={THEME.green} />
-        <SmallStat label="Unpaid" value={peso(stats.unpaid)} color={THEME.red} />
-        <SmallStat label="Partial" value={peso(stats.partial)} color={THEME.amber} />
-      </div>
-
-      {/* ===== Charts ===== */}
-      <div className="grid grid-cols-5 gap-4 mb-6">
-        <Card className="col-span-3 p-5">
-          <div className="font-display text-lg mb-1">Sales & Profit Trend</div>
-          <div className="text-xs mb-4" style={{ color: THEME.inkSoft }}>Last 14 active days</div>
-          {stats.dailySeries.length === 0 ? (
-            <EmptyHint>No sales yet.</EmptyHint>
-          ) : (
-            <ResponsiveContainer width="100%" height={260}>
-              <AreaChart data={stats.dailySeries}>
-                <defs>
-                  <linearGradient id="gSales" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={THEME.brand} stopOpacity={0.25} />
-                    <stop offset="100%" stopColor={THEME.brand} stopOpacity={0} />
-                  </linearGradient>
-                  <linearGradient id="gProfit" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={THEME.green} stopOpacity={0.25} />
-                    <stop offset="100%" stopColor={THEME.green} stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="2 4" stroke={THEME.line} vertical={false} />
-                <XAxis dataKey="label" tick={{ fill: THEME.inkSoft, fontSize: 11 }} axisLine={{ stroke: THEME.line }} tickLine={false} />
-                <YAxis tick={{ fill: THEME.inkSoft, fontSize: 11 }} axisLine={false} tickLine={false} width={50}
-                  tickFormatter={(v) => v >= 1000 ? `${(v/1000).toFixed(0)}k` : v} />
-                <Tooltip contentStyle={{ background: THEME.card, border: `1px solid ${THEME.line}`, borderRadius: 8, fontSize: 13 }} formatter={(v, n) => [peso(v), n === 'sales' ? 'Sales' : 'Profit']} />
-                <Area type="monotone" dataKey="sales" stroke={THEME.brand} strokeWidth={2} fill="url(#gSales)" />
-                <Area type="monotone" dataKey="profit" stroke={THEME.green} strokeWidth={2} fill="url(#gProfit)" />
-              </AreaChart>
-            </ResponsiveContainer>
-          )}
-          <div className="flex gap-4 mt-3 text-xs" style={{ color: THEME.inkSoft }}>
-            <span className="flex items-center gap-1.5"><span className="w-3 h-0.5 inline-block" style={{ background: THEME.brand }} /> Sales</span>
-            <span className="flex items-center gap-1.5"><span className="w-3 h-0.5 inline-block" style={{ background: THEME.green }} /> Profit</span>
+          <div className="absolute -right-8 -bottom-8 opacity-10">
+            <img src={LOGO_DATA_URL} alt="" className="w-44 h-44 rounded-full object-cover" />
           </div>
         </Card>
 
-        <Card className="col-span-2 p-5">
-          <div className="font-display text-lg mb-1" style={{ color: THEME.ink }}>Top Products</div>
+        <Card className="p-6 flex flex-col justify-center">
+          <div className="text-xs uppercase tracking-wider mb-2" style={{ color: THEME.inkSoft }}>All-Time Profit</div>
+          <div className="font-display text-3xl" style={{ color: THEME.green }}>{m(stats.grossProfit)}</div>
+          <div className="text-xs mt-1" style={{ color: THEME.inkSoft }}>From {m(stats.totalSales)} total sales</div>
+          <div className="mt-4 pt-4" style={{ borderTop: `1px solid ${THEME.line}` }}>
+            <div className="text-xs uppercase tracking-wider mb-1" style={{ color: THEME.inkSoft }}>Avg / Selling Day</div>
+            <div className="font-display text-xl" style={{ color: THEME.ink }}>{m(stats.avgProfitPerDay)}</div>
+          </div>
+        </Card>
+      </div>
+
+      {/* ===== Trend chart (the main visual) ===== */}
+      <Card className="p-5 mb-4">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <div className="font-display text-lg">Sales & Profit</div>
+            <div className="text-xs" style={{ color: THEME.inkSoft }}>Last 10 active days</div>
+          </div>
+          <div className="flex gap-4 text-xs" style={{ color: THEME.inkSoft }}>
+            <span className="flex items-center gap-1.5"><span className="w-3 h-0.5 inline-block" style={{ background: THEME.brand }} /> Sales</span>
+            <span className="flex items-center gap-1.5"><span className="w-3 h-0.5 inline-block" style={{ background: THEME.green }} /> Profit</span>
+          </div>
+        </div>
+        {stats.trend.length === 0 ? (
+          <EmptyHint>No sales yet. Add your first order to see the trend.</EmptyHint>
+        ) : (
+          <ResponsiveContainer width="100%" height={250}>
+            <AreaChart data={stats.trend} margin={{ left: -10, right: 8, top: 4 }}>
+              <defs>
+                <linearGradient id="gS" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={THEME.brand} stopOpacity={0.22} />
+                  <stop offset="100%" stopColor={THEME.brand} stopOpacity={0} />
+                </linearGradient>
+                <linearGradient id="gP" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={THEME.green} stopOpacity={0.22} />
+                  <stop offset="100%" stopColor={THEME.green} stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="2 4" stroke={THEME.line} vertical={false} />
+              <XAxis dataKey="label" tick={{ fill: THEME.inkSoft, fontSize: 11 }} axisLine={{ stroke: THEME.line }} tickLine={false} />
+              <YAxis tick={{ fill: THEME.inkSoft, fontSize: 11 }} axisLine={false} tickLine={false} width={56}
+                tickFormatter={(v) => privacy ? '•••' : (v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v)} />
+              <Tooltip contentStyle={{ background: THEME.card, border: `1px solid ${THEME.line}`, borderRadius: 8, fontSize: 13 }}
+                formatter={(v, n) => [privacy ? '₱•••••' : peso(v), n === 'sales' ? 'Sales' : 'Profit']} />
+              <Area type="monotone" dataKey="sales" stroke={THEME.brand} strokeWidth={2.5} fill="url(#gS)" />
+              <Area type="monotone" dataKey="profit" stroke={THEME.green} strokeWidth={2.5} fill="url(#gP)" />
+            </AreaChart>
+          </ResponsiveContainer>
+        )}
+      </Card>
+
+      {/* ===== Two columns: Money owed (actionable) + Top products ===== */}
+      <div className="grid grid-cols-2 gap-4 mb-4">
+        <Card className="p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <div className="font-display text-lg">Money Owed to You</div>
+              <div className="text-xs" style={{ color: THEME.inkSoft }}>Unpaid & partial orders</div>
+            </div>
+            {stats.unpaid > 0 && <Badge color="red">{m(stats.unpaid)}</Badge>}
+          </div>
+          {unpaidOrders.length === 0 ? (
+            <div className="py-8 text-center text-sm" style={{ color: THEME.green }}>
+              <Check size={20} className="mx-auto mb-2" /> All orders are paid. Nice.
+            </div>
+          ) : (
+            <div className="space-y-1">
+              {unpaidOrders.map((o) => {
+                const t = (o.items || []).reduce((s, i) => s + i.qty * i.price, 0);
+                return (
+                  <div key={o.id} className="flex items-center justify-between py-2 px-2 rounded hover:bg-amber-50 cursor-pointer"
+                    onClick={() => setView('orders')}>
+                    <div>
+                      <div className="text-sm font-medium">{o.customer}</div>
+                      <div className="text-xs" style={{ color: THEME.inkSoft }}>{fmtDateShort(o.date)} · {o.id}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-sm font-medium" style={{ color: THEME.red }}>{m(t)}</div>
+                      <Badge color={statusColor(o.payment_status)}>{o.payment_status}</Badge>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </Card>
+
+        <Card className="p-5">
+          <div className="font-display text-lg mb-1">Top Products</div>
           <div className="text-xs mb-4" style={{ color: THEME.inkSoft }}>By total sales</div>
           {stats.topProducts.length === 0 ? (
             <EmptyHint>No sales yet.</EmptyHint>
           ) : (
-            <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={stats.topProducts} layout="vertical" margin={{ left: 0, right: 10 }}>
+            <ResponsiveContainer width="100%" height={210}>
+              <BarChart data={stats.topProducts} layout="vertical" margin={{ left: 0, right: 8 }}>
                 <CartesianGrid strokeDasharray="2 4" stroke={THEME.line} horizontal={false} />
                 <XAxis type="number" tick={{ fill: THEME.inkSoft, fontSize: 11 }} axisLine={false} tickLine={false}
-                  tickFormatter={(v) => v >= 1000 ? `${(v/1000).toFixed(0)}k` : v} />
-                <YAxis dataKey="name" type="category" width={120} tick={{ fill: THEME.ink, fontSize: 10.5 }} axisLine={false} tickLine={false} />
+                  tickFormatter={(v) => privacy ? '•••' : (v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v)} />
+                <YAxis dataKey="name" type="category" width={110} tick={{ fill: THEME.ink, fontSize: 10.5 }} axisLine={false} tickLine={false} />
                 <Tooltip cursor={{ fill: '#F5E6E1' }}
                   contentStyle={{ background: THEME.card, border: `1px solid ${THEME.line}`, borderRadius: 8 }}
-                  formatter={(v) => [peso(v), 'Sales']} />
-                <Bar dataKey="sales" fill={THEME.brand} radius={[0, 4, 4, 0]} barSize={18} />
+                  formatter={(v) => [privacy ? '₱•••••' : peso(v), 'Sales']} />
+                <Bar dataKey="value" fill={THEME.brand} radius={[0, 4, 4, 0]} barSize={16} />
               </BarChart>
             </ResponsiveContainer>
           )}
         </Card>
       </div>
 
-      <Card className="p-5">
+      {/* ===== Recent orders ===== */}
+      <Card className="p-5 mb-4">
         <div className="flex items-center justify-between mb-4">
-          <div>
-            <div className="font-display text-lg">Recent Orders</div>
-            <div className="text-xs" style={{ color: THEME.inkSoft }}>Your latest 6 orders</div>
-          </div>
+          <div className="font-display text-lg">Recent Orders</div>
           <Btn variant="secondary" size="sm" onClick={() => setView('orders')}>View all <ChevronRight size={14} className="inline" /></Btn>
         </div>
         {recentOrders.length === 0 ? (
@@ -680,14 +692,14 @@ function Dashboard({ orders, expenses, catalog, setView }) {
             </thead>
             <tbody>
               {recentOrders.map((o) => {
-                const total = (o.items || []).reduce((s, i) => s + i.qty * i.price, 0);
+                const t = (o.items || []).reduce((s, i) => s + i.qty * i.price, 0);
                 return (
                   <tr key={o.id} style={{ borderTop: `1px solid ${THEME.line}` }}>
                     <td className="py-2.5 font-medium">{o.id}</td>
                     <td className="py-2.5" style={{ color: THEME.inkSoft }}>{fmtDate(o.date)}</td>
                     <td className="py-2.5">{o.customer}</td>
                     <td className="py-2.5" style={{ color: THEME.inkSoft }}>{(o.items || []).length} item{(o.items || []).length !== 1 ? 's' : ''}</td>
-                    <td className="py-2.5 text-right font-medium">{peso(total)}</td>
+                    <td className="py-2.5 text-right font-medium">{m(t)}</td>
                     <td className="py-2.5"><Badge color={statusColor(o.payment_status)}>{o.payment_status}</Badge></td>
                   </tr>
                 );
@@ -696,18 +708,43 @@ function Dashboard({ orders, expenses, catalog, setView }) {
           </table>
         )}
       </Card>
-    </div>
-  );
-}
 
-function HealthMetric({ icon, label, value, sub, color }) {
-  return (
-    <div className="px-5 py-4" style={{ borderColor: THEME.line }}>
-      <div className="flex items-center gap-1.5 text-xs uppercase tracking-wider mb-2" style={{ color: THEME.inkSoft, letterSpacing: '0.06em' }}>
-        <span style={{ color }}>{icon}</span> {label}
-      </div>
-      <div className="font-display text-xl" style={{ color }}>{value}</div>
-      <div className="text-xs mt-1" style={{ color: THEME.inkSoft }}>{sub}</div>
+      {/* ===== Business health: demoted to one compact strip ===== */}
+      <Card className="px-5 py-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-full flex items-center justify-center" style={{ background: stats.isSelfSustaining ? '#E5EDDE' : '#F7E8C9' }}>
+              <Activity size={16} style={{ color: stats.isSelfSustaining ? THEME.green : THEME.amber }} />
+            </div>
+            <div>
+              <div className="text-sm font-medium">
+                {stats.isSelfSustaining ? 'Business is self-sustaining' : 'Building toward break-even'}
+              </div>
+              <div className="text-xs" style={{ color: THEME.inkSoft }}>
+                {stats.isSelfSustaining
+                  ? `Net position: +${m(stats.netPosition)} after all expenses`
+                  : `${m(stats.amountToBreakEven)} more profit needed to cover all expenses`}
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-6">
+            <div className="text-right">
+              <div className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft }}>Recovery</div>
+              <div className="font-display text-lg" style={{ color: stats.isSelfSustaining ? THEME.green : THEME.amber }}>
+                {stats.recoveryPct.toFixed(0)}%
+              </div>
+            </div>
+            <div className="w-32">
+              <div className="h-2 rounded-full overflow-hidden" style={{ background: THEME.line }}>
+                <div className="h-full rounded-full" style={{ width: `${stats.recoveryPct}%`, background: stats.isSelfSustaining ? THEME.green : THEME.amber }} />
+              </div>
+              <div className="text-xs mt-1 text-right" style={{ color: THEME.inkSoft }}>
+                {m(stats.grossProfit)} / {m(stats.totalExpenses)}
+              </div>
+            </div>
+          </div>
+        </div>
+      </Card>
     </div>
   );
 }
@@ -1066,15 +1103,28 @@ function PrintableView({ order, mode, onBack }) {
     if (!docRef.current) return;
     setSavingImg(true);
     try {
-      const dataUrl = await toPng(docRef.current, {
+      const node = docRef.current;
+      // Capture the FULL document using its real scroll size so nothing is clipped
+      const fullWidth = node.scrollWidth;
+      const fullHeight = node.scrollHeight;
+      // Wait a tick so fonts/images settle before capture
+      await new Promise((r) => setTimeout(r, 150));
+      const dataUrl = await toPng(node, {
         quality: 1,
         pixelRatio: 2,
         backgroundColor: '#ffffff',
+        width: fullWidth,
+        height: fullHeight,
+        cacheBust: true,
+        style: {
+          margin: '0',
+          transform: 'none',
+        },
       });
       const a = document.createElement('a');
       const safeName = (order.customer || 'order').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
       a.href = dataUrl;
-      a.download = `${safeName}-${order.id}.png`;
+      a.download = `order-summary-${safeName}.png`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -1106,38 +1156,42 @@ function PrintableView({ order, mode, onBack }) {
         </div>
       </div>
 
-      <div ref={docRef} className="max-w-3xl mx-auto p-10" style={{ background: 'white', boxShadow: '0 2px 8px rgba(0,0,0,0.04)', marginTop: 24, marginBottom: 24 }}>
-        <div className="text-center mb-7 pb-5" style={{ borderBottom: `2px solid ${THEME.brand}` }}>
-          <div className="font-display text-4xl" style={{ color: THEME.brand }}>🥩 M&N MEATSHOP</div>
-          <div className="text-sm mt-1" style={{ color: THEME.inkSoft }}>
-            Your Daily Meat Choice  ·  {isInvoice ? 'Order Summary' : 'Supplier Order Form'}
-          </div>
-        </div>
-
-        <div className="text-center mb-6">
-          <div className="font-display text-2xl tracking-wide uppercase" style={{ color: THEME.ink }}>
-            {isInvoice ? '🧾  Order Summary' : '📋  Supplier Order Copy'}
-          </div>
-          {!isInvoice && (
-            <div className="text-sm mt-1" style={{ color: THEME.inkSoft }}>
-              Please prepare the following items for the customer below.
+      <div className="max-w-3xl mx-auto" style={{ marginTop: 24, marginBottom: 24 }}>
+        <div ref={docRef} className="p-10" style={{ background: 'white', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
+          <div className="flex flex-col items-center text-center mb-6 pb-5" style={{ borderBottom: `2px solid ${THEME.brand}` }}>
+            <img src={LOGO_DATA_URL} alt="M&N Meatshop"
+              className="w-24 h-24 rounded-full object-cover mb-3"
+              style={{ boxShadow: '0 2px 10px rgba(122,46,51,0.2)' }} />
+            <div className="font-display text-3xl" style={{ color: THEME.brand }}>M&N MEATSHOP</div>
+            <div className="text-sm mt-0.5" style={{ color: THEME.inkSoft }}>
+              Your Daily Meat Choice
             </div>
-          )}
-        </div>
+          </div>
 
-        {/* Customer name as the main identifier (replaces Order ID prominence) */}
-        <div className="grid grid-cols-2 gap-6 mb-6 pb-4" style={{ borderBottom: `1px solid ${THEME.line}` }}>
-          <div>
-            <div className="text-xs uppercase tracking-wider mb-1" style={{ color: THEME.inkSoft }}>Customer</div>
-            <div className="font-display text-2xl" style={{ color: THEME.brand }}>{order.customer}</div>
-            {order.phone && <div className="text-sm mt-0.5" style={{ color: THEME.inkSoft }}>{order.phone}</div>}
+          <div className="text-center mb-6">
+            <div className="font-display text-2xl tracking-wide uppercase" style={{ color: THEME.ink }}>
+              {isInvoice ? 'Order Summary' : 'Supplier Order Copy'}
+            </div>
+            {!isInvoice && (
+              <div className="text-sm mt-1" style={{ color: THEME.inkSoft }}>
+                Please prepare the following items for the customer below.
+              </div>
+            )}
           </div>
-          <div className="text-right">
-            <div className="text-xs uppercase tracking-wider mb-1" style={{ color: THEME.inkSoft }}>Date</div>
-            <div className="text-lg">{fmtDate(order.date)}</div>
-            <div className="text-xs mt-1" style={{ color: THEME.inkSoft }}>Ref: {order.id}</div>
+
+          {/* Customer name as the main identifier */}
+          <div className="grid grid-cols-2 gap-6 mb-6 pb-4" style={{ borderBottom: `1px solid ${THEME.line}` }}>
+            <div>
+              <div className="text-xs uppercase tracking-wider mb-1" style={{ color: THEME.inkSoft }}>Customer</div>
+              <div className="font-display text-2xl" style={{ color: THEME.brand }}>{order.customer}</div>
+              {order.phone && <div className="text-sm mt-0.5" style={{ color: THEME.inkSoft }}>{order.phone}</div>}
+            </div>
+            <div className="text-right">
+              <div className="text-xs uppercase tracking-wider mb-1" style={{ color: THEME.inkSoft }}>Date</div>
+              <div className="text-lg">{fmtDate(order.date)}</div>
+              {isInvoice && <div className="text-xs mt-1" style={{ color: THEME.inkSoft }}>Ref: {order.id}</div>}
+            </div>
           </div>
-        </div>
 
         {isInvoice ? (
           /* ===== INVOICE / ORDER SUMMARY: product, qty, unit price, amount, notes ===== */
@@ -1215,8 +1269,9 @@ function PrintableView({ order, mode, onBack }) {
           </div>
         )}
 
-        <div className="text-center mt-10 pt-6 text-sm" style={{ borderTop: `1px solid ${THEME.line}`, color: THEME.inkSoft }}>
-          {isInvoice ? 'Thank you for your order!' : 'For supplier use only  ·  M&N Meatshop'}
+          <div className="text-center mt-10 pt-6 text-sm" style={{ borderTop: `1px solid ${THEME.line}`, color: THEME.inkSoft }}>
+            {isInvoice ? 'Thank you for your order!' : 'For supplier use only  ·  M&N Meatshop'}
+          </div>
         </div>
       </div>
     </div>
