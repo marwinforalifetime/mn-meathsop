@@ -47,6 +47,8 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
+const APP_VERSION = 'v1.4 · Edit + Hide';
+
 const THEME = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
   line: '#E8DFD2', brand: '#7A2E33', brandSoft: '#A04D52',
@@ -387,6 +389,9 @@ export default function App() {
               {saving ? (<><Loader2 size={11} className="animate-spin" /> Saving…</>) : (<><Check size={11} style={{ color: THEME.green }} /> All saved</>)}
             </div>
             <div className="text-xs mt-1 opacity-70" style={{ color: THEME.inkSoft }}>{Object.keys(orders).length} orders · {expenses.length} expenses</div>
+            <div className="text-xs mt-2 px-2 py-1 rounded inline-block" style={{ background: '#F5E6E1', color: THEME.brand, fontWeight: 600 }}>
+              {APP_VERSION}
+            </div>
           </div>
         </aside>
 
