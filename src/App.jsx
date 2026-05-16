@@ -47,7 +47,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v1.8 · Round Icon + Customer Autofill';
+const APP_VERSION = 'v1.9 · Expenses + Backup Reminder';
 
 const THEME = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -260,6 +260,8 @@ export default function App() {
   const [saving, setSaving] = useState(false);
   const [showBackup, setShowBackup] = useState(false);
   const [privacy, setPrivacy] = useState(false);
+  const [backupNagDismissed, setBackupNagDismissed] = useState(false);
+  const [daysSinceBackup, setDaysSinceBackup] = useState(0);
   const lastSaveRef = useRef(Date.now());
 
   useEffect(() => {
@@ -273,6 +275,18 @@ export default function App() {
     setExpenses(e || []);
     setInventory(i || Object.fromEntries(SEED_PRODUCTS.map(p => [p.name, { qty: 0, dateAdded: '', notes: '' }])));
     setMeta(m || { lastOrderNum: 0 });
+    // Work out how long since the last backup, for the reminder
+    try {
+      const last = localStorage.getItem(STORAGE_PREFIX + 'lastBackup');
+      if (last) {
+        const days = Math.floor((Date.now() - Number(last)) / 86400000);
+        setDaysSinceBackup(days);
+      } else {
+        // Never backed up: seed the marker so the nag starts counting from now
+        localStorage.setItem(STORAGE_PREFIX + 'lastBackup', String(Date.now()));
+        setDaysSinceBackup(0);
+      }
+    } catch (e) {}
     setLoaded(true);
   }, []);
 
@@ -306,6 +320,9 @@ export default function App() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+    // Record the backup time so the reminder resets
+    try { localStorage.setItem(STORAGE_PREFIX + 'lastBackup', String(Date.now())); } catch (e) {}
+    setBackupNagDismissed(true);
   };
 
   const importData = (file) => {
@@ -396,6 +413,30 @@ export default function App() {
         </aside>
 
         <main className="flex-1 p-8">
+          {daysSinceBackup >= 7 && !backupNagDismissed && (
+            <div className="mb-6 px-5 py-4 rounded-lg flex items-center justify-between gap-4 no-print"
+              style={{ background: '#F7E8C9', border: `1px solid ${THEME.amber}` }}>
+              <div className="flex items-start gap-3">
+                <HardDrive size={18} style={{ color: '#9A6A1F' }} className="mt-0.5 flex-shrink-0" />
+                <div className="text-sm" style={{ color: '#7a541a' }}>
+                  <span className="font-semibold">It's been {daysSinceBackup} days since your last backup.</span>
+                  <span> Your data lives only in this browser — download a backup file to keep it safe.</span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <button onClick={() => setBackupNagDismissed(true)}
+                  className="px-3 py-1.5 text-sm rounded-md"
+                  style={{ background: 'transparent', color: '#7a541a', border: `1px solid ${THEME.amber}` }}>
+                  Later
+                </button>
+                <button onClick={exportData}
+                  className="px-3.5 py-1.5 text-sm rounded-md font-medium"
+                  style={{ background: THEME.brand, color: 'white' }}>
+                  <Download size={14} className="inline -mt-0.5 mr-1" /> Back up now
+                </button>
+              </div>
+            </div>
+          )}
           {view === 'dashboard' && <Dashboard orders={orders} expenses={expenses} catalog={catalog} setView={setView} privacy={privacy} setPrivacy={setPrivacy} />}
           {view === 'new' && <NewOrder catalog={catalog} meta={meta} setMeta={setMeta} orders={orders} setOrders={setOrders} onSaved={() => setView('orders')} />}
           {view === 'orders' && <Orders orders={orders} setOrders={setOrders} productByName={productByName} catalog={catalog} />}
@@ -1795,7 +1836,8 @@ function Pickup({ orders }) {
    ============================================================ */
 
 function Expenses({ expenses, setExpenses }) {
-  const [showAdd, setShowAdd] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [editId, setEditId] = useState(null);   // null = adding, otherwise editing this id
   const [date, setDate] = useState(today());
   const [category, setCategory] = useState(EXPENSE_CATEGORIES[1]);
   const [description, setDescription] = useState('');
@@ -1803,21 +1845,56 @@ function Expenses({ expenses, setExpenses }) {
   const [payment, setPayment] = useState('Cash');
   const [notes, setNotes] = useState('');
 
-  const addExpense = () => {
+  const openAdd = () => {
+    setEditId(null);
+    setDate(today()); setCategory(EXPENSE_CATEGORIES[1]);
+    setDescription(''); setAmount(''); setPayment('Cash'); setNotes('');
+    setShowForm(true);
+  };
+
+  const openEdit = (e) => {
+    setEditId(e.id);
+    setDate(e.date || today());
+    setCategory(e.category || EXPENSE_CATEGORIES[1]);
+    setDescription(e.description || '');
+    setAmount(String(e.amount ?? ''));
+    setPayment(e.payment || 'Cash');
+    setNotes(e.notes || '');
+    setShowForm(true);
+  };
+
+  const saveExpense = () => {
     if (!description.trim() || !amount || Number(amount) <= 0) return;
-    const newExpense = {
-      id: 'EXP-' + Date.now(), date, category,
-      description: description.trim(), amount: Number(amount), payment, notes: notes.trim(),
-    };
-    setExpenses([newExpense, ...expenses]);
-    setDescription(''); setAmount(''); setNotes('');
-    setShowAdd(false);
+    if (editId) {
+      setExpenses(expenses.map(e => e.id === editId
+        ? { ...e, date, category, description: description.trim(), amount: Number(amount), payment, notes: notes.trim() }
+        : e));
+    } else {
+      const newExpense = {
+        id: 'EXP-' + Date.now(), date, category,
+        description: description.trim(), amount: Number(amount), payment, notes: notes.trim(),
+      };
+      setExpenses([newExpense, ...expenses]);
+    }
+    setShowForm(false);
   };
 
   const deleteExpense = (id) => {
     if (!confirm('Delete this expense?')) return;
     setExpenses(expenses.filter(e => e.id !== id));
   };
+
+  // Sort entries by the actual expense date (newest first), so logging a past
+  // date drops it into the right place instead of always sitting on top.
+  const sortedExpenses = useMemo(() => {
+    return [...expenses].sort((a, b) => {
+      const da = a.date || '';
+      const db = b.date || '';
+      if (da !== db) return db.localeCompare(da);    // newest date first
+      // same date: keep most-recently-added on top (id is timestamp-based)
+      return (b.id || '').localeCompare(a.id || '');
+    });
+  }, [expenses]);
 
   const stats = useMemo(() => {
     const total = expenses.reduce((s, e) => s + (e.amount || 0), 0);
@@ -1839,7 +1916,7 @@ function Expenses({ expenses, setExpenses }) {
   return (
     <div>
       <Header title="Expenses" subtitle="Every peso spent on your business"
-        right={<Btn variant="primary" onClick={() => setShowAdd(true)}><Plus size={15} className="inline -mt-0.5 mr-1" />Add Expense</Btn>} />
+        right={<Btn variant="primary" onClick={openAdd}><Plus size={15} className="inline -mt-0.5 mr-1" />Add Expense</Btn>} />
 
       <div className="grid grid-cols-4 gap-4 mb-6">
         <KpiCard label="Total Spent" value={peso(stats.total)} sub={`${expenses.length} entries`} accent={THEME.brand} />
@@ -1895,14 +1972,15 @@ function Expenses({ expenses, setExpenses }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {expenses.map((e) => (
+                  {sortedExpenses.map((e) => (
                     <tr key={e.id} style={{ borderTop: `1px solid ${THEME.line}` }}>
                       <td className="py-2.5" style={{ color: THEME.inkSoft }}>{fmtDateShort(e.date)}</td>
                       <td className="py-2.5"><Badge color="gray">{e.category}</Badge></td>
                       <td className="py-2.5">{e.description}</td>
                       <td className="py-2.5 text-right font-medium">{peso(e.amount)}</td>
-                      <td className="py-2.5 text-right">
-                        <button onClick={() => deleteExpense(e.id)} style={{ color: THEME.red }} className="p-1 hover:opacity-70"><Trash2 size={13} /></button>
+                      <td className="py-2.5 text-right whitespace-nowrap">
+                        <button onClick={() => openEdit(e)} style={{ color: THEME.inkSoft }} className="p-1 mr-1 hover:opacity-70" title="Edit"><Edit3 size={13} /></button>
+                        <button onClick={() => deleteExpense(e.id)} style={{ color: THEME.red }} className="p-1 hover:opacity-70" title="Delete"><Trash2 size={13} /></button>
                       </td>
                     </tr>
                   ))}
@@ -1913,9 +1991,9 @@ function Expenses({ expenses, setExpenses }) {
         </Card>
       </div>
 
-      <Modal open={showAdd} onClose={() => setShowAdd(false)} maxWidth="max-w-lg">
+      <Modal open={showForm} onClose={() => setShowForm(false)} maxWidth="max-w-lg">
         <div className="px-6 py-5">
-          <div className="font-display text-xl mb-5">Add Expense</div>
+          <div className="font-display text-xl mb-5">{editId ? 'Edit Expense' : 'Add Expense'}</div>
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div><Label>Date</Label><Input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></div>
@@ -1929,8 +2007,8 @@ function Expenses({ expenses, setExpenses }) {
             <div><Label>Notes (optional)</Label><Input value={notes} onChange={(e) => setNotes(e.target.value)} /></div>
           </div>
           <div className="flex justify-end gap-2 mt-6">
-            <Btn variant="secondary" onClick={() => setShowAdd(false)}>Cancel</Btn>
-            <Btn variant="primary" onClick={addExpense}><Save size={14} className="inline -mt-0.5 mr-1" />Save</Btn>
+            <Btn variant="secondary" onClick={() => setShowForm(false)}>Cancel</Btn>
+            <Btn variant="primary" onClick={saveExpense}><Save size={14} className="inline -mt-0.5 mr-1" />{editId ? 'Save Changes' : 'Save'}</Btn>
           </div>
         </div>
       </Modal>
