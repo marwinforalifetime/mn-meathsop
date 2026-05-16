@@ -47,7 +47,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v1.5 · No Ref ID';
+const APP_VERSION = 'v1.7 · Cancel + Today + Partial';
 
 const THEME = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -450,23 +450,36 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy }) 
 
   const now = new Date();
   const thisMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const todayKey = now.toISOString().slice(0, 10);
 
   const stats = useMemo(() => {
     let totalSales = 0, totalCost = 0, unpaid = 0;
     let monthSales = 0, monthCost = 0;
+    let todaySales = 0, todayProfit = 0, todayOrders = 0, todayPendingDeliveries = 0;
     const productQty = {};
     const daily = {};
     const profitByDay = {};
     ordersList.forEach((o) => {
+      // Cancelled orders are kept for records but excluded from all financial totals
+      if (o.delivery_status === 'Cancelled') return;
       const oSales = (o.items || []).reduce((s, i) => s + i.qty * i.price, 0);
       const oCost = (o.items || []).reduce((s, i) => s + i.qty * i.cost, 0);
       totalSales += oSales;
       totalCost += oCost;
       if (o.payment_status === 'Unpaid') unpaid += oSales;
-      else if (o.payment_status === 'Partial') unpaid += oSales / 2;
+      else if (o.payment_status === 'Partial') {
+        const paid = Number(o.amount_paid) || 0;
+        unpaid += Math.max(0, oSales - paid);
+      }
       if ((o.date || '').startsWith(thisMonthKey)) {
         monthSales += oSales;
         monthCost += oCost;
+      }
+      if ((o.date || '') === todayKey) {
+        todaySales += oSales;
+        todayProfit += (oSales - oCost);
+        todayOrders += 1;
+        if ((o.delivery_status || 'Pending') === 'Pending') todayPendingDeliveries += 1;
       }
       (o.items || []).forEach((it) => {
         productQty[it.product] = (productQty[it.product] || 0) + it.qty * it.price;
@@ -498,15 +511,16 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy }) 
 
     return {
       totalSales, grossProfit, monthSales, monthProfit, totalExpenses,
-      netPosition, unpaid, orderCount: ordersList.length,
+      netPosition, unpaid, orderCount: ordersList.filter(o => o.delivery_status !== 'Cancelled').length,
       sellingDays, avgProfitPerDay, recoveryPct, isSelfSustaining, amountToBreakEven,
       topProducts, trend,
+      todaySales, todayProfit, todayOrders, todayPendingDeliveries,
     };
-  }, [orders, expenses, thisMonthKey]);
+  }, [orders, expenses, thisMonthKey, todayKey]);
 
   const unpaidOrders = useMemo(() =>
     ordersList
-      .filter(o => o.payment_status === 'Unpaid' || o.payment_status === 'Partial')
+      .filter(o => (o.payment_status === 'Unpaid' || o.payment_status === 'Partial') && o.delivery_status !== 'Cancelled')
       .sort((a, b) => (b.id || '').localeCompare(a.id || ''))
       .slice(0, 5),
     [orders]
@@ -543,6 +557,34 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy }) 
           <Btn variant="primary" onClick={() => setView('new')}><PlusCircle size={16} className="inline mr-1.5 -mt-0.5" />New Order</Btn>
         </div>
       </div>
+
+      {/* ===== Today's snapshot ===== */}
+      <Card className="px-5 py-3.5 mb-4">
+        <div className="flex items-center justify-between flex-wrap gap-y-2">
+          <div className="flex items-center gap-2 text-sm font-medium" style={{ color: THEME.ink }}>
+            <span className="w-2 h-2 rounded-full inline-block" style={{ background: THEME.green }} />
+            Today
+          </div>
+          <div className="flex items-center gap-8">
+            <div>
+              <span className="text-xs uppercase tracking-wider mr-2" style={{ color: THEME.inkSoft }}>Orders</span>
+              <span className="font-display text-lg" style={{ color: THEME.ink }}>{stats.todayOrders}</span>
+            </div>
+            <div>
+              <span className="text-xs uppercase tracking-wider mr-2" style={{ color: THEME.inkSoft }}>Sales</span>
+              <span className="font-display text-lg" style={{ color: THEME.brand }}>{m(stats.todaySales)}</span>
+            </div>
+            <div>
+              <span className="text-xs uppercase tracking-wider mr-2" style={{ color: THEME.inkSoft }}>Profit</span>
+              <span className="font-display text-lg" style={{ color: THEME.green }}>{m(stats.todayProfit)}</span>
+            </div>
+            <div>
+              <span className="text-xs uppercase tracking-wider mr-2" style={{ color: THEME.inkSoft }}>To Deliver</span>
+              <span className="font-display text-lg" style={{ color: stats.todayPendingDeliveries > 0 ? THEME.amber : THEME.inkSoft }}>{stats.todayPendingDeliveries}</span>
+            </div>
+          </div>
+        </div>
+      </Card>
 
       {/* ===== Hero: This month's profit (the one number that matters most) ===== */}
       <div className="grid grid-cols-3 gap-4 mb-4">
@@ -933,12 +975,14 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
 function Orders({ orders, setOrders, productByName, catalog }) {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all');
+  const [deliveryFilter, setDeliveryFilter] = useState('all');
   const [selected, setSelected] = useState(null);
   const [printMode, setPrintMode] = useState(null);
 
   const ordersList = useMemo(() => {
     let list = Object.values(orders);
     if (filter !== 'all') list = list.filter(o => o.payment_status === filter);
+    if (deliveryFilter !== 'all') list = list.filter(o => (o.delivery_status || 'Pending') === deliveryFilter);
     if (search.trim()) {
       const q = search.toLowerCase();
       list = list.filter(o =>
@@ -948,7 +992,7 @@ function Orders({ orders, setOrders, productByName, catalog }) {
       );
     }
     return list.sort((a, b) => (b.id || '').localeCompare(a.id || ''));
-  }, [orders, search, filter]);
+  }, [orders, search, filter, deliveryFilter]);
 
   const deleteOrder = (id) => {
     if (!confirm(`Delete order ${id}? This cannot be undone.`)) return;
@@ -974,24 +1018,48 @@ function Orders({ orders, setOrders, productByName, catalog }) {
 
   return (
     <div>
-      <Header title="Orders" subtitle={`${ordersList.length} order${ordersList.length !== 1 ? 's' : ''}`} />
+      <Header title="Orders" subtitle={(() => {
+        const all = Object.values(orders);
+        const cancelled = all.filter(o => o.delivery_status === 'Cancelled').length;
+        const active = all.length - cancelled;
+        return cancelled > 0
+          ? `${active} active · ${cancelled} cancelled · showing ${ordersList.length}`
+          : `${ordersList.length} order${ordersList.length !== 1 ? 's' : ''}`;
+      })()} />
 
       <Card className="p-5">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="flex-1 relative">
+        <div className="mb-4">
+          <div className="relative mb-3">
             <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: THEME.inkSoft }} />
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by order ID, customer, or product…"
               className="w-full pl-9 pr-3 py-2 rounded-md outline-none text-sm"
               style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink }} />
           </div>
-          <div className="flex gap-1">
-            {['all', 'Paid', 'Unpaid', 'Partial'].map((f) => (
-              <button key={f} onClick={() => setFilter(f)}
-                className="px-3 py-1.5 text-sm rounded-md"
-                style={{ background: filter === f ? THEME.brand : 'transparent', color: filter === f ? 'white' : THEME.ink, border: `1px solid ${filter === f ? THEME.brand : THEME.line}` }}>
-                {f === 'all' ? 'All' : f}
-              </button>
-            ))}
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft, letterSpacing: '0.06em' }}>Payment</span>
+              <div className="flex gap-1">
+                {['all', 'Paid', 'Unpaid', 'Partial'].map((f) => (
+                  <button key={f} onClick={() => setFilter(f)}
+                    className="px-3 py-1.5 text-sm rounded-md"
+                    style={{ background: filter === f ? THEME.brand : 'transparent', color: filter === f ? 'white' : THEME.ink, border: `1px solid ${filter === f ? THEME.brand : THEME.line}` }}>
+                    {f === 'all' ? 'All' : f}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft, letterSpacing: '0.06em' }}>Delivery</span>
+              <div className="flex gap-1">
+                {['all', 'Pending', 'Delivered', 'Cancelled'].map((f) => (
+                  <button key={f} onClick={() => setDeliveryFilter(f)}
+                    className="px-3 py-1.5 text-sm rounded-md"
+                    style={{ background: deliveryFilter === f ? THEME.accent : 'transparent', color: deliveryFilter === f ? 'white' : THEME.ink, border: `1px solid ${deliveryFilter === f ? THEME.accent : THEME.line}` }}>
+                    {f === 'all' ? 'All' : f}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1014,11 +1082,12 @@ function Orders({ orders, setOrders, productByName, catalog }) {
             <tbody>
               {ordersList.map((o) => {
                 const total = (o.items || []).reduce((s, i) => s + i.qty * i.price, 0);
+                const isCancelled = o.delivery_status === 'Cancelled';
                 return (
-                  <tr key={o.id} style={{ borderTop: `1px solid ${THEME.line}` }} className="hover:bg-amber-50 cursor-pointer" onClick={() => setSelected(o)}>
-                    <td className="py-2.5 font-medium">{o.id}</td>
+                  <tr key={o.id} style={{ borderTop: `1px solid ${THEME.line}`, opacity: isCancelled ? 0.5 : 1 }} className="hover:bg-amber-50 cursor-pointer" onClick={() => setSelected(o)}>
+                    <td className="py-2.5 font-medium" style={{ textDecoration: isCancelled ? 'line-through' : 'none' }}>{o.id}</td>
                     <td className="py-2.5" style={{ color: THEME.inkSoft }}>{fmtDate(o.date)}</td>
-                    <td className="py-2.5">{o.customer}</td>
+                    <td className="py-2.5" style={{ textDecoration: isCancelled ? 'line-through' : 'none' }}>{o.customer}</td>
                     <td className="py-2.5" style={{ color: THEME.inkSoft }}>{(o.items || []).length} item{(o.items || []).length !== 1 ? 's' : ''}</td>
                     <td className="py-2.5 text-right font-medium">{peso(total)}</td>
                     <td className="py-2.5"><Badge color={statusColor(o.payment_status)}>{o.payment_status}</Badge></td>
@@ -1066,6 +1135,7 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
       payment_method: order.payment_method || 'Cash',
       delivery_status: order.delivery_status || 'Pending',
       notes: order.notes || '',
+      amount_paid: order.amount_paid ?? '',
       items: (order.items || []).map((it) => ({ ...it })),
     });
     setErr('');
@@ -1115,6 +1185,7 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
       payment_method: draft.payment_method,
       delivery_status: draft.delivery_status,
       notes: draft.notes.trim(),
+      amount_paid: draft.payment_status === 'Partial' ? (draft.amount_paid === '' ? '' : Number(draft.amount_paid) || 0) : '',
       items: cleanItems,
       edited_at: new Date().toISOString(),
     };
@@ -1146,6 +1217,17 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
       </div>
 
       <div className="px-6 py-5">
+        {/* ===== Cancelled banner ===== */}
+        {!editing && order.delivery_status === 'Cancelled' && (
+          <div className="mb-5 px-4 py-3 rounded-md flex items-start gap-2" style={{ background: '#F5DDE0', color: THEME.red }}>
+            <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+            <div className="text-sm">
+              <span className="font-semibold">This order is cancelled.</span> It's excluded from sales, profit, and pickup totals but kept here for your records.
+              {order.cancel_reason ? <div className="mt-1" style={{ color: THEME.ink }}>Reason: {order.cancel_reason}</div> : null}
+            </div>
+          </div>
+        )}
+
         {/* ===== Edit mode: customer + date ===== */}
         {editing && (
           <div className="grid grid-cols-3 gap-4 mb-5">
@@ -1262,7 +1344,28 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
           </div>
         </div>
 
-        {/* ===== Order notes ===== */}
+        {/* ===== Partial payment amount ===== */}
+        {((editing ? draft.payment_status : order.payment_status) === 'Partial') && (
+          <div className="mb-5 -mt-2">
+            <Label>Amount Paid So Far (₱)</Label>
+            <div className="flex items-center gap-3">
+              <div className="w-48">
+                <Input type="number" step="0.01" min="0"
+                  value={editing ? (draft.amount_paid ?? '') : (order.amount_paid ?? '')}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    editing ? setDraft({ ...draft, amount_paid: v }) : onUpdate({ amount_paid: v === '' ? '' : Number(v) });
+                  }}
+                  placeholder="0.00" />
+              </div>
+              <div className="text-sm" style={{ color: THEME.inkSoft }}>
+                Balance: <span className="font-medium" style={{ color: THEME.red }}>
+                  {peso(Math.max(0, total - (Number(editing ? draft.amount_paid : order.amount_paid) || 0)))}
+                </span> of {peso(total)}
+              </div>
+            </div>
+          </div>
+        )}
         {editing ? (
           <div className="mb-5">
             <Label>Order Notes</Label>
@@ -1291,7 +1394,22 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
           </div>
         ) : (
           <div className="flex items-center justify-between gap-2">
-            <Btn variant="danger" size="sm" onClick={onDelete}><Trash2 size={14} className="inline -mt-0.5 mr-1" /> Delete</Btn>
+            <div className="flex gap-2">
+              <Btn variant="danger" size="sm" onClick={onDelete}><Trash2 size={14} className="inline -mt-0.5 mr-1" /> Delete</Btn>
+              {order.delivery_status === 'Cancelled' ? (
+                <Btn variant="secondary" size="sm" onClick={() => onUpdate({ delivery_status: 'Pending', cancel_reason: '' })}>
+                  <RefreshCw size={14} className="inline -mt-0.5 mr-1" /> Restore Order
+                </Btn>
+              ) : (
+                <Btn variant="secondary" size="sm" onClick={() => {
+                  const reason = prompt('Cancel this order? Optionally type a reason (e.g. "customer changed mind"):', '');
+                  if (reason === null) return; // user pressed Cancel on the prompt
+                  onUpdate({ delivery_status: 'Cancelled', cancel_reason: (reason || '').trim() });
+                }}>
+                  <X size={14} className="inline -mt-0.5 mr-1" /> Cancel Order
+                </Btn>
+              )}
+            </div>
             <div className="flex gap-2">
               <Btn variant="secondary" onClick={() => onPrint('supplier')}><FileText size={14} className="inline -mt-0.5 mr-1" /> Supplier Copy</Btn>
               <Btn variant="primary" onClick={() => onPrint('invoice')}><Receipt size={14} className="inline -mt-0.5 mr-1" /> Invoice</Btn>
@@ -1498,7 +1616,9 @@ function Pickup({ orders }) {
   const [selected, setSelected] = useState(new Set());
 
   const ordersList = useMemo(
-    () => Object.values(orders).sort((a, b) => (b.id || '').localeCompare(a.id || '')),
+    () => Object.values(orders)
+      .filter(o => o.delivery_status !== 'Cancelled')
+      .sort((a, b) => (b.id || '').localeCompare(a.id || '')),
     [orders]
   );
 

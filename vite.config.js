@@ -7,7 +7,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg', 'apple-touch-icon.png'],
+      includeAssets: ['favicon-64.png', 'apple-touch-icon.png'],
       manifest: {
         name: 'M&N Meatshop',
         short_name: 'M&N Shop',
