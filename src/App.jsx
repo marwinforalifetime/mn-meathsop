@@ -4,7 +4,7 @@ import {
   Printer, Trash2, Edit3, Search, X, Check, AlertCircle, TrendingUp,
   Receipt, FileText, ChevronRight, Save, Loader2, Plus,
   Eye, EyeOff, ArrowLeft, RefreshCw, Download, Upload, HardDrive, Image as ImageIcon,
-  Activity
+  Activity, Menu
 } from 'lucide-react';
 import {
   BarChart, Bar, PieChart, Pie, Cell, ResponsiveContainer, XAxis, YAxis,
@@ -47,7 +47,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v2.2 · Production Dashboard';
+const APP_VERSION = 'v2.3 · Mobile + Icon + Fixes';
 
 const THEME = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -206,12 +206,12 @@ function Modal({ open, onClose, children, maxWidth = 'max-w-2xl' }) {
 
 function Header({ title, subtitle, right }) {
   return (
-    <div className="flex items-end justify-between mb-6 no-print">
+    <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-6 no-print">
       <div>
-        <h1 className="font-display text-3xl leading-tight" style={{ color: THEME.ink }}>{title}</h1>
+        <h1 className="font-display text-2xl sm:text-3xl leading-tight" style={{ color: THEME.ink }}>{title}</h1>
         {subtitle && <div className="text-sm mt-1" style={{ color: THEME.inkSoft }}>{subtitle}</div>}
       </div>
-      {right}
+      {right && <div className="flex-shrink-0">{right}</div>}
     </div>
   );
 }
@@ -252,6 +252,7 @@ function EmptyHint({ children }) {
 export default function App() {
   const [loaded, setLoaded] = useState(false);
   const [view, setView] = useState('dashboard');
+  const [mobileNav, setMobileNav] = useState(false);
   const [catalog, setCatalog] = useState([]);
   const [orders, setOrders] = useState({});
   const [expenses, setExpenses] = useState([]);
@@ -373,20 +374,46 @@ export default function App() {
 
   return (
     <div className="min-h-screen" style={{ background: THEME.bg, color: THEME.ink, fontFamily: 'DM Sans, sans-serif' }}>
+      {/* Mobile top bar */}
+      <div className="lg:hidden sticky top-0 z-30 flex items-center justify-between px-4 py-3 no-print"
+        style={{ background: THEME.card, borderBottom: `1px solid ${THEME.line}` }}>
+        <button onClick={() => setMobileNav(true)} className="p-2 -ml-2" style={{ color: THEME.ink }} aria-label="Open menu">
+          <Menu size={22} />
+        </button>
+        <div className="flex items-center gap-2">
+          <img src={LOGO_DATA_URL} alt="" className="w-8 h-8 rounded-full object-cover" />
+          <span className="font-display text-lg" style={{ color: THEME.brand }}>M&N Meatshop</span>
+        </div>
+        <button onClick={() => { setView('new'); }} className="p-2 -mr-2" style={{ color: THEME.brand }} aria-label="New order">
+          <PlusCircle size={22} />
+        </button>
+      </div>
+
+      {/* Mobile drawer backdrop */}
+      {mobileNav && (
+        <div className="lg:hidden fixed inset-0 z-40 no-print" style={{ background: 'rgba(0,0,0,0.4)' }}
+          onClick={() => setMobileNav(false)} />
+      )}
+
       <div className="flex">
-        <aside className="w-60 min-h-screen border-r flex flex-col no-print" style={{ borderColor: THEME.line, background: THEME.card }}>
-          <div className="px-6 py-6 border-b flex flex-col items-center text-center" style={{ borderColor: THEME.line }}>
-            <img src={LOGO_DATA_URL} alt="M&N Meatshop" className="w-28 h-28 rounded-full object-cover mb-3" style={{ boxShadow: '0 2px 10px rgba(122,46,51,0.18)' }} />
+        <aside
+          className={`fixed lg:sticky top-0 z-50 lg:z-auto w-64 lg:w-60 h-screen lg:h-screen border-r flex flex-col no-print transition-transform duration-300 ${mobileNav ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
+          style={{ borderColor: THEME.line, background: THEME.card }}>
+          <div className="px-6 py-6 border-b flex flex-col items-center text-center relative" style={{ borderColor: THEME.line }}>
+            <button onClick={() => setMobileNav(false)} className="lg:hidden absolute top-3 right-3 p-1.5" style={{ color: THEME.inkSoft }} aria-label="Close menu">
+              <X size={18} />
+            </button>
+            <img src={LOGO_DATA_URL} alt="M&N Meatshop" className="w-24 h-24 lg:w-28 lg:h-28 rounded-full object-cover mb-3" style={{ boxShadow: '0 2px 10px rgba(122,46,51,0.18)' }} />
             <div className="font-display text-xl leading-tight" style={{ color: THEME.brand }}>M&N Meatshop</div>
             <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>Your daily meat choice</div>
           </div>
-          <nav className="flex-1 py-4">
+          <nav className="flex-1 py-4 overflow-y-auto">
             {navItems.map((item) => {
               const Icon = item.icon;
               const active = view === item.id;
               return (
-                <button key={item.id} onClick={() => setView(item.id)}
-                  className="w-full flex items-center gap-3 px-6 py-2.5 text-sm transition-colors text-left"
+                <button key={item.id} onClick={() => { setView(item.id); setMobileNav(false); }}
+                  className="w-full flex items-center gap-3 px-6 py-3 lg:py-2.5 text-sm transition-colors text-left"
                   style={{
                     background: active ? '#F5E6E1' : 'transparent',
                     color: active ? THEME.brand : THEME.ink,
@@ -400,7 +427,7 @@ export default function App() {
             })}
           </nav>
           <div className="px-6 py-4 border-t" style={{ borderColor: THEME.line }}>
-            <button onClick={() => setShowBackup(true)} className="flex items-center gap-2 text-xs mb-2 hover:opacity-70" style={{ color: THEME.inkSoft }}>
+            <button onClick={() => { setShowBackup(true); setMobileNav(false); }} className="flex items-center gap-2 text-xs mb-2 hover:opacity-70" style={{ color: THEME.inkSoft }}>
               <HardDrive size={12} /> Backup & Restore
             </button>
             <div className="text-xs flex items-center gap-2" style={{ color: THEME.inkSoft }}>
@@ -413,7 +440,7 @@ export default function App() {
           </div>
         </aside>
 
-        <main className="flex-1 p-8">
+        <main className="flex-1 min-w-0 p-4 sm:p-6 lg:p-8">
           {daysSinceBackup >= 7 && !backupNagDismissed && (
             <div className="mb-6 px-5 py-4 rounded-lg flex items-center justify-between gap-4 no-print"
               style={{ background: '#F7E8C9', border: `1px solid ${THEME.amber}` }}>
@@ -608,18 +635,18 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy }) 
   return (
     <div>
       {/* ===== Clean header: logo + title + privacy toggle ===== */}
-      <div className="flex items-center justify-between mb-7 no-print">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-7 no-print">
         <div className="flex items-center gap-4">
-          <img src={LOGO_DATA_URL} alt="M&N Meatshop" className="w-14 h-14 rounded-full object-cover" style={{ boxShadow: '0 2px 8px rgba(122,46,51,0.15)' }} />
+          <img src={LOGO_DATA_URL} alt="M&N Meatshop" className="w-12 h-12 sm:w-14 sm:h-14 rounded-full object-cover" style={{ boxShadow: '0 2px 8px rgba(122,46,51,0.15)' }} />
           <div>
-            <h1 className="font-display text-3xl leading-tight" style={{ color: THEME.ink }}>Dashboard</h1>
-            <div className="text-sm" style={{ color: THEME.inkSoft }}>{monthName} {now.getFullYear()} · {stats.orderCount} orders all-time</div>
+            <h1 className="font-display text-2xl sm:text-3xl leading-tight" style={{ color: THEME.ink }}>Dashboard</h1>
+            <div className="text-xs sm:text-sm" style={{ color: THEME.inkSoft }}>{monthName} {now.getFullYear()} · {stats.orderCount} orders all-time</div>
           </div>
         </div>
         <div className="flex items-center gap-2">
           <button
             onClick={() => setPrivacy(!privacy)}
-            className="flex items-center gap-2 px-3.5 py-2 text-sm rounded-md transition-colors"
+            className="flex items-center gap-2 px-3.5 py-2 text-sm rounded-md transition-colors flex-1 sm:flex-initial justify-center"
             style={{ background: privacy ? THEME.brand : 'transparent', color: privacy ? 'white' : THEME.inkSoft, border: `1px solid ${privacy ? THEME.brand : THEME.line}` }}
             title={privacy ? 'Show amounts' : 'Hide amounts'}
           >
@@ -661,8 +688,8 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy }) 
       </Card>
 
       {/* ===== Hero: This month's profit ===== */}
-      <div className="grid grid-cols-3 gap-4 mb-4">
-        <Card className="col-span-2 p-6 relative overflow-hidden" style={{ background: `linear-gradient(135deg, ${THEME.brand} 0%, ${THEME.brandSoft} 100%)`, border: 'none' }}>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+        <Card className="lg:col-span-2 p-6 relative overflow-hidden" style={{ background: `linear-gradient(135deg, ${THEME.brand} 0%, ${THEME.brandSoft} 100%)`, border: 'none' }}>
           <div className="relative z-10">
             <div className="text-xs uppercase tracking-widest" style={{ color: 'rgba(255,255,255,0.75)' }}>{monthName} Profit</div>
             <div className="font-display text-5xl mt-2 text-white">{m(stats.monthProfit)}</div>
@@ -695,7 +722,7 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy }) 
       </div>
 
       {/* ===== Production run performance + weekday pattern ===== */}
-      <div className="grid grid-cols-3 gap-4 mb-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
         <Card className="col-span-2 p-5">
           <div className="flex items-center justify-between mb-1">
             <div className="font-display text-lg">Production Run Performance</div>
@@ -763,7 +790,7 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy }) 
       </div>
 
       {/* ===== Two columns: Money owed (actionable) + Top products ===== */}
-      <div className="grid grid-cols-2 gap-4 mb-4">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
         <Card className="p-5">
           <div className="flex items-center justify-between mb-4">
             <div>
@@ -997,10 +1024,10 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
         }
       />
 
-      <div className="grid grid-cols-3 gap-6">
-        <div className="col-span-2 space-y-5">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 space-y-5">
           <Card className="p-6">
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div><Label>Date</Label><Input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></div>
               <div className="relative">
                 <Label>Customer Name</Label>
@@ -1042,9 +1069,9 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
               {items.map((it, idx) => {
                 const p = productByName[it.product];
                 return (
-                  <div key={idx} className="grid grid-cols-12 gap-3 items-start">
-                    <div className="col-span-4">
-                      {idx === 0 && <Label>Product</Label>}
+                  <div key={idx} className="grid grid-cols-2 sm:grid-cols-12 gap-3 items-start pb-3 sm:pb-0 border-b sm:border-b-0" style={{ borderColor: THEME.line }}>
+                    <div className="col-span-2 sm:col-span-4">
+                      <Label>Product</Label>
                       <select value={it.product} onChange={(e) => updateItem(idx, { product: e.target.value })}
                         className="w-full px-3 py-2 rounded-md outline-none"
                         style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink }}>
@@ -1056,20 +1083,20 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
                         ))}
                       </select>
                     </div>
-                    <div className="col-span-2">
-                      {idx === 0 && <Label>Qty</Label>}
+                    <div className="col-span-1 sm:col-span-2">
+                      <Label>Qty</Label>
                       <Input type="number" step="0.01" min="0" value={it.qty} onChange={(e) => updateItem(idx, { qty: e.target.value })} />
                     </div>
-                    <div className="col-span-3">
-                      {idx === 0 && <Label>Notes / Special Cut</Label>}
+                    <div className="col-span-1 sm:col-span-3">
+                      <Label>Notes / Special Cut</Label>
                       <Input value={it.note} onChange={(e) => updateItem(idx, { note: e.target.value })} placeholder="e.g. thin slice" />
                     </div>
-                    <div className="col-span-2">
-                      {idx === 0 && <Label>Line</Label>}
+                    <div className="col-span-1 sm:col-span-2">
+                      <Label>Line</Label>
                       <div className="px-2 py-2 text-sm font-medium">{lineTotal(it) > 0 ? m(lineTotal(it)) : '—'}</div>
                     </div>
-                    <div className="col-span-1">
-                      {idx === 0 && <Label>&nbsp;</Label>}
+                    <div className="col-span-1 sm:col-span-1 flex items-end justify-end sm:block">
+                      <span className="hidden sm:block"><Label>&nbsp;</Label></span>
                       {items.length > 1 && (
                         <button onClick={() => removeItem(idx)} className="p-2 rounded hover:bg-red-50" style={{ color: THEME.red }}><X size={14} /></button>
                       )}
@@ -1228,7 +1255,8 @@ function Orders({ orders, setOrders, productByName, catalog }) {
         {ordersList.length === 0 ? (
           <EmptyHint>No orders match. Try clearing filters.</EmptyHint>
         ) : (
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto -mx-1">
+          <table className="w-full text-sm" style={{ minWidth: 640 }}>
             <thead>
               <tr className="text-left" style={{ color: THEME.inkSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                 <th className="pb-2 font-medium">Order ID</th>
@@ -1262,6 +1290,7 @@ function Orders({ orders, setOrders, productByName, catalog }) {
               })}
             </tbody>
           </table>
+          </div>
         )}
       </Card>
 
@@ -1392,7 +1421,7 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
 
         {/* ===== Edit mode: customer + date ===== */}
         {editing && (
-          <div className="grid grid-cols-3 gap-4 mb-5">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
             <div><Label>Date</Label><Input type="date" value={draft.date} onChange={(e) => setDraft({ ...draft, date: e.target.value })} /></div>
             <div><Label>Customer Name</Label><Input value={draft.customer} onChange={(e) => setDraft({ ...draft, customer: e.target.value })} /></div>
             <div><Label>Phone</Label><Input value={draft.phone} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} placeholder="optional" /></div>
@@ -1433,9 +1462,9 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
               {draft.items.map((it, idx) => {
                 const lt = (Number(it.qty) || 0) * (it.price || 0);
                 return (
-                  <div key={idx} className="grid grid-cols-12 gap-3 items-start">
-                    <div className="col-span-4">
-                      {idx === 0 && <Label>Product</Label>}
+                  <div key={idx} className="grid grid-cols-2 sm:grid-cols-12 gap-3 items-start pb-3 sm:pb-0 border-b sm:border-b-0" style={{ borderColor: THEME.line }}>
+                    <div className="col-span-2 sm:col-span-4">
+                      <Label>Product</Label>
                       <select value={it.product} onChange={(e) => dChangeProduct(idx, e.target.value)}
                         className="w-full px-3 py-2 rounded-md outline-none text-sm"
                         style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink }}>
@@ -1447,20 +1476,20 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
                         ))}
                       </select>
                     </div>
-                    <div className="col-span-2">
-                      {idx === 0 && <Label>Qty</Label>}
+                    <div className="col-span-1 sm:col-span-2">
+                      <Label>Qty</Label>
                       <Input type="number" step="0.01" min="0" value={it.qty} onChange={(e) => dUpdateItem(idx, { qty: e.target.value })} />
                     </div>
-                    <div className="col-span-3">
-                      {idx === 0 && <Label>Notes / Special Cut</Label>}
+                    <div className="col-span-1 sm:col-span-3">
+                      <Label>Notes / Special Cut</Label>
                       <Input value={it.note || ''} onChange={(e) => dUpdateItem(idx, { note: e.target.value })} placeholder="e.g. thin slice" />
                     </div>
-                    <div className="col-span-2">
-                      {idx === 0 && <Label>Line</Label>}
+                    <div className="col-span-1 sm:col-span-2">
+                      <Label>Line</Label>
                       <div className="px-2 py-2 text-sm font-medium">{lt > 0 ? peso(lt) : '—'}</div>
                     </div>
-                    <div className="col-span-1">
-                      {idx === 0 && <Label>&nbsp;</Label>}
+                    <div className="col-span-1 sm:col-span-1 flex items-end justify-end sm:block">
+                      <span className="hidden sm:block"><Label>&nbsp;</Label></span>
                       {draft.items.length > 1 && (
                         <button onClick={() => dRemoveItem(idx)} className="p-2 rounded hover:bg-red-50" style={{ color: THEME.red }}><X size={14} /></button>
                       )}
@@ -1475,14 +1504,14 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
           </div>
         )}
 
-        <div className="grid grid-cols-3 gap-4 mb-5 py-3" style={{ borderTop: `1px solid ${THEME.line}`, borderBottom: `1px solid ${THEME.line}` }}>
+        <div className="grid grid-cols-3 gap-2 sm:gap-4 mb-5 py-3" style={{ borderTop: `1px solid ${THEME.line}`, borderBottom: `1px solid ${THEME.line}` }}>
           <div><div className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft }}>Sales</div><div className="font-display text-lg" style={{ color: THEME.brand }}>{peso(total)}</div></div>
           <div><div className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft }}>Cost</div><div className="font-display text-lg" style={{ color: THEME.inkSoft }}>{peso(cost)}</div></div>
           <div><div className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft }}>Profit</div><div className="font-display text-lg" style={{ color: THEME.green }}>{peso(profit)}</div></div>
         </div>
 
         {/* ===== Status fields ===== */}
-        <div className="grid grid-cols-3 gap-4 mb-5">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
           <div>
             <Label>Payment Status</Label>
             <Select
@@ -1574,6 +1603,7 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
             </div>
             <div className="flex gap-2">
               <Btn variant="secondary" onClick={() => onPrint('supplier')}><FileText size={14} className="inline -mt-0.5 mr-1" /> Supplier Copy</Btn>
+              <Btn variant="secondary" onClick={() => { onClose(); }}><Save size={14} className="inline -mt-0.5 mr-1" /> Save</Btn>
               <Btn variant="primary" onClick={() => onPrint('invoice')}><Receipt size={14} className="inline -mt-0.5 mr-1" /> Invoice</Btn>
             </div>
           </div>
@@ -1602,15 +1632,24 @@ function PrintableView({ order, mode, onBack }) {
       // Capture the FULL document using its real scroll size so nothing is clipped
       const fullWidth = node.scrollWidth;
       const fullHeight = node.scrollHeight;
-      // Wait a tick so fonts/images settle before capture
-      await new Promise((r) => setTimeout(r, 150));
+      // Make sure every image (esp. the base64 logo) is fully decoded first,
+      // otherwise it can render as a broken-image icon in the capture.
+      const imgs = Array.from(node.querySelectorAll('img'));
+      await Promise.all(imgs.map((img) => {
+        if (img.complete && img.naturalWidth > 0) return Promise.resolve();
+        return new Promise((res) => {
+          img.onload = res;
+          img.onerror = res;
+        });
+      }));
+      // Extra settle tick for fonts
+      await new Promise((r) => setTimeout(r, 200));
       const dataUrl = await toPng(node, {
         quality: 1,
         pixelRatio: 2,
         backgroundColor: '#ffffff',
         width: fullWidth,
         height: fullHeight,
-        cacheBust: true,
         style: {
           margin: '0',
           transform: 'none',
@@ -1673,7 +1712,7 @@ function PrintableView({ order, mode, onBack }) {
           </div>
 
           {/* Customer name as the main identifier */}
-          <div className="grid grid-cols-2 gap-6 mb-6 pb-4" style={{ borderBottom: `1px solid ${THEME.line}` }}>
+          <div className="grid grid-cols-2 gap-4 sm:gap-6 mb-6 pb-4" style={{ borderBottom: `1px solid ${THEME.line}` }}>
             <div>
               <div className="text-xs uppercase tracking-wider mb-1" style={{ color: THEME.inkSoft }}>Customer</div>
               <div className="font-display text-2xl" style={{ color: THEME.brand }}>{order.customer}</div>
@@ -1816,8 +1855,8 @@ function Pickup({ orders }) {
     <div>
       <Header title="Pickup Cross-Check" subtitle="Select multiple orders to roll up supplier pickup quantities" />
 
-      <div className="grid grid-cols-5 gap-6">
-        <div className="col-span-2">
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+        <div className="lg:col-span-2">
           <Card className="p-5">
             <div className="flex items-center justify-between mb-3">
               <div className="font-display text-lg">Select Orders</div>
@@ -1827,7 +1866,7 @@ function Pickup({ orders }) {
               </div>
             </div>
             <div className="text-xs mb-3" style={{ color: THEME.inkSoft }}>{selected.size} selected</div>
-            <div className="max-h-96 overflow-y-auto -mx-2">
+            <div className="max-h-96 overflow-y-auto overflow-x-auto -mx-2">
               {ordersList.length === 0 && <EmptyHint>No orders yet.</EmptyHint>}
               {ordersList.map((o) => {
                 const total = (o.items || []).reduce((s, i) => s + i.qty * i.price, 0);
@@ -1849,7 +1888,7 @@ function Pickup({ orders }) {
           </Card>
         </div>
 
-        <div className="col-span-3">
+        <div className="lg:col-span-3">
           <Card className="p-5">
             <div className="font-display text-lg mb-1">Pickup Roll-up</div>
             <div className="text-xs mb-4" style={{ color: THEME.inkSoft }}>Total quantity & cost to pick up from supplier for the selected orders</div>
@@ -1940,8 +1979,8 @@ function SalesCheck({ orders, privacy }) {
     <div>
       <Header title="Sales Cross-Check" subtitle="Select multiple orders to roll up quantities and totals at your selling price" />
 
-      <div className="grid grid-cols-5 gap-6">
-        <div className="col-span-2">
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+        <div className="lg:col-span-2">
           <Card className="p-5">
             <div className="flex items-center justify-between mb-3">
               <div className="font-display text-lg">Select Orders</div>
@@ -1951,7 +1990,7 @@ function SalesCheck({ orders, privacy }) {
               </div>
             </div>
             <div className="text-xs mb-3" style={{ color: THEME.inkSoft }}>{selected.size} selected</div>
-            <div className="max-h-96 overflow-y-auto -mx-2">
+            <div className="max-h-96 overflow-y-auto overflow-x-auto -mx-2">
               {ordersList.length === 0 && <EmptyHint>No orders yet.</EmptyHint>}
               {ordersList.map((o) => {
                 const total = (o.items || []).reduce((s, i) => s + i.qty * i.price, 0);
@@ -1973,7 +2012,7 @@ function SalesCheck({ orders, privacy }) {
           </Card>
         </div>
 
-        <div className="col-span-3">
+        <div className="lg:col-span-3">
           <Card className="p-5">
             <div className="font-display text-lg mb-1">Sales Roll-up</div>
             <div className="text-xs mb-4" style={{ color: THEME.inkSoft }}>Total quantity & value at your selling price for the selected orders</div>
@@ -2103,15 +2142,15 @@ function Expenses({ expenses, setExpenses }) {
       <Header title="Expenses" subtitle="Every peso spent on your business"
         right={<Btn variant="primary" onClick={openAdd}><Plus size={15} className="inline -mt-0.5 mr-1" />Add Expense</Btn>} />
 
-      <div className="grid grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <KpiCard label="Total Spent" value={peso(stats.total)} sub={`${expenses.length} entries`} accent={THEME.brand} />
         <KpiCard label="This Month" value={peso(stats.thisMonth)} sub={new Date().toLocaleString('en-PH', { month: 'long', year: 'numeric' })} accent={THEME.amber} />
         <KpiCard label="Avg per Entry" value={peso(stats.avg)} accent={THEME.inkSoft} />
         <KpiCard label="Top Category" value={stats.categoryData[0]?.name || '—'} sub={stats.categoryData[0] ? peso(stats.categoryData[0].value) : ''} accent={THEME.green} />
       </div>
 
-      <div className="grid grid-cols-3 gap-6">
-        <Card className="col-span-1 p-5">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <Card className="lg:col-span-1 p-5">
           <div className="font-display text-lg mb-1">By Category</div>
           <div className="text-xs mb-4" style={{ color: THEME.inkSoft }}>Where your money goes</div>
           {stats.categoryData.length === 0 ? (
@@ -2145,7 +2184,7 @@ function Expenses({ expenses, setExpenses }) {
           {expenses.length === 0 ? (
             <EmptyHint>No expenses logged yet.</EmptyHint>
           ) : (
-            <div className="max-h-[500px] overflow-y-auto">
+            <div className="max-h-[500px] overflow-y-auto overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="sticky top-0" style={{ background: THEME.card }}>
                   <tr style={{ color: THEME.inkSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
@@ -2180,12 +2219,12 @@ function Expenses({ expenses, setExpenses }) {
         <div className="px-6 py-5">
           <div className="font-display text-xl mb-5">{editId ? 'Edit Expense' : 'Add Expense'}</div>
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div><Label>Date</Label><Input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></div>
               <div><Label>Category</Label><Select value={category} onChange={(e) => setCategory(e.target.value)} options={EXPENSE_CATEGORIES} /></div>
             </div>
             <div><Label>Description</Label><Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="e.g. Styrobox cooler" /></div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div><Label>Amount (₱)</Label><Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" /></div>
               <div><Label>Payment</Label><Select value={payment} onChange={(e) => setPayment(e.target.value)} options={PAYMENT_METHODS} /></div>
             </div>
@@ -2237,7 +2276,7 @@ function Inventory({ inventory, setInventory, catalog }) {
         <KpiCard label="Out of Stock" value={String(catalog.filter(p => (inventory[p.name]?.qty || 0) === 0).length)} sub={`of ${catalog.length} products`} accent={THEME.red} />
       </div>
 
-      <div className="grid grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {groups.map((group) => {
           const items = catalog.filter(c => c.group === group);
           const emoji = group === 'Pork' ? '🐷' : group === 'Chicken' ? '🐔' : '🐄';
@@ -2362,11 +2401,11 @@ function Products({ catalog, setCatalog }) {
             <div className="font-display text-xl mb-5">{editing.isNew ? 'Add Product' : 'Edit Product'}</div>
             <div className="space-y-4">
               <div><Label>Product Name</Label><Input value={editing.data.name} onChange={(e) => setEditing({ ...editing, data: { ...editing.data, name: e.target.value } })} /></div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div><Label>Category</Label><Select value={editing.data.group} onChange={(e) => setEditing({ ...editing, data: { ...editing.data, group: e.target.value } })} options={['Pork', 'Chicken', 'Beef']} /></div>
                 <div><Label>Unit</Label><Select value={editing.data.unit} onChange={(e) => setEditing({ ...editing, data: { ...editing.data, unit: e.target.value } })} options={['kg', 'pack', 'pcs']} /></div>
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div><Label>Supplier Cost (₱)</Label><Input type="number" step="0.01" value={editing.data.cost} onChange={(e) => setEditing({ ...editing, data: { ...editing.data, cost: Number(e.target.value) } })} /></div>
                 <div><Label>Selling Price (₱)</Label><Input type="number" step="0.01" value={editing.data.price} onChange={(e) => setEditing({ ...editing, data: { ...editing.data, price: Number(e.target.value) } })} /></div>
               </div>
