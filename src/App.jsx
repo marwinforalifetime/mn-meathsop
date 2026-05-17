@@ -47,7 +47,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v2.4 · Logo Shadow Fix';
+const APP_VERSION = 'v2.5 · Mobile Receipt';
 
 const THEME = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -1672,111 +1672,149 @@ function PrintableView({ order, mode, onBack }) {
 
   return (
     <div style={{ background: THEME.bg, minHeight: '100vh' }}>
-      <div className="no-print sticky top-0 z-10 px-8 py-3 flex items-center justify-between" style={{ background: THEME.card, borderBottom: `1px solid ${THEME.line}` }}>
-        <button onClick={onBack} className="flex items-center gap-1.5 text-sm" style={{ color: THEME.ink }}>
-          <ArrowLeft size={16} /> Back to order
+      <div className="no-print sticky top-0 z-10 px-4 sm:px-8 py-3 flex items-center justify-between gap-2" style={{ background: THEME.card, borderBottom: `1px solid ${THEME.line}` }}>
+        <button onClick={onBack} className="flex items-center gap-1.5 text-sm flex-shrink-0" style={{ color: THEME.ink }}>
+          <ArrowLeft size={16} /> <span className="hidden sm:inline">Back to order</span><span className="sm:hidden">Back</span>
         </button>
         <div className="flex gap-2">
           <Btn variant="accent" onClick={saveAsImage} disabled={savingImg}>
             {savingImg
               ? <><Loader2 size={15} className="inline -mt-0.5 mr-1.5 animate-spin" /> Saving…</>
-              : <><ImageIcon size={15} className="inline -mt-0.5 mr-1.5" /> {isInvoice ? 'Save Order Summary' : 'Save Supplier Copy'}</>}
+              : <><ImageIcon size={15} className="inline -mt-0.5 mr-1.5" /> <span className="hidden sm:inline">{isInvoice ? 'Save Order Summary' : 'Save Supplier Copy'}</span><span className="sm:hidden">Save</span></>}
           </Btn>
           <Btn variant="primary" onClick={() => window.print()}>
-            <Printer size={15} className="inline -mt-0.5 mr-1.5" /> Print
+            <Printer size={15} className="inline -mt-0.5 sm:mr-1.5" /> <span className="hidden sm:inline">Print</span>
           </Btn>
         </div>
       </div>
 
-      <div className="max-w-3xl mx-auto" style={{ marginTop: 24, marginBottom: 24 }}>
-        <div ref={docRef} className="p-10" style={{ background: 'white', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
+      <div className="w-full max-w-3xl mx-auto px-3 sm:px-0" style={{ marginTop: 16, marginBottom: 24 }}>
+        <div ref={docRef} className="p-5 sm:p-10" style={{ background: 'white', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
           <div className="flex flex-col items-center text-center mb-6 pb-5" style={{ borderBottom: `2px solid ${THEME.brand}` }}>
             <img src={LOGO_DATA_URL} alt="M&N Meatshop"
-              className="w-24 h-24 rounded-full object-cover mb-3" />
-            <div className="font-display text-3xl" style={{ color: THEME.brand }}>M&N MEATSHOP</div>
-            <div className="text-sm mt-0.5" style={{ color: THEME.inkSoft }}>
+              width="96" height="96"
+              className="w-20 h-20 sm:w-24 sm:h-24 rounded-full object-cover mb-3"
+              style={{ display: 'block' }}
+              onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+            <div className="font-display text-2xl sm:text-3xl" style={{ color: THEME.brand }}>M&N MEATSHOP</div>
+            <div className="text-xs sm:text-sm mt-0.5" style={{ color: THEME.inkSoft }}>
               Your Daily Meat Choice
             </div>
           </div>
 
           <div className="text-center mb-6">
-            <div className="font-display text-2xl tracking-wide uppercase" style={{ color: THEME.ink }}>
+            <div className="font-display text-xl sm:text-2xl tracking-wide uppercase" style={{ color: THEME.ink }}>
               {isInvoice ? 'Order Summary' : 'Supplier Order Copy'}
             </div>
             {!isInvoice && (
-              <div className="text-sm mt-1" style={{ color: THEME.inkSoft }}>
+              <div className="text-xs sm:text-sm mt-1" style={{ color: THEME.inkSoft }}>
                 Please prepare the following items for the customer below.
               </div>
             )}
           </div>
 
           {/* Customer name as the main identifier */}
-          <div className="grid grid-cols-2 gap-4 sm:gap-6 mb-6 pb-4" style={{ borderBottom: `1px solid ${THEME.line}` }}>
-            <div>
+          <div className="flex justify-between gap-4 mb-6 pb-4" style={{ borderBottom: `1px solid ${THEME.line}` }}>
+            <div className="min-w-0">
               <div className="text-xs uppercase tracking-wider mb-1" style={{ color: THEME.inkSoft }}>Customer</div>
-              <div className="font-display text-2xl" style={{ color: THEME.brand }}>{order.customer}</div>
+              <div className="font-display text-xl sm:text-2xl" style={{ color: THEME.brand }}>{order.customer}</div>
               {order.phone && <div className="text-sm mt-0.5" style={{ color: THEME.inkSoft }}>{order.phone}</div>}
             </div>
-            <div className="text-right">
+            <div className="text-right flex-shrink-0">
               <div className="text-xs uppercase tracking-wider mb-1" style={{ color: THEME.inkSoft }}>Date</div>
-              <div className="text-lg">{fmtDate(order.date)}</div>
+              <div className="text-base sm:text-lg whitespace-nowrap">{fmtDate(order.date)}</div>
             </div>
           </div>
 
         {isInvoice ? (
-          /* ===== INVOICE / ORDER SUMMARY: product, qty, unit price, amount, notes ===== */
-          <table className="w-full mb-6 text-sm">
-            <thead>
-              <tr style={{ background: '#F5E6E1' }}>
-                <th className="text-left px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>#</th>
-                <th className="text-left px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Product / Item</th>
-                <th className="text-right px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Qty</th>
-                <th className="text-right px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Unit Price</th>
-                <th className="text-right px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Amount</th>
-                <th className="text-left px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Notes / Special Cut</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(order.items || []).map((it, i) => (
-                <tr key={i} style={{ borderBottom: `1px solid ${THEME.line}` }}>
-                  <td className="px-3 py-3" style={{ color: THEME.inkSoft }}>{i + 1}</td>
-                  <td className="px-3 py-3">{it.product}</td>
-                  <td className="px-3 py-3 text-right">{it.qty} {it.unit}</td>
-                  <td className="px-3 py-3 text-right">{peso(it.price)}</td>
-                  <td className="px-3 py-3 text-right font-medium">{peso(it.qty * it.price)}</td>
-                  <td className="px-3 py-3" style={{ color: it.note ? THEME.ink : THEME.inkSoft }}>{it.note || '-'}</td>
+          /* ===== INVOICE / ORDER SUMMARY ===== */
+          <div className="mb-6">
+            {/* Desktop / wide: table */}
+            <table className="w-full text-sm hidden sm:table">
+              <thead>
+                <tr style={{ background: '#F5E6E1' }}>
+                  <th className="text-left px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>#</th>
+                  <th className="text-left px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Product / Item</th>
+                  <th className="text-right px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Qty</th>
+                  <th className="text-right px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Unit Price</th>
+                  <th className="text-right px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Amount</th>
+                  <th className="text-left px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Notes / Special Cut</th>
                 </tr>
+              </thead>
+              <tbody>
+                {(order.items || []).map((it, i) => (
+                  <tr key={i} style={{ borderBottom: `1px solid ${THEME.line}` }}>
+                    <td className="px-3 py-3" style={{ color: THEME.inkSoft }}>{i + 1}</td>
+                    <td className="px-3 py-3">{it.product}</td>
+                    <td className="px-3 py-3 text-right whitespace-nowrap">{it.qty} {it.unit}</td>
+                    <td className="px-3 py-3 text-right">{peso(it.price)}</td>
+                    <td className="px-3 py-3 text-right font-medium">{peso(it.qty * it.price)}</td>
+                    <td className="px-3 py-3" style={{ color: it.note ? THEME.ink : THEME.inkSoft }}>{it.note || '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {/* Mobile: stacked cards */}
+            <div className="sm:hidden space-y-3">
+              {(order.items || []).map((it, i) => (
+                <div key={i} className="pb-3" style={{ borderBottom: `1px solid ${THEME.line}` }}>
+                  <div className="flex justify-between items-start gap-3">
+                    <div className="font-medium" style={{ color: THEME.ink }}>{i + 1}. {it.product}</div>
+                    <div className="font-medium whitespace-nowrap" style={{ color: THEME.brand }}>{peso(it.qty * it.price)}</div>
+                  </div>
+                  <div className="text-sm mt-1" style={{ color: THEME.inkSoft }}>
+                    {it.qty} {it.unit} × {peso(it.price)}
+                  </div>
+                  {it.note && (
+                    <div className="text-sm mt-1" style={{ color: THEME.ink }}>Note: {it.note}</div>
+                  )}
+                </div>
               ))}
-            </tbody>
-          </table>
+            </div>
+          </div>
         ) : (
-          /* ===== SUPPLIER COPY: no costs, product + qty + notes ===== */
-          <table className="w-full mb-6 text-sm">
-            <thead>
-              <tr style={{ background: '#F5E6E1' }}>
-                <th className="text-left px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>#</th>
-                <th className="text-left px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Product / Item</th>
-                <th className="text-right px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Qty</th>
-                <th className="text-left px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Notes / Special Cut</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(order.items || []).map((it, i) => (
-                <tr key={i} style={{ borderBottom: `1px solid ${THEME.line}` }}>
-                  <td className="px-3 py-3" style={{ color: THEME.inkSoft }}>{i + 1}</td>
-                  <td className="px-3 py-3">{it.product}</td>
-                  <td className="px-3 py-3 text-right">{it.qty} {it.unit}</td>
-                  <td className="px-3 py-3" style={{ color: it.note ? THEME.ink : THEME.inkSoft }}>{it.note || '-'}</td>
+          /* ===== SUPPLIER COPY: no costs ===== */
+          <div className="mb-6">
+            <table className="w-full text-sm hidden sm:table">
+              <thead>
+                <tr style={{ background: '#F5E6E1' }}>
+                  <th className="text-left px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>#</th>
+                  <th className="text-left px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Product / Item</th>
+                  <th className="text-right px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Qty</th>
+                  <th className="text-left px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Notes / Special Cut</th>
                 </tr>
+              </thead>
+              <tbody>
+                {(order.items || []).map((it, i) => (
+                  <tr key={i} style={{ borderBottom: `1px solid ${THEME.line}` }}>
+                    <td className="px-3 py-3" style={{ color: THEME.inkSoft }}>{i + 1}</td>
+                    <td className="px-3 py-3">{it.product}</td>
+                    <td className="px-3 py-3 text-right whitespace-nowrap">{it.qty} {it.unit}</td>
+                    <td className="px-3 py-3" style={{ color: it.note ? THEME.ink : THEME.inkSoft }}>{it.note || '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="sm:hidden space-y-3">
+              {(order.items || []).map((it, i) => (
+                <div key={i} className="pb-3" style={{ borderBottom: `1px solid ${THEME.line}` }}>
+                  <div className="flex justify-between items-start gap-3">
+                    <div className="font-medium" style={{ color: THEME.ink }}>{i + 1}. {it.product}</div>
+                    <div className="font-medium whitespace-nowrap" style={{ color: THEME.ink }}>{it.qty} {it.unit}</div>
+                  </div>
+                  {it.note && (
+                    <div className="text-sm mt-1" style={{ color: THEME.ink }}>Note: {it.note}</div>
+                  )}
+                </div>
               ))}
-            </tbody>
-          </table>
+            </div>
+          </div>
         )}
 
         {isInvoice ? (
           <div className="flex justify-end mb-8">
-            <div className="w-72">
-              <div className="flex justify-between py-3 font-display text-2xl" style={{ borderTop: `2px solid ${THEME.brand}`, color: THEME.brand }}>
+            <div className="w-full sm:w-72">
+              <div className="flex justify-between py-3 font-display text-xl sm:text-2xl" style={{ borderTop: `2px solid ${THEME.brand}`, color: THEME.brand }}>
                 <span>TOTAL</span>
                 <span>{pesoFull(total)}</span>
               </div>
@@ -1784,8 +1822,8 @@ function PrintableView({ order, mode, onBack }) {
           </div>
         ) : (
           <div className="flex justify-end mb-8">
-            <div className="w-72">
-              <div className="flex justify-between py-3 font-display text-xl" style={{ borderTop: `2px solid ${THEME.brand}`, color: THEME.brand }}>
+            <div className="w-full sm:w-72">
+              <div className="flex justify-between py-3 font-display text-lg sm:text-xl" style={{ borderTop: `2px solid ${THEME.brand}`, color: THEME.brand }}>
                 <span>TOTAL QUANTITY</span>
                 <span>{totalQty} kg</span>
               </div>
