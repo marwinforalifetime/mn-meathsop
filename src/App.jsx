@@ -47,7 +47,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v2.6 · Clean Logo';
+const APP_VERSION = 'v2.7 · Greeting';
 
 const THEME = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -253,6 +253,9 @@ export default function App() {
   const [loaded, setLoaded] = useState(false);
   const [view, setView] = useState('dashboard');
   const [mobileNav, setMobileNav] = useState(false);
+  // Current user — hardcoded for now. When login is added later, this gets
+  // set from the authenticated session (e.g. Marwin or his partner).
+  const [currentUser, setCurrentUser] = useState({ name: 'Marwin' });
   const [catalog, setCatalog] = useState([]);
   const [orders, setOrders] = useState({});
   const [expenses, setExpenses] = useState([]);
@@ -465,7 +468,7 @@ export default function App() {
               </div>
             </div>
           )}
-          {view === 'dashboard' && <Dashboard orders={orders} expenses={expenses} catalog={catalog} setView={setView} privacy={privacy} setPrivacy={setPrivacy} />}
+          {view === 'dashboard' && <Dashboard orders={orders} expenses={expenses} catalog={catalog} setView={setView} privacy={privacy} setPrivacy={setPrivacy} currentUser={currentUser} />}
           {view === 'new' && <NewOrder catalog={catalog} meta={meta} setMeta={setMeta} orders={orders} setOrders={setOrders} onSaved={() => setView('orders')} />}
           {view === 'orders' && <Orders orders={orders} setOrders={setOrders} productByName={productByName} catalog={catalog} />}
           {view === 'pickup' && <Pickup orders={orders} />}
@@ -512,7 +515,7 @@ export default function App() {
    DASHBOARD
    ============================================================ */
 
-function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy }) {
+function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, currentUser }) {
   const ordersList = Object.values(orders);
 
   // Privacy-aware money formatter
@@ -639,8 +642,17 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy }) 
         <div className="flex items-center gap-4">
           <img src={LOGO_DATA_URL} alt="M&N Meatshop" className="w-12 h-12 sm:w-14 sm:h-14 rounded-full object-cover" style={{ boxShadow: '0 2px 8px rgba(122,46,51,0.15)' }} />
           <div>
-            <h1 className="font-display text-2xl sm:text-3xl leading-tight" style={{ color: THEME.ink }}>Dashboard</h1>
-            <div className="text-xs sm:text-sm" style={{ color: THEME.inkSoft }}>{monthName} {now.getFullYear()} · {stats.orderCount} orders all-time</div>
+            <div className="text-sm sm:text-base mb-0.5" style={{ color: THEME.inkSoft }}>
+              {(() => {
+                const h = new Date().getHours();
+                const part = h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+                return `${part},`;
+              })()}
+            </div>
+            <h1 className="font-display text-2xl sm:text-3xl leading-tight" style={{ color: THEME.ink }}>
+              Hello, {currentUser?.name || 'there'}!
+            </h1>
+            <div className="text-xs sm:text-sm mt-1" style={{ color: THEME.inkSoft }}>{monthName} {now.getFullYear()} · {stats.orderCount} orders all-time</div>
           </div>
         </div>
         <div className="flex items-center gap-2">
