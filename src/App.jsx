@@ -12,6 +12,7 @@ import {
 } from 'recharts';
 import { toPng } from 'html-to-image';
 import { LOGO_DATA_URL } from './logo.js';
+import { cloudLoad, cloudSave } from './supabase.js';
 
 /* ============================================================
    SEED DATA (from your spreadsheet)
@@ -47,7 +48,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v2.7 · Greeting';
+const APP_VERSION = 'v3.0 · Cloud Sync';
 
 const THEME = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -262,6 +263,10 @@ export default function App() {
   const [inventory, setInventory] = useState({});
   const [meta, setMeta] = useState({ lastOrderNum: 0 });
   const [saving, setSaving] = useState(false);
+  // Cloud sync status: 'connecting' | 'cloud' | 'local-only' | 'error'
+  const [syncStatus, setSyncStatus] = useState('connecting');
+  const [needsImport, setNeedsImport] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [showBackup, setShowBackup] = useState(false);
   const [privacy, setPrivacy] = useState(false);
   const [backupNagDismissed, setBackupNagDismissed] = useState(false);
@@ -269,43 +274,115 @@ export default function App() {
   const lastSaveRef = useRef(Date.now());
 
   useEffect(() => {
-    const c = storage.load('catalog', null);
-    const o = storage.load('orders', {});
-    const e = storage.load('expenses', []);
-    const i = storage.load('inventory', null);
-    const m = storage.load('meta', { lastOrderNum: 0 });
-    setCatalog(c || SEED_PRODUCTS);
-    setOrders(o || {});
-    setExpenses(e || []);
-    setInventory(i || Object.fromEntries(SEED_PRODUCTS.map(p => [p.name, { qty: 0, dateAdded: '', notes: '' }])));
-    setMeta(m || { lastOrderNum: 0 });
-    // Work out how long since the last backup, for the reminder
-    try {
-      const last = localStorage.getItem(STORAGE_PREFIX + 'lastBackup');
-      if (last) {
-        const days = Math.floor((Date.now() - Number(last)) / 86400000);
-        setDaysSinceBackup(days);
-      } else {
-        // Never backed up: seed the marker so the nag starts counting from now
-        localStorage.setItem(STORAGE_PREFIX + 'lastBackup', String(Date.now()));
-        setDaysSinceBackup(0);
+    let cancelled = false;
+    (async () => {
+      // Always read local first — it's instant and our offline safety net.
+      const localCatalog = storage.load('catalog', null);
+      const localOrders = storage.load('orders', {});
+      const localExpenses = storage.load('expenses', []);
+      const localInventory = storage.load('inventory', null);
+      const localMeta = storage.load('meta', { lastOrderNum: 0 });
+      const hasLocalData = (localOrders && Object.keys(localOrders).length > 0)
+        || (localExpenses && localExpenses.length > 0);
+
+      let usedCloud = false;
+      try {
+        const cloud = await cloudLoad();
+        if (cancelled) return;
+        if (cloud && (
+          (cloud.orders && Object.keys(cloud.orders).length > 0) ||
+          (cloud.expenses && cloud.expenses.length > 0) ||
+          cloud.catalog
+        )) {
+          // Cloud has real data — it's the source of truth.
+          setCatalog(cloud.catalog || SEED_PRODUCTS);
+          setOrders(cloud.orders || {});
+          setExpenses(cloud.expenses || []);
+          setInventory(cloud.inventory || Object.fromEntries(SEED_PRODUCTS.map(p => [p.name, { qty: 0, dateAdded: '', notes: '' }])));
+          setMeta(cloud.meta || { lastOrderNum: 0 });
+          usedCloud = true;
+          setSyncStatus('cloud');
+        } else {
+          // Cloud reachable but empty. Use local, and offer a one-time import.
+          setCatalog(localCatalog || SEED_PRODUCTS);
+          setOrders(localOrders || {});
+          setExpenses(localExpenses || []);
+          setInventory(localInventory || Object.fromEntries(SEED_PRODUCTS.map(p => [p.name, { qty: 0, dateAdded: '', notes: '' }])));
+          setMeta(localMeta || { lastOrderNum: 0 });
+          setSyncStatus('cloud');
+          if (hasLocalData) setNeedsImport(true);
+        }
+      } catch (e) {
+        if (cancelled) return;
+        // Cloud unreachable — fall back to local so the app still works.
+        setCatalog(localCatalog || SEED_PRODUCTS);
+        setOrders(localOrders || {});
+        setExpenses(localExpenses || []);
+        setInventory(localInventory || Object.fromEntries(SEED_PRODUCTS.map(p => [p.name, { qty: 0, dateAdded: '', notes: '' }])));
+        setMeta(localMeta || { lastOrderNum: 0 });
+        setSyncStatus('local-only');
       }
-    } catch (e) {}
-    setLoaded(true);
+
+      // Backup reminder bookkeeping (unchanged)
+      try {
+        const last = localStorage.getItem(STORAGE_PREFIX + 'lastBackup');
+        if (last) {
+          setDaysSinceBackup(Math.floor((Date.now() - Number(last)) / 86400000));
+        } else {
+          localStorage.setItem(STORAGE_PREFIX + 'lastBackup', String(Date.now()));
+          setDaysSinceBackup(0);
+        }
+      } catch (e) {}
+      if (!cancelled) setLoaded(true);
+    })();
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
     if (!loaded) return;
     setSaving(true);
+    // Always write local first — instant, and our offline safety net.
     storage.save('catalog', catalog);
     storage.save('orders', orders);
     storage.save('expenses', expenses);
     storage.save('inventory', inventory);
     storage.save('meta', meta);
     lastSaveRef.current = Date.now();
-    const t = setTimeout(() => setSaving(false), 300);
-    return () => clearTimeout(t);
+
+    // Then push to the cloud (debounced so rapid edits don't spam it).
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      try {
+        await cloudSave({ catalog, orders, expenses, inventory, meta });
+        if (!cancelled) {
+          setSyncStatus('cloud');
+          setSaving(false);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          // Saved locally but cloud failed — data is NOT lost, just not synced.
+          setSyncStatus('local-only');
+          setSaving(false);
+        }
+      }
+    }, 600);
+    return () => { cancelled = true; clearTimeout(t); };
   }, [catalog, orders, expenses, inventory, meta, loaded]);
+
+  // One-time import: push existing local data up to an empty cloud.
+  const importLocalToCloud = async () => {
+    setImporting(true);
+    try {
+      await cloudSave({ catalog, orders, expenses, inventory, meta });
+      setNeedsImport(false);
+      setSyncStatus('cloud');
+      alert('Your existing data is now saved to the cloud and will sync across your devices.');
+    } catch (e) {
+      alert('Could not reach the cloud right now. Your data is still safe on this device. Please try again in a moment.');
+    } finally {
+      setImporting(false);
+    }
+  };
 
   const productByName = useMemo(() => Object.fromEntries(catalog.map(p => [p.name, p])), [catalog]);
 
@@ -434,7 +511,15 @@ export default function App() {
               <HardDrive size={12} /> Backup & Restore
             </button>
             <div className="text-xs flex items-center gap-2" style={{ color: THEME.inkSoft }}>
-              {saving ? (<><Loader2 size={11} className="animate-spin" /> Saving…</>) : (<><Check size={11} style={{ color: THEME.green }} /> All saved</>)}
+              {saving
+                ? (<><Loader2 size={11} className="animate-spin" /> Syncing…</>)
+                : syncStatus === 'cloud'
+                  ? (<><Check size={11} style={{ color: THEME.green }} /> Saved to cloud</>)
+                  : syncStatus === 'local-only'
+                    ? (<><HardDrive size={11} style={{ color: THEME.amber }} /> Saved on this device</>)
+                    : syncStatus === 'connecting'
+                      ? (<><Loader2 size={11} className="animate-spin" /> Connecting…</>)
+                      : (<><AlertCircle size={11} style={{ color: THEME.red }} /> Sync issue</>)}
             </div>
             <div className="text-xs mt-1 opacity-70" style={{ color: THEME.inkSoft }}>{Object.keys(orders).length} orders · {expenses.length} expenses</div>
             <div className="text-xs mt-2 px-2 py-1 rounded inline-block" style={{ background: '#F5E6E1', color: THEME.brand, fontWeight: 600 }}>
@@ -444,6 +529,23 @@ export default function App() {
         </aside>
 
         <main className="flex-1 min-w-0 p-4 sm:p-6 lg:p-8">
+          {needsImport && (
+            <div className="mb-6 px-5 py-4 rounded-lg flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 no-print"
+              style={{ background: '#E5EDDE', border: `1px solid ${THEME.green}` }}>
+              <div className="flex items-start gap-3">
+                <Upload size={18} style={{ color: THEME.green }} className="mt-0.5 flex-shrink-0" />
+                <div className="text-sm" style={{ color: '#2f4a2a' }}>
+                  <span className="font-semibold">Your cloud database is connected and empty.</span>
+                  <span> This device has existing orders/expenses. Import them to the cloud once, so they sync across all your devices and are safely backed up.</span>
+                </div>
+              </div>
+              <button onClick={importLocalToCloud} disabled={importing}
+                className="px-4 py-2 text-sm rounded-md font-medium flex-shrink-0"
+                style={{ background: THEME.green, color: 'white', opacity: importing ? 0.7 : 1 }}>
+                {importing ? 'Importing…' : 'Import my data to cloud'}
+              </button>
+            </div>
+          )}
           {daysSinceBackup >= 7 && !backupNagDismissed && (
             <div className="mb-6 px-5 py-4 rounded-lg flex items-center justify-between gap-4 no-print"
               style={{ background: '#F7E8C9', border: `1px solid ${THEME.amber}` }}>
