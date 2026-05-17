@@ -47,7 +47,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v2.3 · Mobile + Icon + Fixes';
+const APP_VERSION = 'v2.4 · Logo Shadow Fix';
 
 const THEME = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -1692,8 +1692,7 @@ function PrintableView({ order, mode, onBack }) {
         <div ref={docRef} className="p-10" style={{ background: 'white', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
           <div className="flex flex-col items-center text-center mb-6 pb-5" style={{ borderBottom: `2px solid ${THEME.brand}` }}>
             <img src={LOGO_DATA_URL} alt="M&N Meatshop"
-              className="w-24 h-24 rounded-full object-cover mb-3"
-              style={{ boxShadow: '0 2px 10px rgba(122,46,51,0.2)' }} />
+              className="w-24 h-24 rounded-full object-cover mb-3" />
             <div className="font-display text-3xl" style={{ color: THEME.brand }}>M&N MEATSHOP</div>
             <div className="text-sm mt-0.5" style={{ color: THEME.inkSoft }}>
               Your Daily Meat Choice
