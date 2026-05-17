@@ -47,7 +47,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v2.5 · Mobile Receipt';
+const APP_VERSION = 'v2.6 · Clean Logo';
 
 const THEME = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -1728,86 +1728,55 @@ function PrintableView({ order, mode, onBack }) {
 
         {isInvoice ? (
           /* ===== INVOICE / ORDER SUMMARY ===== */
-          <div className="mb-6">
-            {/* Desktop / wide: table */}
-            <table className="w-full text-sm hidden sm:table">
+          <div className="mb-6 overflow-x-auto">
+            <table className="w-full text-xs sm:text-sm" style={{ minWidth: 340 }}>
               <thead>
                 <tr style={{ background: '#F5E6E1' }}>
-                  <th className="text-left px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>#</th>
-                  <th className="text-left px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Product / Item</th>
-                  <th className="text-right px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Qty</th>
-                  <th className="text-right px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Unit Price</th>
-                  <th className="text-right px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Amount</th>
-                  <th className="text-left px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Notes / Special Cut</th>
+                  <th className="text-left px-2 sm:px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>#</th>
+                  <th className="text-left px-2 sm:px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Product / Item</th>
+                  <th className="text-right px-2 sm:px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Qty</th>
+                  <th className="text-right px-2 sm:px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Unit Price</th>
+                  <th className="text-right px-2 sm:px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Amount</th>
+                  <th className="text-left px-2 sm:px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Notes / Special Cut</th>
                 </tr>
               </thead>
               <tbody>
                 {(order.items || []).map((it, i) => (
                   <tr key={i} style={{ borderBottom: `1px solid ${THEME.line}` }}>
-                    <td className="px-3 py-3" style={{ color: THEME.inkSoft }}>{i + 1}</td>
-                    <td className="px-3 py-3">{it.product}</td>
-                    <td className="px-3 py-3 text-right whitespace-nowrap">{it.qty} {it.unit}</td>
-                    <td className="px-3 py-3 text-right">{peso(it.price)}</td>
-                    <td className="px-3 py-3 text-right font-medium">{peso(it.qty * it.price)}</td>
-                    <td className="px-3 py-3" style={{ color: it.note ? THEME.ink : THEME.inkSoft }}>{it.note || '-'}</td>
+                    <td className="px-2 sm:px-3 py-3" style={{ color: THEME.inkSoft }}>{i + 1}</td>
+                    <td className="px-2 sm:px-3 py-3">{it.product}</td>
+                    <td className="px-2 sm:px-3 py-3 text-right whitespace-nowrap">{it.qty} {it.unit}</td>
+                    <td className="px-2 sm:px-3 py-3 text-right whitespace-nowrap">{peso(it.price)}</td>
+                    <td className="px-2 sm:px-3 py-3 text-right font-medium whitespace-nowrap">{peso(it.qty * it.price)}</td>
+                    <td className="px-2 sm:px-3 py-3" style={{ color: it.note ? THEME.ink : THEME.inkSoft }}>{it.note || '-'}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            {/* Mobile: stacked cards */}
-            <div className="sm:hidden space-y-3">
-              {(order.items || []).map((it, i) => (
-                <div key={i} className="pb-3" style={{ borderBottom: `1px solid ${THEME.line}` }}>
-                  <div className="flex justify-between items-start gap-3">
-                    <div className="font-medium" style={{ color: THEME.ink }}>{i + 1}. {it.product}</div>
-                    <div className="font-medium whitespace-nowrap" style={{ color: THEME.brand }}>{peso(it.qty * it.price)}</div>
-                  </div>
-                  <div className="text-sm mt-1" style={{ color: THEME.inkSoft }}>
-                    {it.qty} {it.unit} × {peso(it.price)}
-                  </div>
-                  {it.note && (
-                    <div className="text-sm mt-1" style={{ color: THEME.ink }}>Note: {it.note}</div>
-                  )}
-                </div>
-              ))}
-            </div>
           </div>
         ) : (
           /* ===== SUPPLIER COPY: no costs ===== */
-          <div className="mb-6">
-            <table className="w-full text-sm hidden sm:table">
+          <div className="mb-6 overflow-x-auto">
+            <table className="w-full text-xs sm:text-sm" style={{ minWidth: 300 }}>
               <thead>
                 <tr style={{ background: '#F5E6E1' }}>
-                  <th className="text-left px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>#</th>
-                  <th className="text-left px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Product / Item</th>
-                  <th className="text-right px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Qty</th>
-                  <th className="text-left px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Notes / Special Cut</th>
+                  <th className="text-left px-2 sm:px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>#</th>
+                  <th className="text-left px-2 sm:px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Product / Item</th>
+                  <th className="text-right px-2 sm:px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Qty</th>
+                  <th className="text-left px-2 sm:px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Notes / Special Cut</th>
                 </tr>
               </thead>
               <tbody>
                 {(order.items || []).map((it, i) => (
                   <tr key={i} style={{ borderBottom: `1px solid ${THEME.line}` }}>
-                    <td className="px-3 py-3" style={{ color: THEME.inkSoft }}>{i + 1}</td>
-                    <td className="px-3 py-3">{it.product}</td>
-                    <td className="px-3 py-3 text-right whitespace-nowrap">{it.qty} {it.unit}</td>
-                    <td className="px-3 py-3" style={{ color: it.note ? THEME.ink : THEME.inkSoft }}>{it.note || '-'}</td>
+                    <td className="px-2 sm:px-3 py-3" style={{ color: THEME.inkSoft }}>{i + 1}</td>
+                    <td className="px-2 sm:px-3 py-3">{it.product}</td>
+                    <td className="px-2 sm:px-3 py-3 text-right whitespace-nowrap">{it.qty} {it.unit}</td>
+                    <td className="px-2 sm:px-3 py-3" style={{ color: it.note ? THEME.ink : THEME.inkSoft }}>{it.note || '-'}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            <div className="sm:hidden space-y-3">
-              {(order.items || []).map((it, i) => (
-                <div key={i} className="pb-3" style={{ borderBottom: `1px solid ${THEME.line}` }}>
-                  <div className="flex justify-between items-start gap-3">
-                    <div className="font-medium" style={{ color: THEME.ink }}>{i + 1}. {it.product}</div>
-                    <div className="font-medium whitespace-nowrap" style={{ color: THEME.ink }}>{it.qty} {it.unit}</div>
-                  </div>
-                  {it.note && (
-                    <div className="text-sm mt-1" style={{ color: THEME.ink }}>Note: {it.note}</div>
-                  )}
-                </div>
-              ))}
-            </div>
           </div>
         )}
 
