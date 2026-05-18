@@ -48,7 +48,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v3.9 · Retail Col + Keep Qtys';
+const APP_VERSION = 'v4.0 · Thin Item Pricing';
 
 const THEME = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -2400,23 +2400,35 @@ function Expenses({ expenses, setExpenses }) {
 
 // Shared-trip delivery estimate and minimum profit kept per kg, used ONLY by
 // the private profit check. Wholesale price is derived from each product's
-// real cost & retail price, never below floor (cost + delivery + min profit).
+// real cost & retail price.
 const RQ_DELIV_PER_KG = 9;
-const RQ_MIN_PROFIT_KG = 25;
+const RQ_MIN_PROFIT_KG = 25;   // fat-margin items: min profit AFTER delivery
+const RQ_THIN_FLOOR_KG = 20;   // thin items: min GROSS (price-cost), per owner
 
-// One wholesale price per item. Fat-margin items ~16% off retail (never below
-// floor). Thin-margin items hold at retail (no room to discount safely).
+// One wholesale price per item.
+// Fat-margin items (retail-cost >= 60): ~16% off retail, never below
+//   cost + delivery + RQ_MIN_PROFIT_KG  (real profit protected).
+// Thin-margin items: also discounted now, but never below cost + RQ_THIN_FLOOR_KG
+//   i.e. a ₱20 GROSS floor (delivery NOT included, per owner's decision —
+//   the portfolio mix is expected to compensate). The private Profit Check
+//   screen still shows the true after-delivery number so it's never hidden.
 function rqPricing(p) {
   const cost = Number(p.cost) || 0;
   const retail = Number(p.price) || 0;
   const headroom = retail - cost;
-  const floor = cost + RQ_DELIV_PER_KG + RQ_MIN_PROFIT_KG;
   if (headroom < 60) {
-    return { wholesale: retail, discounted: false, floor };
+    // Thin item: discount toward retail*0.92 but never below the ₱20 gross floor,
+    // and never above retail (if retail is already at/under floor, hold retail).
+    const thinFloor = cost + RQ_THIN_FLOOR_KG;
+    let w = Math.round(retail * 0.92);
+    w = Math.max(w, thinFloor);
+    w = Math.min(w, retail);
+    return { wholesale: w, discounted: w < retail, thin: true, floor: thinFloor };
   }
+  const floor = cost + RQ_DELIV_PER_KG + RQ_MIN_PROFIT_KG;
   let wholesale = Math.round(retail * 0.84);
   wholesale = Math.max(wholesale, floor);
-  return { wholesale, discounted: true, floor };
+  return { wholesale, discounted: true, thin: false, floor };
 }
 
 // ---- Client-facing quote: safe to show the restaurant ----
@@ -2599,8 +2611,10 @@ function QuoteProfitCheck({ catalog, privacy, qtys, setQtys }) {
                                 className="w-14 px-2 py-1 rounded text-right outline-none"
                                 style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink }} />
                             </td>
-                            <td className="py-2 text-right font-medium" style={{ color: ppk >= 0 ? THEME.green : THEME.red }}>
+                            <td className="py-2 text-right font-medium" style={{ color: ppk >= 5 ? THEME.green : ppk >= 0 ? THEME.amber : THEME.red }}>
                               {m(ppk)}
+                              {ppk >= 0 && ppk < 5 && <span title="Very thin after delivery — relies on other items to compensate"> ⚠</span>}
+                              {ppk < 0 && <span title="Loses money after delivery on this item alone"> ⚠</span>}
                             </td>
                           </tr>
                         );
