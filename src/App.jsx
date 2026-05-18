@@ -48,7 +48,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v3.0 · Cloud Sync';
+const APP_VERSION = 'v3.1 · Cloud Sync + Mobile Fix';
 
 const THEME = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -455,17 +455,26 @@ export default function App() {
   return (
     <div className="min-h-screen" style={{ background: THEME.bg, color: THEME.ink, fontFamily: 'DM Sans, sans-serif' }}>
       {/* Mobile top bar */}
-      <div className="lg:hidden sticky top-0 z-30 flex items-center justify-between px-4 py-3 no-print"
-        style={{ background: THEME.card, borderBottom: `1px solid ${THEME.line}` }}>
-        <button onClick={() => setMobileNav(true)} className="p-2 -ml-2" style={{ color: THEME.ink }} aria-label="Open menu">
-          <Menu size={22} />
+      <div className="lg:hidden sticky top-0 z-40 flex items-center justify-between px-3 no-print"
+        style={{
+          background: THEME.card,
+          borderBottom: `1px solid ${THEME.line}`,
+          paddingTop: 'max(env(safe-area-inset-top), 12px)',
+          paddingBottom: '12px',
+        }}>
+        <button onClick={() => setMobileNav(true)}
+          className="flex items-center justify-center"
+          style={{ width: 44, height: 44, color: THEME.ink }} aria-label="Open menu">
+          <Menu size={24} />
         </button>
-        <div className="flex items-center gap-2">
-          <img src={LOGO_DATA_URL} alt="" className="w-8 h-8 rounded-full object-cover" />
-          <span className="font-display text-lg" style={{ color: THEME.brand }}>M&N Meatshop</span>
+        <div className="flex items-center gap-2 min-w-0">
+          <img src={LOGO_DATA_URL} alt="" className="w-8 h-8 rounded-full object-cover flex-shrink-0" />
+          <span className="font-display text-lg truncate" style={{ color: THEME.brand }}>M&N Meatshop</span>
         </div>
-        <button onClick={() => { setView('new'); }} className="p-2 -mr-2" style={{ color: THEME.brand }} aria-label="New order">
-          <PlusCircle size={22} />
+        <button onClick={() => { setView('new'); }}
+          className="flex items-center justify-center"
+          style={{ width: 44, height: 44, color: THEME.brand }} aria-label="New order">
+          <PlusCircle size={24} />
         </button>
       </div>
 
@@ -479,9 +488,9 @@ export default function App() {
         <aside
           className={`fixed lg:sticky top-0 z-50 lg:z-auto w-64 lg:w-60 h-screen lg:h-screen border-r flex flex-col no-print transition-transform duration-300 ${mobileNav ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
           style={{ borderColor: THEME.line, background: THEME.card }}>
-          <div className="px-6 py-6 border-b flex flex-col items-center text-center relative" style={{ borderColor: THEME.line }}>
-            <button onClick={() => setMobileNav(false)} className="lg:hidden absolute top-3 right-3 p-1.5" style={{ color: THEME.inkSoft }} aria-label="Close menu">
-              <X size={18} />
+          <div className="px-6 pb-6 border-b flex flex-col items-center text-center relative" style={{ borderColor: THEME.line, paddingTop: 'max(env(safe-area-inset-top), 24px)' }}>
+            <button onClick={() => setMobileNav(false)} className="lg:hidden absolute right-3 p-2" style={{ color: THEME.inkSoft, top: 'max(env(safe-area-inset-top), 12px)' }} aria-label="Close menu">
+              <X size={20} />
             </button>
             <img src={LOGO_DATA_URL} alt="M&N Meatshop" className="w-24 h-24 lg:w-28 lg:h-28 rounded-full object-cover mb-3" style={{ boxShadow: '0 2px 10px rgba(122,46,51,0.18)' }} />
             <div className="font-display text-xl leading-tight" style={{ color: THEME.brand }}>M&N Meatshop</div>
