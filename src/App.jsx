@@ -48,7 +48,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v3.1 · Cloud Sync + Mobile Fix';
+const APP_VERSION = 'v3.2 · Inventory + Chart + Filenames';
 
 const THEME = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -386,6 +386,34 @@ export default function App() {
 
   const productByName = useMemo(() => Object.fromEntries(catalog.map(p => [p.name, p])), [catalog]);
 
+  // Inventory auto-movement: when an order becomes "Delivered", the meat
+  // physically left the fridge — deduct its items from stock ONCE. We mark the
+  // order with `stock_deducted: true` so editing/re-saving never double-counts.
+  useEffect(() => {
+    if (!loaded) return;
+    const toDeduct = Object.values(orders).filter(
+      (o) => o.delivery_status === 'Delivered' && !o.stock_deducted
+    );
+    if (toDeduct.length === 0) return;
+
+    const nextInventory = { ...inventory };
+    toDeduct.forEach((o) => {
+      (o.items || []).forEach((it) => {
+        const cur = nextInventory[it.product] || { qty: 0, dateAdded: '', notes: '' };
+        const newQty = (Number(cur.qty) || 0) - (Number(it.qty) || 0);
+        nextInventory[it.product] = { ...cur, qty: Math.round(newQty * 100) / 100 };
+      });
+    });
+
+    const nextOrders = { ...orders };
+    toDeduct.forEach((o) => {
+      nextOrders[o.id] = { ...o, stock_deducted: true };
+    });
+
+    setInventory(nextInventory);
+    setOrders(nextOrders);
+  }, [orders, loaded]);
+
   const exportData = () => {
     const data = {
       version: 1,
@@ -396,7 +424,7 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `mn-meatshop-backup-${today()}.json`;
+    a.download = `${today()}_backup.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -642,6 +670,7 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
     const productQty = {};
     const byOrderDate = {};        // sales grouped by the order's date
     const profitByDate = {};
+    const costByDate = {};         // supplier cost grouped by the order's date
     let pendingOrders = 0, pendingValue = 0;     // orders not yet delivered (being collected)
     let weekdayTotals = {};        // sales by weekday name (production pattern)
 
@@ -672,6 +701,7 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
       if (d) {
         byOrderDate[d] = (byOrderDate[d] || 0) + oSales;
         profitByDate[d] = (profitByDate[d] || 0) + (oSales - oCost);
+        costByDate[d] = (costByDate[d] || 0) + oCost;
         const wd = new Date(d).toLocaleDateString('en-PH', { weekday: 'long' });
         if (!weekdayTotals[wd]) weekdayTotals[wd] = { sales: 0, count: 0 };
         weekdayTotals[wd].sales += oSales;
@@ -696,6 +726,7 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
         date,
         sales: Math.round(sales),
         profit: Math.round(profitByDate[date] || 0),
+        cost: Math.round(costByDate[date] || 0),
         label: fmtDateShort(date),
         weekday: new Date(date).toLocaleDateString('en-PH', { weekday: 'short' }),
       }))
@@ -856,29 +887,29 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
             )}
           </div>
           <div className="text-xs mb-4" style={{ color: THEME.inkSoft }}>
-            Each bar is one real delivery day — no empty non-production days
+            Each bar = one delivery day. Full height is total sales; green is your profit, the rest is supplier cost.
           </div>
           {stats.productionRuns.length === 0 ? (
             <EmptyHint>No production runs yet. Sales appear here once orders have a delivery date.</EmptyHint>
           ) : (
             <ResponsiveContainer width="100%" height={250}>
-              <BarChart data={stats.productionRuns} margin={{ left: -8, right: 8, top: 8 }} barGap={4}>
+              <BarChart data={stats.productionRuns} margin={{ left: -8, right: 8, top: 8 }}>
                 <CartesianGrid strokeDasharray="2 4" stroke={THEME.line} vertical={false} />
                 <XAxis dataKey="label" tick={{ fill: THEME.inkSoft, fontSize: 11 }} axisLine={{ stroke: THEME.line }} tickLine={false} />
                 <YAxis tick={{ fill: THEME.inkSoft, fontSize: 11 }} axisLine={false} tickLine={false} width={56}
                   tickFormatter={(v) => privacy ? '•••' : (v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v)} />
                 <Tooltip cursor={{ fill: '#F5E6E1' }}
                   contentStyle={{ background: THEME.card, border: `1px solid ${THEME.line}`, borderRadius: 8, fontSize: 13 }}
-                  formatter={(v, n) => [privacy ? '₱•••••' : peso(v), n === 'sales' ? 'Sales' : 'Profit']}
-                  labelFormatter={(l, p) => p && p[0] ? `${p[0].payload.weekday} · ${l}` : l} />
-                <Bar dataKey="sales" fill={THEME.brand} radius={[4, 4, 0, 0]} maxBarSize={42} />
-                <Bar dataKey="profit" fill={THEME.green} radius={[4, 4, 0, 0]} maxBarSize={42} />
+                  formatter={(v, n) => [privacy ? '₱•••••' : peso(v), n === 'cost' ? 'Supplier Cost' : 'Profit']}
+                  labelFormatter={(l, p) => p && p[0] ? `${p[0].payload.weekday} · ${l} · Sales ${privacy ? '₱•••••' : peso(p[0].payload.sales)}` : l} />
+                <Bar dataKey="cost" stackId="a" fill={THEME.brandSoft} maxBarSize={42} />
+                <Bar dataKey="profit" stackId="a" fill={THEME.green} radius={[4, 4, 0, 0]} maxBarSize={42} />
               </BarChart>
             </ResponsiveContainer>
           )}
           <div className="flex gap-4 mt-3 text-xs" style={{ color: THEME.inkSoft }}>
-            <span className="flex items-center gap-1.5"><span className="w-3 h-3 inline-block rounded-sm" style={{ background: THEME.brand }} /> Sales</span>
-            <span className="flex items-center gap-1.5"><span className="w-3 h-3 inline-block rounded-sm" style={{ background: THEME.green }} /> Profit</span>
+            <span className="flex items-center gap-1.5"><span className="w-3 h-3 inline-block rounded-sm" style={{ background: THEME.green }} /> Profit (what you keep)</span>
+            <span className="flex items-center gap-1.5"><span className="w-3 h-3 inline-block rounded-sm" style={{ background: THEME.brandSoft }} /> Supplier cost</span>
           </div>
         </Card>
 
@@ -1779,9 +1810,11 @@ function PrintableView({ order, mode, onBack }) {
         },
       });
       const a = document.createElement('a');
-      const safeName = (order.customer || 'order').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+      // Filename: "ORD-042 - Mac Hermann" (keep spaces/caps for readability,
+      // strip only characters that are illegal in filenames).
+      const cleanName = (order.customer || 'Customer').replace(/[\\/:*?"<>|]+/g, '').trim();
       a.href = dataUrl;
-      a.download = `${isInvoice ? 'order-summary' : 'supplier-copy'}-${safeName}.png`;
+      a.download = `${order.id} - ${cleanName}.png`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -2398,6 +2431,13 @@ function Inventory({ inventory, setInventory, catalog }) {
     <div>
       <Header title="Fridge Stock" subtitle="What's physically in your fridge right now"
         right={<Btn variant="secondary" size="sm" onClick={setAllZero}><RefreshCw size={13} className="inline -mt-0.5 mr-1" />Reset All</Btn>} />
+
+      <div className="mb-5 px-4 py-3 rounded-md flex items-start gap-2 text-sm no-print" style={{ background: '#E5EDDE', color: '#2f4a2a' }}>
+        <Check size={15} className="mt-0.5 flex-shrink-0" style={{ color: THEME.green }} />
+        <div>
+          <span className="font-semibold">Stock now moves automatically.</span> When you mark an order <strong>Delivered</strong>, its items are subtracted from here. When new stock arrives from your supplier, add it manually below (type the new total or adjust the number).
+        </div>
+      </div>
 
       <div className="grid grid-cols-3 gap-4 mb-6">
         <KpiCard label="Total Stock" value={`${totalKg.toFixed(1)} kg`} sub="Across all products" accent={THEME.brand} />
