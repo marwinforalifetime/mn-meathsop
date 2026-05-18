@@ -4,7 +4,7 @@ import {
   Printer, Trash2, Edit3, Search, X, Check, AlertCircle, TrendingUp,
   Receipt, FileText, ChevronRight, Save, Loader2, Plus,
   Eye, EyeOff, ArrowLeft, RefreshCw, Download, Upload, HardDrive, Image as ImageIcon,
-  Activity, Menu
+  Activity, Menu, Store
 } from 'lucide-react';
 import {
   BarChart, Bar, PieChart, Pie, Cell, ResponsiveContainer, XAxis, YAxis,
@@ -48,7 +48,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v3.3 · Supplier Prices';
+const APP_VERSION = 'v3.5 · Restaurant Quote';
 
 const THEME = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -456,6 +456,7 @@ export default function App() {
     { id: 'salescheck', label: 'Sales Check', icon: Receipt },
     { id: 'expenses', label: 'Expenses', icon: Wallet },
     { id: 'products', label: 'Price List', icon: Tag },
+    { id: 'restaurantquote', label: 'Restaurant Quote', icon: Store },
     { id: 'supplierprices', label: 'Supplier Prices', icon: TrendingUp },
   ];
 
@@ -593,7 +594,8 @@ export default function App() {
           {view === 'salescheck' && <SalesCheck orders={orders} privacy={privacy} />}
           {view === 'expenses' && <Expenses expenses={expenses} setExpenses={setExpenses} />}
           {view === 'products' && <Products catalog={catalog} setCatalog={setCatalog} priceHistory={priceHistory} setPriceHistory={setPriceHistory} />}
-          {view === 'supplierprices' && <SupplierPrices priceHistory={priceHistory} catalog={catalog} privacy={privacy} />}
+          {view === 'restaurantquote' && <RestaurantQuote catalog={catalog} privacy={privacy} />}
+          {view === 'supplierprices' && <SupplierPrices priceHistory={priceHistory} setPriceHistory={setPriceHistory} catalog={catalog} privacy={privacy} />}
         </main>
       </div>
 
@@ -2385,12 +2387,233 @@ function Expenses({ expenses, setExpenses }) {
    ============================================================ */
 
 /* ============================================================
-   SUPPLIER PRICES (price-change history + margin impact)
+   RESTAURANT QUOTE (wholesale calculator for prospects)
    ============================================================ */
 
-function SupplierPrices({ priceHistory, catalog, privacy }) {
+// Pricing rule, derived from each product's real cost & retail price so it
+// always stays consistent with the live Price List. Never returns a price
+// below: cost + assumed shared-delivery (₱9/kg) + minimum profit (₱25/kg).
+const DELIV_PER_KG = 9;
+const MIN_PROFIT_KG = 25;
+
+function quotePricing(p) {
+  const cost = Number(p.cost) || 0;
+  const retail = Number(p.price) || 0;
+  const headroom = retail - cost;            // retail margin per kg
+  const floor = cost + DELIV_PER_KG + MIN_PROFIT_KG;
+  // Thin-margin items (little headroom): hold at retail, no bulk discount.
+  if (headroom < 60) {
+    return { restaurant: retail, bulk: retail, discounted: false, floor };
+  }
+  // Fat-margin items: restaurant ~12% off retail, bulk ~18% off retail,
+  // but never below the floor.
+  let restaurant = Math.round(retail * 0.88);
+  let bulk = Math.round(retail * 0.82);
+  restaurant = Math.max(restaurant, floor);
+  bulk = Math.max(bulk, floor);
+  return { restaurant, bulk, discounted: true, floor };
+}
+
+function RestaurantQuote({ catalog, privacy }) {
+  const BULK_MIN_KG = 25;
+  const [qtys, setQtys] = useState({});       // { productName: kg }
+  const [tier, setTier] = useState('auto');   // 'auto' | 'restaurant' | 'bulk'
+
+  const rows = useMemo(() => catalog.map((p) => {
+    const pr = quotePricing(p);
+    const kg = Number(qtys[p.name]) || 0;
+    return { ...p, ...pr, kg };
+  }), [catalog, qtys]);
+
+  const totalKg = useMemo(() => rows.reduce((s, r) => s + r.kg, 0), [rows]);
+
+  // Which price applies: auto = bulk if combined order >= 25kg, else restaurant.
+  const effectiveTier = tier === 'auto' ? (totalKg >= BULK_MIN_KG ? 'bulk' : 'restaurant') : tier;
+
+  const calc = useMemo(() => {
+    let total = 0, cost = 0;
+    const lines = [];
+    rows.forEach((r) => {
+      if (r.kg <= 0) return;
+      const unit = effectiveTier === 'bulk' ? r.bulk : r.restaurant;
+      const lineTotal = unit * r.kg;
+      total += lineTotal;
+      cost += (Number(r.cost) || 0) * r.kg;
+      lines.push({ name: r.name, kg: r.kg, unit, lineTotal });
+    });
+    const delivery = totalKg > 0 ? DELIV_PER_KG * totalKg : 0;
+    const profit = total - cost - delivery;
+    return { lines, total, cost, delivery, profit };
+  }, [rows, effectiveTier, totalKg]);
+
+  const m = (n) => privacy ? '₱•••••' : peso(n);
+  const setQty = (name, v) => setQtys({ ...qtys, [name]: v });
+  const clearAll = () => setQtys({});
+
+  return (
+    <div>
+      <Header title="Restaurant Quote" subtitle="Build a live quote to show a restaurant client"
+        right={<Btn variant="secondary" size="sm" onClick={clearAll}><RefreshCw size={13} className="inline -mt-0.5 mr-1" />Clear</Btn>} />
+
+      <div className="mb-5 px-4 py-3 rounded-md flex items-start gap-2 text-sm no-print" style={{ background: '#F5E6E1', color: THEME.brand }}>
+        <Store size={15} className="mt-0.5 flex-shrink-0" />
+        <div>
+          Type the kilos the restaurant wants per item. <strong>Bulk Price</strong> applies automatically once the whole order reaches <strong>{BULK_MIN_KG} kg</strong>. The profit figure already subtracts an estimated ₱{DELIV_PER_KG}/kg shared delivery cost — so it's your real take-home, built for repeat weekly orders.
+        </div>
+      </div>
+
+      {/* Tier toggle */}
+      <div className="flex gap-2 mb-5 no-print">
+        {[['auto', 'Automatic'], ['restaurant', 'Restaurant Price'], ['bulk', 'Bulk Price']].map(([id, label]) => (
+          <button key={id} onClick={() => setTier(id)}
+            className="px-3.5 py-2 text-sm rounded-md transition-colors"
+            style={{
+              background: tier === id ? THEME.brand : 'transparent',
+              color: tier === id ? 'white' : THEME.inkSoft,
+              border: `1px solid ${tier === id ? THEME.brand : THEME.line}`,
+            }}>
+            {label}
+          </button>
+        ))}
+        <div className="ml-auto self-center text-sm" style={{ color: THEME.inkSoft }}>
+          Now applying: <strong style={{ color: effectiveTier === 'bulk' ? THEME.green : THEME.brand }}>
+            {effectiveTier === 'bulk' ? 'Bulk Price' : 'Restaurant Price'}
+          </strong>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Item entry */}
+        <div className="lg:col-span-2">
+          <Card className="p-5">
+            <div className="overflow-x-auto -mx-1">
+              <table className="w-full text-sm" style={{ minWidth: 560 }}>
+                <thead>
+                  <tr style={{ color: THEME.inkSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                    <th className="text-left pb-2 font-medium">Product</th>
+                    <th className="text-right pb-2 font-medium">Restaurant</th>
+                    <th className="text-right pb-2 font-medium">Bulk ({BULK_MIN_KG}kg+)</th>
+                    <th className="text-right pb-2 font-medium" style={{ width: 90 }}>Kg</th>
+                    <th className="text-right pb-2 font-medium">Line</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {['Pork', 'Chicken', 'Beef'].map((g) => (
+                    <React.Fragment key={g}>
+                      <tr><td colSpan={5} className="pt-3 pb-1 text-xs font-semibold" style={{ color: THEME.brandSoft }}>{g}</td></tr>
+                      {rows.filter(r => r.group === g).map((r) => {
+                        const unit = effectiveTier === 'bulk' ? r.bulk : r.restaurant;
+                        return (
+                          <tr key={r.name} style={{ borderTop: `1px solid ${THEME.line}` }}>
+                            <td className="py-2">
+                              {r.name}
+                              {!r.discounted && <span className="ml-1.5 text-xs px-1.5 py-0.5 rounded" style={{ background: THEME.bg, color: THEME.inkSoft }}>best price</span>}
+                            </td>
+                            <td className="py-2 text-right" style={{ color: THEME.inkSoft }}>{m(r.restaurant)}</td>
+                            <td className="py-2 text-right" style={{ color: r.discounted ? THEME.green : THEME.inkSoft }}>{m(r.bulk)}</td>
+                            <td className="py-2 text-right">
+                              <input type="number" min="0" step="0.5" value={qtys[r.name] || ''}
+                                onChange={(e) => setQty(r.name, e.target.value)}
+                                placeholder="0"
+                                className="w-16 px-2 py-1 rounded text-right outline-none"
+                                style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink }} />
+                            </td>
+                            <td className="py-2 text-right font-medium">{r.kg > 0 ? m(unit * r.kg) : '—'}</td>
+                          </tr>
+                        );
+                      })}
+                    </React.Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        </div>
+
+        {/* Live quote summary */}
+        <div className="lg:col-span-1">
+          <Card className="p-5" style={{ position: 'sticky', top: 16 }}>
+            <div className="font-display text-lg mb-3">Quote Summary</div>
+            <div className="space-y-2 text-sm mb-4">
+              <div className="flex justify-between"><span style={{ color: THEME.inkSoft }}>Total quantity</span><span className="font-medium">{totalKg.toFixed(1)} kg</span></div>
+              <div className="flex justify-between"><span style={{ color: THEME.inkSoft }}>Price tier</span><span className="font-medium" style={{ color: effectiveTier === 'bulk' ? THEME.green : THEME.brand }}>{effectiveTier === 'bulk' ? 'Bulk' : 'Restaurant'}</span></div>
+              {totalKg > 0 && totalKg < BULK_MIN_KG && (
+                <div className="text-xs px-2 py-1.5 rounded" style={{ background: '#F7E8C9', color: '#7a5a1a' }}>
+                  {(BULK_MIN_KG - totalKg).toFixed(1)} kg more unlocks Bulk pricing
+                </div>
+              )}
+            </div>
+            <div className="py-4 mb-3" style={{ borderTop: `1px solid ${THEME.line}`, borderBottom: `1px solid ${THEME.line}` }}>
+              <div className="text-xs uppercase tracking-wider mb-1" style={{ color: THEME.inkSoft }}>Quoted Total</div>
+              <div className="font-display text-3xl" style={{ color: THEME.brand }}>{m(calc.total)}</div>
+            </div>
+            <div className="space-y-1.5 text-sm">
+              <div className="flex justify-between"><span style={{ color: THEME.inkSoft }}>Your cost</span><span>{m(calc.cost)}</span></div>
+              <div className="flex justify-between"><span style={{ color: THEME.inkSoft }}>Est. delivery (₱{DELIV_PER_KG}/kg)</span><span style={{ color: THEME.red }}>−{m(calc.delivery)}</span></div>
+              <div className="flex justify-between font-medium" style={{ color: calc.profit >= 0 ? THEME.green : THEME.red }}>
+                <span>Your profit</span><span>{m(calc.profit)}</span>
+              </div>
+              {totalKg > 0 && (
+                <div className="flex justify-between text-xs pt-1" style={{ color: THEME.inkSoft }}>
+                  <span>Profit per kg</span><span>{m(calc.profit / totalKg)}/kg</span>
+                </div>
+              )}
+            </div>
+            {calc.profit < 0 && totalKg > 0 && (
+              <div className="mt-3 text-xs px-2 py-1.5 rounded" style={{ background: '#FBEAEA', color: THEME.red }}>
+                This quote loses money. Raise quantities or don't discount these items.
+              </div>
+            )}
+            {calc.profit >= 0 && totalKg >= BULK_MIN_KG && (
+              <div className="mt-3 text-xs px-2 py-1.5 rounded" style={{ background: '#E5EDDE', color: '#2f4a2a' }}>
+                Healthy weekly order — this is the repeat client you want.
+              </div>
+            )}
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+
+function SupplierPrices({ priceHistory, setPriceHistory, catalog, privacy }) {
   const m = (n) => privacy ? '₱•••••' : peso(n);
   const history = priceHistory || [];
+  const [adding, setAdding] = useState(null); // null | {product, oldCost, newCost, date}
+
+  const startAdd = () => setAdding({
+    product: catalog[0]?.name || '',
+    oldCost: '',
+    newCost: '',
+    date: today(),
+  });
+
+  const saveManual = () => {
+    if (!adding) return;
+    const oldCost = Number(adding.oldCost);
+    const newCost = Number(adding.newCost);
+    if (!adding.product || !(oldCost >= 0) || !(newCost >= 0) || oldCost === newCost) {
+      alert('Please pick a product and enter a valid old and new cost that are different.');
+      return;
+    }
+    const prod = catalog.find(p => p.name === adding.product);
+    const sellPrice = Number(prod?.price) || 0;
+    const entry = {
+      id: 'PH-' + Date.now(),
+      date: adding.date || today(),
+      product: adding.product,
+      oldCost: Math.round(oldCost * 100) / 100,
+      newCost: Math.round(newCost * 100) / 100,
+      delta: Math.round((newCost - oldCost) * 100) / 100,
+      sellPrice,
+      marginImpact: Math.round((oldCost - newCost) * 100) / 100,
+      manual: true, // truthfully marked: this was hand-entered, not auto-captured
+    };
+    setPriceHistory([entry, ...(priceHistory || [])]);
+    setAdding(null);
+  };
 
   const sorted = useMemo(
     () => [...history].sort((a, b) => {
@@ -2433,7 +2656,8 @@ function SupplierPrices({ priceHistory, catalog, privacy }) {
 
   return (
     <div>
-      <Header title="Supplier Prices" subtitle="Every time your supplier changes a cost — and what it does to your margin" />
+      <Header title="Supplier Prices" subtitle="Every time your supplier changes a cost — and what it does to your margin"
+        right={<Btn variant="secondary" size="sm" onClick={startAdd}><PlusCircle size={14} className="inline -mt-0.5 mr-1" />Add past change</Btn>} />
 
       {history.length === 0 ? (
         <Card className="p-8">
@@ -2506,7 +2730,10 @@ function SupplierPrices({ priceHistory, catalog, privacy }) {
                 <tbody>
                   {sorted.map((h) => (
                     <tr key={h.id} style={{ borderTop: `1px solid ${THEME.line}` }}>
-                      <td className="py-2.5" style={{ color: THEME.inkSoft }}>{fmtDateShort(h.date)}</td>
+                      <td className="py-2.5" style={{ color: THEME.inkSoft }}>
+                        {fmtDateShort(h.date)}
+                        {h.manual && <span className="ml-1.5 text-xs px-1.5 py-0.5 rounded" style={{ background: THEME.bg, color: THEME.inkSoft }}>added</span>}
+                      </td>
                       <td className="py-2.5">{h.product}</td>
                       <td className="py-2.5 text-right" style={{ color: THEME.inkSoft }}>{m(h.oldCost)}</td>
                       <td className="py-2.5 text-right">{m(h.newCost)}</td>
@@ -2524,6 +2751,53 @@ function SupplierPrices({ priceHistory, catalog, privacy }) {
           </Card>
         </>
       )}
+
+      <Modal open={!!adding} onClose={() => setAdding(null)} maxWidth="max-w-md">
+        {adding && (
+          <div>
+            <div className="font-display text-xl mb-1">Add a past price change</div>
+            <div className="text-xs mb-5" style={{ color: THEME.inkSoft }}>
+              For a supplier change that already happened before this was tracked. This creates a real history entry.
+            </div>
+            <div className="space-y-4">
+              <div>
+                <Label>Product</Label>
+                <Select value={adding.product} onChange={(e) => setAdding({ ...adding, product: e.target.value })}
+                  options={catalog.map(p => p.name)} />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>Old Cost (₱)</Label>
+                  <Input type="number" step="0.01" value={adding.oldCost}
+                    onChange={(e) => setAdding({ ...adding, oldCost: e.target.value })} placeholder="e.g. 183" />
+                </div>
+                <div>
+                  <Label>New Cost (₱)</Label>
+                  <Input type="number" step="0.01" value={adding.newCost}
+                    onChange={(e) => setAdding({ ...adding, newCost: e.target.value })} placeholder="e.g. 188" />
+                </div>
+              </div>
+              <div>
+                <Label>Date it changed</Label>
+                <Input type="date" value={adding.date}
+                  onChange={(e) => setAdding({ ...adding, date: e.target.value })} />
+              </div>
+              {adding.oldCost !== '' && adding.newCost !== '' && Number(adding.oldCost) !== Number(adding.newCost) && (
+                <div className="text-sm px-3 py-2 rounded-md" style={{ background: THEME.bg, color: THEME.ink }}>
+                  Change: <strong style={{ color: Number(adding.newCost) > Number(adding.oldCost) ? THEME.red : THEME.green }}>
+                    {Number(adding.newCost) > Number(adding.oldCost) ? '+' : ''}{peso(Number(adding.newCost) - Number(adding.oldCost))}
+                  </strong>
+                  {' '}— since your selling price is unchanged, that's what it does to your margin per kg.
+                </div>
+              )}
+            </div>
+            <div className="flex gap-2 mt-6">
+              <Btn variant="secondary" onClick={() => setAdding(null)} className="flex-1">Cancel</Btn>
+              <Btn variant="primary" onClick={saveManual} className="flex-1">Save entry</Btn>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
