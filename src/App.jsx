@@ -48,7 +48,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v3.7 · Client + Profit Screens';
+const APP_VERSION = 'v3.8 · Quote Savings';
 
 const THEME = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -2430,6 +2430,12 @@ function RestaurantQuote({ catalog }) {
     () => rows.reduce((s, r) => s + (r.kg > 0 ? r.wholesale * r.kg : 0), 0),
     [rows]
   );
+  const retailTotal = useMemo(
+    () => rows.reduce((s, r) => s + (r.kg > 0 ? (Number(r.price) || 0) * r.kg : 0), 0),
+    [rows]
+  );
+  const avgPerKg = totalKg > 0 ? grandTotal / totalKg : 0;
+  const savings = retailTotal - grandTotal;
   const setQty = (name, v) => setQtys({ ...qtys, [name]: v });
   const clearAll = () => setQtys({});
 
@@ -2493,7 +2499,18 @@ function RestaurantQuote({ catalog }) {
             <div className="py-4" style={{ borderTop: `2px solid ${THEME.brand}` }}>
               <div className="text-xs uppercase tracking-wider mb-1" style={{ color: THEME.inkSoft }}>Total Amount</div>
               <div className="font-display text-3xl" style={{ color: THEME.brand }}>{peso(grandTotal)}</div>
+              {totalKg > 0 && (
+                <div className="text-sm mt-1" style={{ color: THEME.inkSoft }}>
+                  Averages {peso(avgPerKg)}/kg
+                </div>
+              )}
             </div>
+            {savings > 0 && (
+              <div className="mt-3 px-3 py-2.5 rounded-md text-sm" style={{ background: '#E5EDDE', color: '#2f4a2a' }}>
+                You save <strong>{peso(savings)}</strong> vs our regular price
+                <span style={{ color: THEME.inkSoft }}> ({peso(retailTotal)})</span>
+              </div>
+            )}
             <div className="text-xs mt-3" style={{ color: THEME.inkSoft }}>
               M&N Meatshop · fresh, cut to your spec, delivered on schedule.
             </div>
