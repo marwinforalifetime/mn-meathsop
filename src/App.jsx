@@ -48,7 +48,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v3.5 · Restaurant Quote';
+const APP_VERSION = 'v3.6 · Single Wholesale Price';
 
 const THEME = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -2386,114 +2386,120 @@ function Expenses({ expenses, setExpenses }) {
    PRODUCTS / PRICE LIST
    ============================================================ */
 
+
 /* ============================================================
-   RESTAURANT QUOTE (wholesale calculator for prospects)
+   RESTAURANT QUOTE (single-price wholesale calculator)
    ============================================================ */
 
-// Pricing rule, derived from each product's real cost & retail price so it
-// always stays consistent with the live Price List. Never returns a price
-// below: cost + assumed shared-delivery (₱9/kg) + minimum profit (₱25/kg).
-const DELIV_PER_KG = 9;
-const MIN_PROFIT_KG = 25;
+// Shared-trip delivery estimate and the minimum profit we must keep per kg.
+// Wholesale price is derived from each product's real cost & retail price so
+// it always stays consistent with the live Price List, and is never allowed
+// below the floor: cost + delivery + minimum profit.
+const RQ_DELIV_PER_KG = 9;
+const RQ_MIN_PROFIT_KG = 25;
+const RQ_SAFE_MIN_KG = 20; // below this, shared-trip math turns risky
 
-function quotePricing(p) {
+// One wholesale price per item. Fat-margin items get ~16% off retail (but
+// never below floor). Thin-margin items (little headroom) hold at retail.
+function rqPricing(p) {
   const cost = Number(p.cost) || 0;
   const retail = Number(p.price) || 0;
-  const headroom = retail - cost;            // retail margin per kg
-  const floor = cost + DELIV_PER_KG + MIN_PROFIT_KG;
-  // Thin-margin items (little headroom): hold at retail, no bulk discount.
+  const headroom = retail - cost;
+  const floor = cost + RQ_DELIV_PER_KG + RQ_MIN_PROFIT_KG;
   if (headroom < 60) {
-    return { restaurant: retail, bulk: retail, discounted: false, floor };
+    return { wholesale: retail, discounted: false, floor };
   }
-  // Fat-margin items: restaurant ~12% off retail, bulk ~18% off retail,
-  // but never below the floor.
-  let restaurant = Math.round(retail * 0.88);
-  let bulk = Math.round(retail * 0.82);
-  restaurant = Math.max(restaurant, floor);
-  bulk = Math.max(bulk, floor);
-  return { restaurant, bulk, discounted: true, floor };
+  let wholesale = Math.round(retail * 0.84);
+  wholesale = Math.max(wholesale, floor);
+  return { wholesale, discounted: true, floor };
 }
 
 function RestaurantQuote({ catalog, privacy }) {
-  const BULK_MIN_KG = 25;
-  const [qtys, setQtys] = useState({});       // { productName: kg }
-  const [tier, setTier] = useState('auto');   // 'auto' | 'restaurant' | 'bulk'
+  const [qtys, setQtys] = useState({});
+  const [minKg, setMinKg] = useState(RQ_SAFE_MIN_KG);
 
   const rows = useMemo(() => catalog.map((p) => {
-    const pr = quotePricing(p);
+    const pr = rqPricing(p);
     const kg = Number(qtys[p.name]) || 0;
     return { ...p, ...pr, kg };
   }), [catalog, qtys]);
 
   const totalKg = useMemo(() => rows.reduce((s, r) => s + r.kg, 0), [rows]);
-
-  // Which price applies: auto = bulk if combined order >= 25kg, else restaurant.
-  const effectiveTier = tier === 'auto' ? (totalKg >= BULK_MIN_KG ? 'bulk' : 'restaurant') : tier;
+  const meetsMin = totalKg >= minKg;
 
   const calc = useMemo(() => {
-    let total = 0, cost = 0;
-    const lines = [];
+    let total = 0, cost = 0, retailTotal = 0;
     rows.forEach((r) => {
       if (r.kg <= 0) return;
-      const unit = effectiveTier === 'bulk' ? r.bulk : r.restaurant;
-      const lineTotal = unit * r.kg;
-      total += lineTotal;
+      // Below the minimum, the customer pays normal retail (still profitable,
+      // no wholesale discount). At/above the minimum, wholesale price applies.
+      const unit = meetsMin ? r.wholesale : (Number(r.price) || 0);
+      total += unit * r.kg;
+      retailTotal += (Number(r.price) || 0) * r.kg;
       cost += (Number(r.cost) || 0) * r.kg;
-      lines.push({ name: r.name, kg: r.kg, unit, lineTotal });
     });
-    const delivery = totalKg > 0 ? DELIV_PER_KG * totalKg : 0;
+    const delivery = totalKg > 0 ? RQ_DELIV_PER_KG * totalKg : 0;
     const profit = total - cost - delivery;
-    return { lines, total, cost, delivery, profit };
-  }, [rows, effectiveTier, totalKg]);
+    return { total, cost, retailTotal, delivery, profit };
+  }, [rows, meetsMin, totalKg]);
 
   const m = (n) => privacy ? '₱•••••' : peso(n);
   const setQty = (name, v) => setQtys({ ...qtys, [name]: v });
   const clearAll = () => setQtys({});
+  const belowSafe = minKg < RQ_SAFE_MIN_KG;
 
   return (
     <div>
-      <Header title="Restaurant Quote" subtitle="Build a live quote to show a restaurant client"
+      <Header title="Restaurant Quote" subtitle="One clear wholesale price — build a live quote for a restaurant client"
         right={<Btn variant="secondary" size="sm" onClick={clearAll}><RefreshCw size={13} className="inline -mt-0.5 mr-1" />Clear</Btn>} />
 
       <div className="mb-5 px-4 py-3 rounded-md flex items-start gap-2 text-sm no-print" style={{ background: '#F5E6E1', color: THEME.brand }}>
         <Store size={15} className="mt-0.5 flex-shrink-0" />
         <div>
-          Type the kilos the restaurant wants per item. <strong>Bulk Price</strong> applies automatically once the whole order reaches <strong>{BULK_MIN_KG} kg</strong>. The profit figure already subtracts an estimated ₱{DELIV_PER_KG}/kg shared delivery cost — so it's your real take-home, built for repeat weekly orders.
+          One wholesale price per item. It applies once the whole order reaches your minimum below; smaller orders pay normal retail (still profitable). The profit shown already subtracts ₱{RQ_DELIV_PER_KG}/kg estimated shared-trip delivery — it's your real take-home.
         </div>
       </div>
 
-      {/* Tier toggle */}
-      <div className="flex gap-2 mb-5 no-print">
-        {[['auto', 'Automatic'], ['restaurant', 'Restaurant Price'], ['bulk', 'Bulk Price']].map(([id, label]) => (
-          <button key={id} onClick={() => setTier(id)}
-            className="px-3.5 py-2 text-sm rounded-md transition-colors"
-            style={{
-              background: tier === id ? THEME.brand : 'transparent',
-              color: tier === id ? 'white' : THEME.inkSoft,
-              border: `1px solid ${tier === id ? THEME.brand : THEME.line}`,
-            }}>
-            {label}
-          </button>
-        ))}
-        <div className="ml-auto self-center text-sm" style={{ color: THEME.inkSoft }}>
-          Now applying: <strong style={{ color: effectiveTier === 'bulk' ? THEME.green : THEME.brand }}>
-            {effectiveTier === 'bulk' ? 'Bulk Price' : 'Restaurant Price'}
-          </strong>
+      {/* Minimum order setting */}
+      <Card className="p-4 mb-5 no-print">
+        <div className="flex items-center gap-3 flex-wrap">
+          <span className="text-sm font-medium">Wholesale unlocks at:</span>
+          <div className="flex items-center gap-2">
+            <input type="number" min="1" step="1" value={minKg}
+              onChange={(e) => setMinKg(Math.max(1, Number(e.target.value) || 1))}
+              className="w-20 px-2 py-1.5 rounded text-right outline-none"
+              style={{ background: THEME.card, border: `1px solid ${belowSafe ? THEME.red : THEME.line}`, color: THEME.ink }} />
+            <span className="text-sm" style={{ color: THEME.inkSoft }}>kg per order</span>
+          </div>
+          {[10, 15, 20, 25].map((v) => (
+            <button key={v} onClick={() => setMinKg(v)}
+              className="px-2.5 py-1 text-xs rounded-md"
+              style={{ background: minKg === v ? THEME.brand : 'transparent', color: minKg === v ? 'white' : THEME.inkSoft, border: `1px solid ${minKg === v ? THEME.brand : THEME.line}` }}>
+              {v}kg
+            </button>
+          ))}
         </div>
-      </div>
+        {belowSafe && (
+          <div className="mt-3 text-sm px-3 py-2 rounded flex items-start gap-2" style={{ background: '#FBEAEA', color: THEME.red }}>
+            <AlertCircle size={15} className="mt-0.5 flex-shrink-0" />
+            <div>
+              <strong>Below the safe line ({RQ_SAFE_MIN_KG} kg).</strong> A wholesale order this small may not cover its share of your ₱592 trip, especially with any detour. You can still set it — but watch the profit-per-kg figure carefully, and consider letting small orders stay at retail instead.
+            </div>
+          </div>
+        )}
+      </Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Item entry */}
         <div className="lg:col-span-2">
           <Card className="p-5">
             <div className="overflow-x-auto -mx-1">
-              <table className="w-full text-sm" style={{ minWidth: 560 }}>
+              <table className="w-full text-sm" style={{ minWidth: 520 }}>
                 <thead>
                   <tr style={{ color: THEME.inkSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                     <th className="text-left pb-2 font-medium">Product</th>
-                    <th className="text-right pb-2 font-medium">Restaurant</th>
-                    <th className="text-right pb-2 font-medium">Bulk ({BULK_MIN_KG}kg+)</th>
-                    <th className="text-right pb-2 font-medium" style={{ width: 90 }}>Kg</th>
+                    <th className="text-right pb-2 font-medium">Retail</th>
+                    <th className="text-right pb-2 font-medium">Wholesale</th>
+                    <th className="text-right pb-2 font-medium" style={{ width: 80 }}>Kg</th>
                     <th className="text-right pb-2 font-medium">Line</th>
                   </tr>
                 </thead>
@@ -2502,15 +2508,15 @@ function RestaurantQuote({ catalog, privacy }) {
                     <React.Fragment key={g}>
                       <tr><td colSpan={5} className="pt-3 pb-1 text-xs font-semibold" style={{ color: THEME.brandSoft }}>{g}</td></tr>
                       {rows.filter(r => r.group === g).map((r) => {
-                        const unit = effectiveTier === 'bulk' ? r.bulk : r.restaurant;
+                        const unit = meetsMin ? r.wholesale : (Number(r.price) || 0);
                         return (
                           <tr key={r.name} style={{ borderTop: `1px solid ${THEME.line}` }}>
                             <td className="py-2">
                               {r.name}
                               {!r.discounted && <span className="ml-1.5 text-xs px-1.5 py-0.5 rounded" style={{ background: THEME.bg, color: THEME.inkSoft }}>best price</span>}
                             </td>
-                            <td className="py-2 text-right" style={{ color: THEME.inkSoft }}>{m(r.restaurant)}</td>
-                            <td className="py-2 text-right" style={{ color: r.discounted ? THEME.green : THEME.inkSoft }}>{m(r.bulk)}</td>
+                            <td className="py-2 text-right" style={{ color: THEME.inkSoft }}>{m(r.price)}</td>
+                            <td className="py-2 text-right font-medium" style={{ color: r.discounted ? THEME.green : THEME.inkSoft }}>{m(r.wholesale)}</td>
                             <td className="py-2 text-right">
                               <input type="number" min="0" step="0.5" value={qtys[r.name] || ''}
                                 onChange={(e) => setQty(r.name, e.target.value)}
@@ -2530,26 +2536,33 @@ function RestaurantQuote({ catalog, privacy }) {
           </Card>
         </div>
 
-        {/* Live quote summary */}
         <div className="lg:col-span-1">
           <Card className="p-5" style={{ position: 'sticky', top: 16 }}>
             <div className="font-display text-lg mb-3">Quote Summary</div>
             <div className="space-y-2 text-sm mb-4">
               <div className="flex justify-between"><span style={{ color: THEME.inkSoft }}>Total quantity</span><span className="font-medium">{totalKg.toFixed(1)} kg</span></div>
-              <div className="flex justify-between"><span style={{ color: THEME.inkSoft }}>Price tier</span><span className="font-medium" style={{ color: effectiveTier === 'bulk' ? THEME.green : THEME.brand }}>{effectiveTier === 'bulk' ? 'Bulk' : 'Restaurant'}</span></div>
-              {totalKg > 0 && totalKg < BULK_MIN_KG && (
+              <div className="flex justify-between">
+                <span style={{ color: THEME.inkSoft }}>Pricing</span>
+                <span className="font-medium" style={{ color: meetsMin ? THEME.green : THEME.brand }}>{meetsMin ? 'Wholesale' : 'Retail (below min)'}</span>
+              </div>
+              {totalKg > 0 && !meetsMin && (
                 <div className="text-xs px-2 py-1.5 rounded" style={{ background: '#F7E8C9', color: '#7a5a1a' }}>
-                  {(BULK_MIN_KG - totalKg).toFixed(1)} kg more unlocks Bulk pricing
+                  {(minKg - totalKg).toFixed(1)} kg more unlocks wholesale pricing
                 </div>
               )}
             </div>
             <div className="py-4 mb-3" style={{ borderTop: `1px solid ${THEME.line}`, borderBottom: `1px solid ${THEME.line}` }}>
               <div className="text-xs uppercase tracking-wider mb-1" style={{ color: THEME.inkSoft }}>Quoted Total</div>
               <div className="font-display text-3xl" style={{ color: THEME.brand }}>{m(calc.total)}</div>
+              {meetsMin && calc.retailTotal > calc.total && (
+                <div className="text-xs mt-1" style={{ color: THEME.green }}>
+                  Client saves {m(calc.retailTotal - calc.total)} vs retail
+                </div>
+              )}
             </div>
             <div className="space-y-1.5 text-sm">
               <div className="flex justify-between"><span style={{ color: THEME.inkSoft }}>Your cost</span><span>{m(calc.cost)}</span></div>
-              <div className="flex justify-between"><span style={{ color: THEME.inkSoft }}>Est. delivery (₱{DELIV_PER_KG}/kg)</span><span style={{ color: THEME.red }}>−{m(calc.delivery)}</span></div>
+              <div className="flex justify-between"><span style={{ color: THEME.inkSoft }}>Est. delivery (₱{RQ_DELIV_PER_KG}/kg)</span><span style={{ color: THEME.red }}>−{m(calc.delivery)}</span></div>
               <div className="flex justify-between font-medium" style={{ color: calc.profit >= 0 ? THEME.green : THEME.red }}>
                 <span>Your profit</span><span>{m(calc.profit)}</span>
               </div>
@@ -2561,12 +2574,12 @@ function RestaurantQuote({ catalog, privacy }) {
             </div>
             {calc.profit < 0 && totalKg > 0 && (
               <div className="mt-3 text-xs px-2 py-1.5 rounded" style={{ background: '#FBEAEA', color: THEME.red }}>
-                This quote loses money. Raise quantities or don't discount these items.
+                This quote loses money. Raise quantities, raise the minimum, or don't discount these items.
               </div>
             )}
-            {calc.profit >= 0 && totalKg >= BULK_MIN_KG && (
+            {calc.profit >= 0 && meetsMin && totalKg >= RQ_SAFE_MIN_KG && (
               <div className="mt-3 text-xs px-2 py-1.5 rounded" style={{ background: '#E5EDDE', color: '#2f4a2a' }}>
-                Healthy weekly order — this is the repeat client you want.
+                Healthy order — the kind of weekly repeat client you want.
               </div>
             )}
           </Card>
@@ -2575,6 +2588,7 @@ function RestaurantQuote({ catalog, privacy }) {
     </div>
   );
 }
+
 
 
 
