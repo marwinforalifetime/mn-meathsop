@@ -48,7 +48,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v3.6 · Single Wholesale Price';
+const APP_VERSION = 'v3.7 · Client + Profit Screens';
 
 const THEME = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -457,6 +457,7 @@ export default function App() {
     { id: 'expenses', label: 'Expenses', icon: Wallet },
     { id: 'products', label: 'Price List', icon: Tag },
     { id: 'restaurantquote', label: 'Restaurant Quote', icon: Store },
+    { id: 'profitcheck', label: 'Quote Profit Check', icon: EyeOff },
     { id: 'supplierprices', label: 'Supplier Prices', icon: TrendingUp },
   ];
 
@@ -594,7 +595,8 @@ export default function App() {
           {view === 'salescheck' && <SalesCheck orders={orders} privacy={privacy} />}
           {view === 'expenses' && <Expenses expenses={expenses} setExpenses={setExpenses} />}
           {view === 'products' && <Products catalog={catalog} setCatalog={setCatalog} priceHistory={priceHistory} setPriceHistory={setPriceHistory} />}
-          {view === 'restaurantquote' && <RestaurantQuote catalog={catalog} privacy={privacy} />}
+          {view === 'restaurantquote' && <RestaurantQuote catalog={catalog} />}
+          {view === 'profitcheck' && <QuoteProfitCheck catalog={catalog} privacy={privacy} />}
           {view === 'supplierprices' && <SupplierPrices priceHistory={priceHistory} setPriceHistory={setPriceHistory} catalog={catalog} privacy={privacy} />}
         </main>
       </div>
@@ -2388,19 +2390,18 @@ function Expenses({ expenses, setExpenses }) {
 
 
 /* ============================================================
-   RESTAURANT QUOTE (single-price wholesale calculator)
+   RESTAURANT QUOTE  (client-facing — NO cost/profit shown)
+   QUOTE PROFIT CHECK (private — your cost & profit)
    ============================================================ */
 
-// Shared-trip delivery estimate and the minimum profit we must keep per kg.
-// Wholesale price is derived from each product's real cost & retail price so
-// it always stays consistent with the live Price List, and is never allowed
-// below the floor: cost + delivery + minimum profit.
+// Shared-trip delivery estimate and minimum profit kept per kg, used ONLY by
+// the private profit check. Wholesale price is derived from each product's
+// real cost & retail price, never below floor (cost + delivery + min profit).
 const RQ_DELIV_PER_KG = 9;
 const RQ_MIN_PROFIT_KG = 25;
-const RQ_SAFE_MIN_KG = 20; // below this, shared-trip math turns risky
 
-// One wholesale price per item. Fat-margin items get ~16% off retail (but
-// never below floor). Thin-margin items (little headroom) hold at retail.
+// One wholesale price per item. Fat-margin items ~16% off retail (never below
+// floor). Thin-margin items hold at retail (no room to discount safely).
 function rqPricing(p) {
   const cost = Number(p.cost) || 0;
   const retail = Number(p.price) || 0;
@@ -2414,9 +2415,9 @@ function rqPricing(p) {
   return { wholesale, discounted: true, floor };
 }
 
-function RestaurantQuote({ catalog, privacy }) {
+// ---- Client-facing quote: safe to show the restaurant ----
+function RestaurantQuote({ catalog }) {
   const [qtys, setQtys] = useState({});
-  const [minKg, setMinKg] = useState(RQ_SAFE_MIN_KG);
 
   const rows = useMemo(() => catalog.map((p) => {
     const pr = rqPricing(p);
@@ -2425,109 +2426,49 @@ function RestaurantQuote({ catalog, privacy }) {
   }), [catalog, qtys]);
 
   const totalKg = useMemo(() => rows.reduce((s, r) => s + r.kg, 0), [rows]);
-  const meetsMin = totalKg >= minKg;
-
-  const calc = useMemo(() => {
-    let total = 0, cost = 0, retailTotal = 0;
-    rows.forEach((r) => {
-      if (r.kg <= 0) return;
-      // Below the minimum, the customer pays normal retail (still profitable,
-      // no wholesale discount). At/above the minimum, wholesale price applies.
-      const unit = meetsMin ? r.wholesale : (Number(r.price) || 0);
-      total += unit * r.kg;
-      retailTotal += (Number(r.price) || 0) * r.kg;
-      cost += (Number(r.cost) || 0) * r.kg;
-    });
-    const delivery = totalKg > 0 ? RQ_DELIV_PER_KG * totalKg : 0;
-    const profit = total - cost - delivery;
-    return { total, cost, retailTotal, delivery, profit };
-  }, [rows, meetsMin, totalKg]);
-
-  const m = (n) => privacy ? '₱•••••' : peso(n);
+  const grandTotal = useMemo(
+    () => rows.reduce((s, r) => s + (r.kg > 0 ? r.wholesale * r.kg : 0), 0),
+    [rows]
+  );
   const setQty = (name, v) => setQtys({ ...qtys, [name]: v });
   const clearAll = () => setQtys({});
-  const belowSafe = minKg < RQ_SAFE_MIN_KG;
 
   return (
     <div>
-      <Header title="Restaurant Quote" subtitle="One clear wholesale price — build a live quote for a restaurant client"
+      <Header title="Restaurant Quote" subtitle="Our wholesale pricing — build the order together"
         right={<Btn variant="secondary" size="sm" onClick={clearAll}><RefreshCw size={13} className="inline -mt-0.5 mr-1" />Clear</Btn>} />
-
-      <div className="mb-5 px-4 py-3 rounded-md flex items-start gap-2 text-sm no-print" style={{ background: '#F5E6E1', color: THEME.brand }}>
-        <Store size={15} className="mt-0.5 flex-shrink-0" />
-        <div>
-          One wholesale price per item. It applies once the whole order reaches your minimum below; smaller orders pay normal retail (still profitable). The profit shown already subtracts ₱{RQ_DELIV_PER_KG}/kg estimated shared-trip delivery — it's your real take-home.
-        </div>
-      </div>
-
-      {/* Minimum order setting */}
-      <Card className="p-4 mb-5 no-print">
-        <div className="flex items-center gap-3 flex-wrap">
-          <span className="text-sm font-medium">Wholesale unlocks at:</span>
-          <div className="flex items-center gap-2">
-            <input type="number" min="1" step="1" value={minKg}
-              onChange={(e) => setMinKg(Math.max(1, Number(e.target.value) || 1))}
-              className="w-20 px-2 py-1.5 rounded text-right outline-none"
-              style={{ background: THEME.card, border: `1px solid ${belowSafe ? THEME.red : THEME.line}`, color: THEME.ink }} />
-            <span className="text-sm" style={{ color: THEME.inkSoft }}>kg per order</span>
-          </div>
-          {[10, 15, 20, 25].map((v) => (
-            <button key={v} onClick={() => setMinKg(v)}
-              className="px-2.5 py-1 text-xs rounded-md"
-              style={{ background: minKg === v ? THEME.brand : 'transparent', color: minKg === v ? 'white' : THEME.inkSoft, border: `1px solid ${minKg === v ? THEME.brand : THEME.line}` }}>
-              {v}kg
-            </button>
-          ))}
-        </div>
-        {belowSafe && (
-          <div className="mt-3 text-sm px-3 py-2 rounded flex items-start gap-2" style={{ background: '#FBEAEA', color: THEME.red }}>
-            <AlertCircle size={15} className="mt-0.5 flex-shrink-0" />
-            <div>
-              <strong>Below the safe line ({RQ_SAFE_MIN_KG} kg).</strong> A wholesale order this small may not cover its share of your ₱592 trip, especially with any detour. You can still set it — but watch the profit-per-kg figure carefully, and consider letting small orders stay at retail instead.
-            </div>
-          </div>
-        )}
-      </Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2">
           <Card className="p-5">
             <div className="overflow-x-auto -mx-1">
-              <table className="w-full text-sm" style={{ minWidth: 520 }}>
+              <table className="w-full text-sm" style={{ minWidth: 460 }}>
                 <thead>
                   <tr style={{ color: THEME.inkSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                     <th className="text-left pb-2 font-medium">Product</th>
-                    <th className="text-right pb-2 font-medium">Retail</th>
-                    <th className="text-right pb-2 font-medium">Wholesale</th>
-                    <th className="text-right pb-2 font-medium" style={{ width: 80 }}>Kg</th>
-                    <th className="text-right pb-2 font-medium">Line</th>
+                    <th className="text-right pb-2 font-medium">Price / kg</th>
+                    <th className="text-right pb-2 font-medium" style={{ width: 90 }}>Kg</th>
+                    <th className="text-right pb-2 font-medium">Amount</th>
                   </tr>
                 </thead>
                 <tbody>
                   {['Pork', 'Chicken', 'Beef'].map((g) => (
                     <React.Fragment key={g}>
-                      <tr><td colSpan={5} className="pt-3 pb-1 text-xs font-semibold" style={{ color: THEME.brandSoft }}>{g}</td></tr>
-                      {rows.filter(r => r.group === g).map((r) => {
-                        const unit = meetsMin ? r.wholesale : (Number(r.price) || 0);
-                        return (
-                          <tr key={r.name} style={{ borderTop: `1px solid ${THEME.line}` }}>
-                            <td className="py-2">
-                              {r.name}
-                              {!r.discounted && <span className="ml-1.5 text-xs px-1.5 py-0.5 rounded" style={{ background: THEME.bg, color: THEME.inkSoft }}>best price</span>}
-                            </td>
-                            <td className="py-2 text-right" style={{ color: THEME.inkSoft }}>{m(r.price)}</td>
-                            <td className="py-2 text-right font-medium" style={{ color: r.discounted ? THEME.green : THEME.inkSoft }}>{m(r.wholesale)}</td>
-                            <td className="py-2 text-right">
-                              <input type="number" min="0" step="0.5" value={qtys[r.name] || ''}
-                                onChange={(e) => setQty(r.name, e.target.value)}
-                                placeholder="0"
-                                className="w-16 px-2 py-1 rounded text-right outline-none"
-                                style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink }} />
-                            </td>
-                            <td className="py-2 text-right font-medium">{r.kg > 0 ? m(unit * r.kg) : '—'}</td>
-                          </tr>
-                        );
-                      })}
+                      <tr><td colSpan={4} className="pt-3 pb-1 text-xs font-semibold" style={{ color: THEME.brandSoft }}>{g}</td></tr>
+                      {rows.filter(r => r.group === g).map((r) => (
+                        <tr key={r.name} style={{ borderTop: `1px solid ${THEME.line}` }}>
+                          <td className="py-2">{r.name}</td>
+                          <td className="py-2 text-right font-medium">{peso(r.wholesale)}</td>
+                          <td className="py-2 text-right">
+                            <input type="number" min="0" step="0.5" value={qtys[r.name] || ''}
+                              onChange={(e) => setQty(r.name, e.target.value)}
+                              placeholder="0"
+                              className="w-16 px-2 py-1 rounded text-right outline-none"
+                              style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink }} />
+                          </td>
+                          <td className="py-2 text-right font-medium">{r.kg > 0 ? peso(r.wholesale * r.kg) : '—'}</td>
+                        </tr>
+                      ))}
                     </React.Fragment>
                   ))}
                 </tbody>
@@ -2538,48 +2479,148 @@ function RestaurantQuote({ catalog, privacy }) {
 
         <div className="lg:col-span-1">
           <Card className="p-5" style={{ position: 'sticky', top: 16 }}>
-            <div className="font-display text-lg mb-3">Quote Summary</div>
+            <div className="font-display text-lg mb-4">Order Total</div>
             <div className="space-y-2 text-sm mb-4">
-              <div className="flex justify-between"><span style={{ color: THEME.inkSoft }}>Total quantity</span><span className="font-medium">{totalKg.toFixed(1)} kg</span></div>
               <div className="flex justify-between">
-                <span style={{ color: THEME.inkSoft }}>Pricing</span>
-                <span className="font-medium" style={{ color: meetsMin ? THEME.green : THEME.brand }}>{meetsMin ? 'Wholesale' : 'Retail (below min)'}</span>
+                <span style={{ color: THEME.inkSoft }}>Total quantity</span>
+                <span className="font-medium">{totalKg.toFixed(1)} kg</span>
               </div>
-              {totalKg > 0 && !meetsMin && (
-                <div className="text-xs px-2 py-1.5 rounded" style={{ background: '#F7E8C9', color: '#7a5a1a' }}>
-                  {(minKg - totalKg).toFixed(1)} kg more unlocks wholesale pricing
-                </div>
-              )}
+              <div className="flex justify-between">
+                <span style={{ color: THEME.inkSoft }}>Items</span>
+                <span className="font-medium">{rows.filter(r => r.kg > 0).length}</span>
+              </div>
             </div>
-            <div className="py-4 mb-3" style={{ borderTop: `1px solid ${THEME.line}`, borderBottom: `1px solid ${THEME.line}` }}>
-              <div className="text-xs uppercase tracking-wider mb-1" style={{ color: THEME.inkSoft }}>Quoted Total</div>
-              <div className="font-display text-3xl" style={{ color: THEME.brand }}>{m(calc.total)}</div>
-              {meetsMin && calc.retailTotal > calc.total && (
-                <div className="text-xs mt-1" style={{ color: THEME.green }}>
-                  Client saves {m(calc.retailTotal - calc.total)} vs retail
-                </div>
-              )}
+            <div className="py-4" style={{ borderTop: `2px solid ${THEME.brand}` }}>
+              <div className="text-xs uppercase tracking-wider mb-1" style={{ color: THEME.inkSoft }}>Total Amount</div>
+              <div className="font-display text-3xl" style={{ color: THEME.brand }}>{peso(grandTotal)}</div>
             </div>
-            <div className="space-y-1.5 text-sm">
+            <div className="text-xs mt-3" style={{ color: THEME.inkSoft }}>
+              M&N Meatshop · fresh, cut to your spec, delivered on schedule.
+            </div>
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- Private profit check: ONLY for the owner, never shown to a client ----
+function QuoteProfitCheck({ catalog, privacy }) {
+  const [qtys, setQtys] = useState({});
+  const m = (n) => privacy ? '₱•••••' : peso(n);
+
+  const rows = useMemo(() => catalog.map((p) => {
+    const pr = rqPricing(p);
+    const kg = Number(qtys[p.name]) || 0;
+    return { ...p, ...pr, kg };
+  }), [catalog, qtys]);
+
+  const totalKg = useMemo(() => rows.reduce((s, r) => s + r.kg, 0), [rows]);
+  const calc = useMemo(() => {
+    let total = 0, cost = 0;
+    rows.forEach((r) => {
+      if (r.kg <= 0) return;
+      total += r.wholesale * r.kg;
+      cost += (Number(r.cost) || 0) * r.kg;
+    });
+    const delivery = totalKg > 0 ? RQ_DELIV_PER_KG * totalKg : 0;
+    const profit = total - cost - delivery;
+    return { total, cost, delivery, profit };
+  }, [rows, totalKg]);
+
+  const setQty = (name, v) => setQtys({ ...qtys, [name]: v });
+  const clearAll = () => setQtys({});
+
+  return (
+    <div>
+      <Header title="Quote Profit Check" subtitle="PRIVATE — for you only. Never show this screen to a client."
+        right={<Btn variant="secondary" size="sm" onClick={clearAll}><RefreshCw size={13} className="inline -mt-0.5 mr-1" />Clear</Btn>} />
+
+      <div className="mb-5 px-4 py-3 rounded-md flex items-start gap-2 text-sm no-print" style={{ background: '#FBEAEA', color: THEME.red }}>
+        <EyeOff size={15} className="mt-0.5 flex-shrink-0" />
+        <div>
+          <strong>This screen shows your cost and profit.</strong> Use it to check a quote is worthwhile <em>before</em> meeting a client. Do not open this in front of them — use the Restaurant Quote screen for that.
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="lg:col-span-2">
+          <Card className="p-5">
+            <div className="overflow-x-auto -mx-1">
+              <table className="w-full text-sm" style={{ minWidth: 560 }}>
+                <thead>
+                  <tr style={{ color: THEME.inkSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                    <th className="text-left pb-2 font-medium">Product</th>
+                    <th className="text-right pb-2 font-medium">Cost</th>
+                    <th className="text-right pb-2 font-medium">Wholesale</th>
+                    <th className="text-right pb-2 font-medium" style={{ width: 80 }}>Kg</th>
+                    <th className="text-right pb-2 font-medium">Profit/kg*</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {['Pork', 'Chicken', 'Beef'].map((g) => (
+                    <React.Fragment key={g}>
+                      <tr><td colSpan={5} className="pt-3 pb-1 text-xs font-semibold" style={{ color: THEME.brandSoft }}>{g}</td></tr>
+                      {rows.filter(r => r.group === g).map((r) => {
+                        const ppk = r.wholesale - (Number(r.cost) || 0) - RQ_DELIV_PER_KG;
+                        return (
+                          <tr key={r.name} style={{ borderTop: `1px solid ${THEME.line}` }}>
+                            <td className="py-2">
+                              {r.name}
+                              {!r.discounted && <span className="ml-1.5 text-xs px-1.5 py-0.5 rounded" style={{ background: THEME.bg, color: THEME.inkSoft }}>retail</span>}
+                            </td>
+                            <td className="py-2 text-right" style={{ color: THEME.inkSoft }}>{m(r.cost)}</td>
+                            <td className="py-2 text-right font-medium">{m(r.wholesale)}</td>
+                            <td className="py-2 text-right">
+                              <input type="number" min="0" step="0.5" value={qtys[r.name] || ''}
+                                onChange={(e) => setQty(r.name, e.target.value)}
+                                placeholder="0"
+                                className="w-14 px-2 py-1 rounded text-right outline-none"
+                                style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink }} />
+                            </td>
+                            <td className="py-2 text-right font-medium" style={{ color: ppk >= 0 ? THEME.green : THEME.red }}>
+                              {m(ppk)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </React.Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="text-xs mt-3" style={{ color: THEME.inkSoft }}>
+              *Profit per kg already subtracts ₱{RQ_DELIV_PER_KG}/kg estimated shared-trip delivery.
+            </div>
+          </Card>
+        </div>
+
+        <div className="lg:col-span-1">
+          <Card className="p-5" style={{ position: 'sticky', top: 16 }}>
+            <div className="font-display text-lg mb-3">This Quote</div>
+            <div className="space-y-2 text-sm mb-3">
+              <div className="flex justify-between"><span style={{ color: THEME.inkSoft }}>Total quantity</span><span className="font-medium">{totalKg.toFixed(1)} kg</span></div>
+              <div className="flex justify-between"><span style={{ color: THEME.inkSoft }}>Client pays</span><span className="font-medium">{m(calc.total)}</span></div>
+            </div>
+            <div className="space-y-1.5 text-sm py-3" style={{ borderTop: `1px solid ${THEME.line}` }}>
               <div className="flex justify-between"><span style={{ color: THEME.inkSoft }}>Your cost</span><span>{m(calc.cost)}</span></div>
-              <div className="flex justify-between"><span style={{ color: THEME.inkSoft }}>Est. delivery (₱{RQ_DELIV_PER_KG}/kg)</span><span style={{ color: THEME.red }}>−{m(calc.delivery)}</span></div>
-              <div className="flex justify-between font-medium" style={{ color: calc.profit >= 0 ? THEME.green : THEME.red }}>
-                <span>Your profit</span><span>{m(calc.profit)}</span>
-              </div>
+              <div className="flex justify-between"><span style={{ color: THEME.inkSoft }}>Est. delivery</span><span style={{ color: THEME.red }}>−{m(calc.delivery)}</span></div>
+            </div>
+            <div className="py-3" style={{ borderTop: `2px solid ${THEME.brand}` }}>
+              <div className="text-xs uppercase tracking-wider mb-1" style={{ color: THEME.inkSoft }}>Your Profit</div>
+              <div className="font-display text-3xl" style={{ color: calc.profit >= 0 ? THEME.green : THEME.red }}>{m(calc.profit)}</div>
               {totalKg > 0 && (
-                <div className="flex justify-between text-xs pt-1" style={{ color: THEME.inkSoft }}>
-                  <span>Profit per kg</span><span>{m(calc.profit / totalKg)}/kg</span>
-                </div>
+                <div className="text-xs mt-1" style={{ color: THEME.inkSoft }}>{m(calc.profit / totalKg)}/kg take-home</div>
               )}
             </div>
             {calc.profit < 0 && totalKg > 0 && (
-              <div className="mt-3 text-xs px-2 py-1.5 rounded" style={{ background: '#FBEAEA', color: THEME.red }}>
-                This quote loses money. Raise quantities, raise the minimum, or don't discount these items.
+              <div className="text-xs px-2 py-1.5 rounded" style={{ background: '#FBEAEA', color: THEME.red }}>
+                This order loses money. Don't offer it at these quantities.
               </div>
             )}
-            {calc.profit >= 0 && meetsMin && totalKg >= RQ_SAFE_MIN_KG && (
-              <div className="mt-3 text-xs px-2 py-1.5 rounded" style={{ background: '#E5EDDE', color: '#2f4a2a' }}>
-                Healthy order — the kind of weekly repeat client you want.
+            {calc.profit >= 0 && totalKg >= 20 && (
+              <div className="text-xs px-2 py-1.5 rounded" style={{ background: '#E5EDDE', color: '#2f4a2a' }}>
+                Worthwhile — safe to pursue this as a weekly order.
               </div>
             )}
           </Card>
@@ -2588,6 +2629,7 @@ function RestaurantQuote({ catalog, privacy }) {
     </div>
   );
 }
+
 
 
 
