@@ -4,7 +4,7 @@ import {
   Printer, Trash2, Edit3, Search, X, Check, AlertCircle, TrendingUp,
   Receipt, FileText, ChevronRight, Save, Loader2, Plus,
   Eye, EyeOff, ArrowLeft, RefreshCw, Download, Upload, HardDrive, Image as ImageIcon,
-  Activity, Menu, Store
+  Activity, Menu, Store, Moon, Sun
 } from 'lucide-react';
 import {
   BarChart, Bar, PieChart, Pie, Cell, ResponsiveContainer, XAxis, YAxis,
@@ -48,13 +48,31 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v4.1 · Ride-Along Trip';
+const APP_VERSION = 'v4.2 · Dark Mode';
 
-const THEME = {
+const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
   line: '#E8DFD2', brand: '#7A2E33', brandSoft: '#A04D52',
   accent: '#C9853A', green: '#4F7942', red: '#B23A48', amber: '#D89A3C',
+  brandBg: '#F5E6E1', successBg: '#E5EDDE', successInk: '#2f4a2a',
+  errorBg: '#FBEAEA', warnBg: '#F7E8C9', warnInk: '#7a5a1a',
 };
+const THEME_DARK = {
+  // Tuned for dark: warm near-black backgrounds, soft off-white text, and a
+  // lightened maroon/gold so the brand still reads on dark.
+  bg: '#1A1614', card: '#241F1C', ink: '#F0E9E0', inkSoft: '#A99E92',
+  line: '#3A322C', brand: '#C77A7F', brandSoft: '#B0686D',
+  accent: '#E0A45A', green: '#7CA86A', red: '#D9737E', amber: '#E0B062',
+  brandBg: '#3A2A2C', successBg: '#27331F', successInk: '#A9C99B',
+  errorBg: '#3A2222', warnBg: '#3A3120', warnInk: '#E0C98A',
+};
+// THEME is mutated in place when the user switches, so the hundreds of
+// existing `THEME.x` references keep working without any change.
+const THEME = { ...THEME_LIGHT };
+function applyTheme(mode) {
+  const src = mode === 'dark' ? THEME_DARK : THEME_LIGHT;
+  Object.keys(src).forEach((k) => { THEME[k] = src[k]; });
+}
 
 /* ============================================================
    HELPERS
@@ -172,11 +190,11 @@ function Label({ children }) {
 
 function Badge({ children, color = 'brand' }) {
   const colors = {
-    brand: { bg: '#F5E6E1', fg: THEME.brand },
-    green: { bg: '#E5EDDE', fg: THEME.green },
-    red: { bg: '#F5DDE0', fg: THEME.red },
-    amber: { bg: '#F7E8C9', fg: '#9A6A1F' },
-    gray: { bg: '#EDE6DC', fg: THEME.inkSoft },
+    brand: { bg: THEME.brandBg, fg: THEME.brand },
+    green: { bg: THEME.successBg, fg: THEME.green },
+    red: { bg: THEME.errorBg, fg: THEME.red },
+    amber: { bg: THEME.warnBg, fg: THEME.amber },
+    gray: { bg: THEME.line, fg: THEME.inkSoft },
   };
   const c = colors[color] || colors.brand;
   return (
@@ -274,9 +292,34 @@ export default function App() {
   const [importing, setImporting] = useState(false);
   const [showBackup, setShowBackup] = useState(false);
   const [privacy, setPrivacy] = useState(false);
+  // Theme: 'light' | 'dark'. Read synchronously from localStorage so the very
+  // first render already uses the right palette (no flash of the wrong theme).
+  const [theme, setThemeState] = useState(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_PREFIX + 'theme');
+      if (saved === 'dark') { applyTheme('dark'); return 'dark'; }
+    } catch (e) {}
+    applyTheme('light');
+    return 'light';
+  });
+  const setTheme = (mode) => {
+    applyTheme(mode);
+    setThemeState(mode);
+    try { localStorage.setItem(STORAGE_PREFIX + 'theme', mode); } catch (e) {}
+  };
   const [backupNagDismissed, setBackupNagDismissed] = useState(false);
   const [daysSinceBackup, setDaysSinceBackup] = useState(0);
   const lastSaveRef = useRef(Date.now());
+
+  // Keep the page background and iOS status-bar colour in sync with the theme
+  // (covers overscroll area and the notch bar outside React's root).
+  useEffect(() => {
+    try {
+      document.body.style.background = THEME.bg;
+      const meta = document.querySelector('meta[name="theme-color"]');
+      if (meta) meta.setAttribute('content', theme === 'dark' ? '#1A1614' : '#7A2E33');
+    } catch (e) {}
+  }, [theme]);
 
   useEffect(() => {
     let cancelled = false;
@@ -517,7 +560,7 @@ export default function App() {
                 <button key={item.id} onClick={() => { setView(item.id); setMobileNav(false); }}
                   className="w-full flex items-center gap-3 px-6 py-3 lg:py-2.5 text-sm transition-colors text-left"
                   style={{
-                    background: active ? '#F5E6E1' : 'transparent',
+                    background: active ? THEME.brandBg : 'transparent',
                     color: active ? THEME.brand : THEME.ink,
                     fontWeight: active ? 600 : 400,
                     borderLeft: active ? `3px solid ${THEME.brand}` : '3px solid transparent',
@@ -544,7 +587,7 @@ export default function App() {
                       : (<><AlertCircle size={11} style={{ color: THEME.red }} /> Sync issue</>)}
             </div>
             <div className="text-xs mt-1 opacity-70" style={{ color: THEME.inkSoft }}>{Object.keys(orders).length} orders · {expenses.length} expenses</div>
-            <div className="text-xs mt-2 px-2 py-1 rounded inline-block" style={{ background: '#F5E6E1', color: THEME.brand, fontWeight: 600 }}>
+            <div className="text-xs mt-2 px-2 py-1 rounded inline-block" style={{ background: THEME.brandBg, color: THEME.brand, fontWeight: 600 }}>
               {APP_VERSION}
             </div>
           </div>
@@ -553,10 +596,10 @@ export default function App() {
         <main className="flex-1 min-w-0 p-4 sm:p-6 lg:p-8">
           {needsImport && (
             <div className="mb-6 px-5 py-4 rounded-lg flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 no-print"
-              style={{ background: '#E5EDDE', border: `1px solid ${THEME.green}` }}>
+              style={{ background: THEME.successBg, border: `1px solid ${THEME.green}` }}>
               <div className="flex items-start gap-3">
                 <Upload size={18} style={{ color: THEME.green }} className="mt-0.5 flex-shrink-0" />
-                <div className="text-sm" style={{ color: '#2f4a2a' }}>
+                <div className="text-sm" style={{ color: THEME.successInk }}>
                   <span className="font-semibold">Your cloud database is connected and empty.</span>
                   <span> This device has existing orders/expenses. Import them to the cloud once, so they sync across all your devices and are safely backed up.</span>
                 </div>
@@ -570,7 +613,7 @@ export default function App() {
           )}
           {daysSinceBackup >= 7 && !backupNagDismissed && (
             <div className="mb-6 px-5 py-4 rounded-lg flex items-center justify-between gap-4 no-print"
-              style={{ background: '#F7E8C9', border: `1px solid ${THEME.amber}` }}>
+              style={{ background: THEME.warnBg, border: `1px solid ${THEME.amber}` }}>
               <div className="flex items-start gap-3">
                 <HardDrive size={18} style={{ color: '#9A6A1F' }} className="mt-0.5 flex-shrink-0" />
                 <div className="text-sm" style={{ color: '#7a541a' }}>
@@ -592,7 +635,7 @@ export default function App() {
               </div>
             </div>
           )}
-          {view === 'dashboard' && <Dashboard orders={orders} expenses={expenses} catalog={catalog} setView={setView} privacy={privacy} setPrivacy={setPrivacy} currentUser={currentUser} />}
+          {view === 'dashboard' && <Dashboard orders={orders} expenses={expenses} catalog={catalog} setView={setView} privacy={privacy} setPrivacy={setPrivacy} currentUser={currentUser} theme={theme} setTheme={setTheme} />}
           {view === 'new' && <NewOrder catalog={catalog} meta={meta} setMeta={setMeta} orders={orders} setOrders={setOrders} onSaved={() => setView('orders')} />}
           {view === 'orders' && <Orders orders={orders} setOrders={setOrders} productByName={productByName} catalog={catalog} />}
           {view === 'pickup' && <Pickup orders={orders} />}
@@ -641,7 +684,7 @@ export default function App() {
    DASHBOARD
    ============================================================ */
 
-function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, currentUser }) {
+function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, currentUser, theme, setTheme }) {
   const ordersList = Object.values(orders);
 
   // Privacy-aware money formatter
@@ -786,6 +829,15 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
         </div>
         <div className="flex items-center gap-2">
           <button
+            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            className="flex items-center justify-center rounded-md transition-colors"
+            style={{ width: 40, height: 40, background: 'transparent', color: THEME.inkSoft, border: `1px solid ${THEME.line}` }}
+            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            aria-label="Toggle dark mode"
+          >
+            {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+          </button>
+          <button
             onClick={() => setPrivacy(!privacy)}
             className="flex items-center gap-2 px-3.5 py-2 text-sm rounded-md transition-colors flex-1 sm:flex-initial justify-center"
             style={{ background: privacy ? THEME.brand : 'transparent', color: privacy ? 'white' : THEME.inkSoft, border: `1px solid ${privacy ? THEME.brand : THEME.line}` }}
@@ -799,7 +851,7 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
       </div>
 
       {/* ===== Currently collecting (for next production day) ===== */}
-      <Card className="px-5 py-4 mb-4" style={{ background: stats.pendingOrders > 0 ? '#F7E8C9' : THEME.card, border: `1px solid ${stats.pendingOrders > 0 ? THEME.amber : THEME.line}` }}>
+      <Card className="px-5 py-4 mb-4" style={{ background: stats.pendingOrders > 0 ? THEME.warnBg : THEME.card, border: `1px solid ${stats.pendingOrders > 0 ? THEME.amber : THEME.line}` }}>
         <div className="flex items-center justify-between flex-wrap gap-y-2">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: stats.pendingOrders > 0 ? THEME.amber : THEME.line }}>
@@ -885,7 +937,7 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
                 <XAxis dataKey="label" tick={{ fill: THEME.inkSoft, fontSize: 11 }} axisLine={{ stroke: THEME.line }} tickLine={false} />
                 <YAxis tick={{ fill: THEME.inkSoft, fontSize: 11 }} axisLine={false} tickLine={false} width={56}
                   tickFormatter={(v) => privacy ? '•••' : (v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v)} />
-                <Tooltip cursor={{ fill: '#F5E6E1' }}
+                <Tooltip cursor={{ fill: THEME.brandBg }}
                   contentStyle={{ background: THEME.card, border: `1px solid ${THEME.line}`, borderRadius: 8, fontSize: 13 }}
                   formatter={(v, n) => [privacy ? '₱•••••' : peso(v), n === 'cost' ? 'Supplier Cost' : 'Profit']}
                   labelFormatter={(l, p) => p && p[0] ? `${p[0].payload.weekday} · ${l} · Sales ${privacy ? '₱•••••' : peso(p[0].payload.sales)}` : l} />
@@ -978,7 +1030,7 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
                 <XAxis type="number" tick={{ fill: THEME.inkSoft, fontSize: 11 }} axisLine={false} tickLine={false}
                   tickFormatter={(v) => privacy ? '•••' : (v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v)} />
                 <YAxis dataKey="name" type="category" width={110} tick={{ fill: THEME.ink, fontSize: 10.5 }} axisLine={false} tickLine={false} />
-                <Tooltip cursor={{ fill: '#F5E6E1' }}
+                <Tooltip cursor={{ fill: THEME.brandBg }}
                   contentStyle={{ background: THEME.card, border: `1px solid ${THEME.line}`, borderRadius: 8 }}
                   formatter={(v) => [privacy ? '₱•••••' : peso(v), 'Sales']} />
                 <Bar dataKey="value" fill={THEME.brand} radius={[0, 4, 4, 0]} barSize={16} />
@@ -1031,7 +1083,7 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
       <Card className="px-5 py-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-full flex items-center justify-center" style={{ background: stats.isSelfSustaining ? '#E5EDDE' : '#F7E8C9' }}>
+            <div className="w-9 h-9 rounded-full flex items-center justify-center" style={{ background: stats.isSelfSustaining ? THEME.successBg : THEME.warnBg }}>
               <Activity size={16} style={{ color: stats.isSelfSustaining ? THEME.green : THEME.amber }} />
             </div>
             <div>
@@ -1874,7 +1926,7 @@ function PrintableView({ order, mode, onBack }) {
           <div className="mb-6 overflow-x-auto">
             <table className="w-full text-xs sm:text-sm" style={{ minWidth: 340 }}>
               <thead>
-                <tr style={{ background: '#F5E6E1' }}>
+                <tr style={{ background: THEME.brandBg }}>
                   <th className="text-left px-2 sm:px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>#</th>
                   <th className="text-left px-2 sm:px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Product / Item</th>
                   <th className="text-right px-2 sm:px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Qty</th>
@@ -1902,7 +1954,7 @@ function PrintableView({ order, mode, onBack }) {
           <div className="mb-6 overflow-x-auto">
             <table className="w-full text-xs sm:text-sm" style={{ minWidth: 300 }}>
               <thead>
-                <tr style={{ background: '#F5E6E1' }}>
+                <tr style={{ background: THEME.brandBg }}>
                   <th className="text-left px-2 sm:px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>#</th>
                   <th className="text-left px-2 sm:px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Product / Item</th>
                   <th className="text-right px-2 sm:px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Qty</th>
@@ -2021,7 +2073,7 @@ function Pickup({ orders }) {
                 const total = (o.items || []).reduce((s, i) => s + i.qty * i.price, 0);
                 const isSel = selected.has(o.id);
                 return (
-                  <label key={o.id} className="flex items-center gap-3 px-2 py-2 rounded cursor-pointer" style={{ background: isSel ? '#F5E6E1' : 'transparent' }}>
+                  <label key={o.id} className="flex items-center gap-3 px-2 py-2 rounded cursor-pointer" style={{ background: isSel ? THEME.brandBg : 'transparent' }}>
                     <input type="checkbox" checked={isSel} onChange={() => toggle(o.id)} style={{ accentColor: THEME.brand }} />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between text-sm">
@@ -2145,7 +2197,7 @@ function SalesCheck({ orders, privacy }) {
                 const total = (o.items || []).reduce((s, i) => s + i.qty * i.price, 0);
                 const isSel = selected.has(o.id);
                 return (
-                  <label key={o.id} className="flex items-center gap-3 px-2 py-2 rounded cursor-pointer" style={{ background: isSel ? '#F5E6E1' : 'transparent' }}>
+                  <label key={o.id} className="flex items-center gap-3 px-2 py-2 rounded cursor-pointer" style={{ background: isSel ? THEME.brandBg : 'transparent' }}>
                     <input type="checkbox" checked={isSel} onChange={() => toggle(o.id)} style={{ accentColor: THEME.brand }} />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between text-sm">
@@ -2523,7 +2575,7 @@ function RestaurantQuote({ catalog, qtys, setQtys }) {
               )}
             </div>
             {savings > 0 && (
-              <div className="mt-3 px-3 py-2.5 rounded-md text-sm" style={{ background: '#E5EDDE', color: '#2f4a2a' }}>
+              <div className="mt-3 px-3 py-2.5 rounded-md text-sm" style={{ background: THEME.successBg, color: THEME.successInk }}>
                 You save <strong>{peso(savings)}</strong> vs our regular price
                 <span style={{ color: THEME.inkSoft }}> ({peso(retailTotal)})</span>
               </div>
@@ -2575,7 +2627,7 @@ function QuoteProfitCheck({ catalog, privacy, qtys, setQtys }) {
       <Header title="Quote Profit Check" subtitle="PRIVATE — for you only. Never show this screen to a client."
         right={<Btn variant="secondary" size="sm" onClick={clearAll}><RefreshCw size={13} className="inline -mt-0.5 mr-1" />Clear</Btn>} />
 
-      <div className="mb-5 px-4 py-3 rounded-md flex items-start gap-2 text-sm no-print" style={{ background: '#FBEAEA', color: THEME.red }}>
+      <div className="mb-5 px-4 py-3 rounded-md flex items-start gap-2 text-sm no-print" style={{ background: THEME.errorBg, color: THEME.red }}>
         <EyeOff size={15} className="mt-0.5 flex-shrink-0" />
         <div>
           <strong>This screen shows your cost and profit.</strong> Use it to check a quote is worthwhile <em>before</em> meeting a client. Do not open this in front of them — use the Restaurant Quote screen for that.
@@ -2669,12 +2721,12 @@ function QuoteProfitCheck({ catalog, privacy, qtys, setQtys }) {
               )}
             </div>
             {calc.profit < 0 && totalKg > 0 && (
-              <div className="text-xs px-2 py-1.5 rounded" style={{ background: '#FBEAEA', color: THEME.red }}>
+              <div className="text-xs px-2 py-1.5 rounded" style={{ background: THEME.errorBg, color: THEME.red }}>
                 This order loses money. Don't offer it at these quantities.
               </div>
             )}
             {calc.profit >= 0 && totalKg >= 20 && (
-              <div className="text-xs px-2 py-1.5 rounded" style={{ background: '#E5EDDE', color: '#2f4a2a' }}>
+              <div className="text-xs px-2 py-1.5 rounded" style={{ background: THEME.successBg, color: THEME.successInk }}>
                 Worthwhile — safe to pursue this as a weekly order.
               </div>
             )}
