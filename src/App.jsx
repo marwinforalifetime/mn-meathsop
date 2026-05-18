@@ -48,7 +48,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v4.0 · Thin Item Pricing';
+const APP_VERSION = 'v4.1 · Ride-Along Trip';
 
 const THEME = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -2541,6 +2541,12 @@ function RestaurantQuote({ catalog, qtys, setQtys }) {
 // ---- Private profit check: ONLY for the owner, never shown to a client ----
 function QuoteProfitCheck({ catalog, privacy, qtys, setQtys }) {
   const m = (n) => privacy ? '₱•••••' : peso(n);
+  // Your real model: the restaurant order rides the existing Tue/Sat neighbor
+  // trip, which the neighbor orders already pay for. So the restaurant order's
+  // marginal delivery cost is ~₱0. Turn this OFF only if a restaurant needs a
+  // genuinely separate dedicated trip/detour.
+  const [ridesNeighborTrip, setRidesNeighborTrip] = useState(true);
+  const delivPerKg = ridesNeighborTrip ? 0 : RQ_DELIV_PER_KG;
 
   const rows = useMemo(() => catalog.map((p) => {
     const pr = rqPricing(p);
@@ -2556,10 +2562,10 @@ function QuoteProfitCheck({ catalog, privacy, qtys, setQtys }) {
       total += r.wholesale * r.kg;
       cost += (Number(r.cost) || 0) * r.kg;
     });
-    const delivery = totalKg > 0 ? RQ_DELIV_PER_KG * totalKg : 0;
+    const delivery = totalKg > 0 ? delivPerKg * totalKg : 0;
     const profit = total - cost - delivery;
     return { total, cost, delivery, profit };
-  }, [rows, totalKg]);
+  }, [rows, totalKg, delivPerKg]);
 
   const setQty = (name, v) => setQtys({ ...qtys, [name]: v });
   const clearAll = () => setQtys({});
@@ -2575,6 +2581,20 @@ function QuoteProfitCheck({ catalog, privacy, qtys, setQtys }) {
           <strong>This screen shows your cost and profit.</strong> Use it to check a quote is worthwhile <em>before</em> meeting a client. Do not open this in front of them — use the Restaurant Quote screen for that.
         </div>
       </div>
+
+      <Card className="p-4 mb-5 no-print">
+        <label className="flex items-start gap-3 cursor-pointer">
+          <input type="checkbox" checked={ridesNeighborTrip}
+            onChange={(e) => setRidesNeighborTrip(e.target.checked)}
+            className="mt-0.5" style={{ width: 18, height: 18, accentColor: THEME.brand }} />
+          <div className="text-sm">
+            <span className="font-medium">This order rides my existing Tue/Sat neighbor trip</span>
+            <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>
+              ON (your normal case): the neighbor orders already pay for the trip, so this order's delivery cost is ~₱0 — which is exactly why you can beat S&R by having no minimum. Turn OFF only if a restaurant needs a separate dedicated trip or big detour (then ₱{RQ_DELIV_PER_KG}/kg applies).
+            </div>
+          </div>
+        </label>
+      </Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2">
@@ -2595,7 +2615,7 @@ function QuoteProfitCheck({ catalog, privacy, qtys, setQtys }) {
                     <React.Fragment key={g}>
                       <tr><td colSpan={5} className="pt-3 pb-1 text-xs font-semibold" style={{ color: THEME.brandSoft }}>{g}</td></tr>
                       {rows.filter(r => r.group === g).map((r) => {
-                        const ppk = r.wholesale - (Number(r.cost) || 0) - RQ_DELIV_PER_KG;
+                        const ppk = r.wholesale - (Number(r.cost) || 0) - delivPerKg;
                         return (
                           <tr key={r.name} style={{ borderTop: `1px solid ${THEME.line}` }}>
                             <td className="py-2">
@@ -2625,7 +2645,7 @@ function QuoteProfitCheck({ catalog, privacy, qtys, setQtys }) {
               </table>
             </div>
             <div className="text-xs mt-3" style={{ color: THEME.inkSoft }}>
-              *Profit per kg already subtracts ₱{RQ_DELIV_PER_KG}/kg estimated shared-trip delivery.
+              *Profit per kg {ridesNeighborTrip ? 'assumes ₱0 delivery (rides your existing neighbor trip — see toggle above)' : `subtracts ₱${RQ_DELIV_PER_KG}/kg for a separate dedicated trip`}.
             </div>
           </Card>
         </div>
