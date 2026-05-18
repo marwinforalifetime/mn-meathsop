@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
-  LayoutDashboard, PlusCircle, ListOrdered, Truck, Wallet, Snowflake, Tag,
+  LayoutDashboard, PlusCircle, ListOrdered, Truck, Wallet, Tag,
   Printer, Trash2, Edit3, Search, X, Check, AlertCircle, TrendingUp,
   Receipt, FileText, ChevronRight, Save, Loader2, Plus,
   Eye, EyeOff, ArrowLeft, RefreshCw, Download, Upload, HardDrive, Image as ImageIcon,
@@ -48,7 +48,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v3.2 · Inventory + Chart + Filenames';
+const APP_VERSION = 'v3.3 · Supplier Prices';
 
 const THEME = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -261,6 +261,7 @@ export default function App() {
   const [orders, setOrders] = useState({});
   const [expenses, setExpenses] = useState([]);
   const [inventory, setInventory] = useState({});
+  const [priceHistory, setPriceHistory] = useState([]);
   const [meta, setMeta] = useState({ lastOrderNum: 0 });
   const [saving, setSaving] = useState(false);
   // Cloud sync status: 'connecting' | 'cloud' | 'local-only' | 'error'
@@ -281,6 +282,7 @@ export default function App() {
       const localOrders = storage.load('orders', {});
       const localExpenses = storage.load('expenses', []);
       const localInventory = storage.load('inventory', null);
+      const localPriceHistory = storage.load('priceHistory', []);
       const localMeta = storage.load('meta', { lastOrderNum: 0 });
       const hasLocalData = (localOrders && Object.keys(localOrders).length > 0)
         || (localExpenses && localExpenses.length > 0);
@@ -299,6 +301,7 @@ export default function App() {
           setOrders(cloud.orders || {});
           setExpenses(cloud.expenses || []);
           setInventory(cloud.inventory || Object.fromEntries(SEED_PRODUCTS.map(p => [p.name, { qty: 0, dateAdded: '', notes: '' }])));
+          setPriceHistory(cloud.priceHistory || []);
           setMeta(cloud.meta || { lastOrderNum: 0 });
           usedCloud = true;
           setSyncStatus('cloud');
@@ -308,6 +311,7 @@ export default function App() {
           setOrders(localOrders || {});
           setExpenses(localExpenses || []);
           setInventory(localInventory || Object.fromEntries(SEED_PRODUCTS.map(p => [p.name, { qty: 0, dateAdded: '', notes: '' }])));
+          setPriceHistory(localPriceHistory || []);
           setMeta(localMeta || { lastOrderNum: 0 });
           setSyncStatus('cloud');
           if (hasLocalData) setNeedsImport(true);
@@ -319,6 +323,7 @@ export default function App() {
         setOrders(localOrders || {});
         setExpenses(localExpenses || []);
         setInventory(localInventory || Object.fromEntries(SEED_PRODUCTS.map(p => [p.name, { qty: 0, dateAdded: '', notes: '' }])));
+        setPriceHistory(localPriceHistory || []);
         setMeta(localMeta || { lastOrderNum: 0 });
         setSyncStatus('local-only');
       }
@@ -346,6 +351,7 @@ export default function App() {
     storage.save('orders', orders);
     storage.save('expenses', expenses);
     storage.save('inventory', inventory);
+    storage.save('priceHistory', priceHistory);
     storage.save('meta', meta);
     lastSaveRef.current = Date.now();
 
@@ -353,7 +359,7 @@ export default function App() {
     let cancelled = false;
     const t = setTimeout(async () => {
       try {
-        await cloudSave({ catalog, orders, expenses, inventory, meta });
+        await cloudSave({ catalog, orders, expenses, inventory, priceHistory, meta });
         if (!cancelled) {
           setSyncStatus('cloud');
           setSaving(false);
@@ -367,13 +373,13 @@ export default function App() {
       }
     }, 600);
     return () => { cancelled = true; clearTimeout(t); };
-  }, [catalog, orders, expenses, inventory, meta, loaded]);
+  }, [catalog, orders, expenses, inventory, priceHistory, meta, loaded]);
 
   // One-time import: push existing local data up to an empty cloud.
   const importLocalToCloud = async () => {
     setImporting(true);
     try {
-      await cloudSave({ catalog, orders, expenses, inventory, meta });
+      await cloudSave({ catalog, orders, expenses, inventory, priceHistory, meta });
       setNeedsImport(false);
       setSyncStatus('cloud');
       alert('Your existing data is now saved to the cloud and will sync across your devices.');
@@ -386,39 +392,11 @@ export default function App() {
 
   const productByName = useMemo(() => Object.fromEntries(catalog.map(p => [p.name, p])), [catalog]);
 
-  // Inventory auto-movement: when an order becomes "Delivered", the meat
-  // physically left the fridge — deduct its items from stock ONCE. We mark the
-  // order with `stock_deducted: true` so editing/re-saving never double-counts.
-  useEffect(() => {
-    if (!loaded) return;
-    const toDeduct = Object.values(orders).filter(
-      (o) => o.delivery_status === 'Delivered' && !o.stock_deducted
-    );
-    if (toDeduct.length === 0) return;
-
-    const nextInventory = { ...inventory };
-    toDeduct.forEach((o) => {
-      (o.items || []).forEach((it) => {
-        const cur = nextInventory[it.product] || { qty: 0, dateAdded: '', notes: '' };
-        const newQty = (Number(cur.qty) || 0) - (Number(it.qty) || 0);
-        nextInventory[it.product] = { ...cur, qty: Math.round(newQty * 100) / 100 };
-      });
-    });
-
-    const nextOrders = { ...orders };
-    toDeduct.forEach((o) => {
-      nextOrders[o.id] = { ...o, stock_deducted: true };
-    });
-
-    setInventory(nextInventory);
-    setOrders(nextOrders);
-  }, [orders, loaded]);
-
   const exportData = () => {
     const data = {
       version: 1,
       exported_at: new Date().toISOString(),
-      catalog, orders, expenses, inventory, meta,
+      catalog, orders, expenses, inventory, priceHistory, meta,
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -448,6 +426,7 @@ export default function App() {
         setOrders(data.orders);
         setExpenses(data.expenses || []);
         setInventory(data.inventory || {});
+        setPriceHistory(data.priceHistory || []);
         setMeta(data.meta || { lastOrderNum: 0 });
         setShowBackup(false);
         alert('Backup restored successfully!');
@@ -476,8 +455,8 @@ export default function App() {
     { id: 'pickup', label: 'Pickup Check', icon: Truck },
     { id: 'salescheck', label: 'Sales Check', icon: Receipt },
     { id: 'expenses', label: 'Expenses', icon: Wallet },
-    { id: 'inventory', label: 'Inventory', icon: Snowflake },
     { id: 'products', label: 'Price List', icon: Tag },
+    { id: 'supplierprices', label: 'Supplier Prices', icon: TrendingUp },
   ];
 
   return (
@@ -613,8 +592,8 @@ export default function App() {
           {view === 'pickup' && <Pickup orders={orders} />}
           {view === 'salescheck' && <SalesCheck orders={orders} privacy={privacy} />}
           {view === 'expenses' && <Expenses expenses={expenses} setExpenses={setExpenses} />}
-          {view === 'inventory' && <Inventory inventory={inventory} setInventory={setInventory} catalog={catalog} />}
-          {view === 'products' && <Products catalog={catalog} setCatalog={setCatalog} />}
+          {view === 'products' && <Products catalog={catalog} setCatalog={setCatalog} priceHistory={priceHistory} setPriceHistory={setPriceHistory} />}
+          {view === 'supplierprices' && <SupplierPrices priceHistory={priceHistory} catalog={catalog} privacy={privacy} />}
         </main>
       </div>
 
@@ -2401,89 +2380,150 @@ function Expenses({ expenses, setExpenses }) {
     </div>
   );
 }
-
 /* ============================================================
-   INVENTORY
+   PRODUCTS / PRICE LIST
    ============================================================ */
 
-function Inventory({ inventory, setInventory, catalog }) {
-  const updateItem = (product, patch) => {
-    setInventory({ ...inventory, [product]: { ...(inventory[product] || { qty: 0, dateAdded: '', notes: '' }), ...patch } });
-  };
+/* ============================================================
+   SUPPLIER PRICES (price-change history + margin impact)
+   ============================================================ */
 
-  const setAllZero = () => {
-    if (!confirm('Reset all stock quantities to 0?')) return;
-    const next = {};
-    Object.keys(inventory).forEach(k => { next[k] = { ...inventory[k], qty: 0 }; });
-    setInventory(next);
-  };
+function SupplierPrices({ priceHistory, catalog, privacy }) {
+  const m = (n) => privacy ? '₱•••••' : peso(n);
+  const history = priceHistory || [];
 
-  const totalKg = useMemo(() => Object.values(inventory).reduce((s, v) => s + (Number(v.qty) || 0), 0), [inventory]);
-  const stockValue = useMemo(() => {
-    let val = 0;
-    catalog.forEach((p) => { val += (Number(inventory[p.name]?.qty) || 0) * p.cost; });
-    return val;
-  }, [inventory, catalog]);
+  const sorted = useMemo(
+    () => [...history].sort((a, b) => {
+      if (a.date !== b.date) return (b.date || '').localeCompare(a.date || '');
+      return (b.id || '').localeCompare(a.id || '');
+    }),
+    [history]
+  );
 
-  const groups = ['Pork', 'Chicken', 'Beef'];
+  const stats = useMemo(() => {
+    const increases = history.filter(h => h.delta > 0);
+    const now = new Date();
+    const thisMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const thisMonth = increases.filter(h => (h.date || '').startsWith(thisMonthKey));
+    // Per-product current erosion: compare each product's earliest recorded
+    // cost to its latest, where selling price stayed the same.
+    const byProduct = {};
+    history.forEach((h) => {
+      if (!byProduct[h.product]) byProduct[h.product] = [];
+      byProduct[h.product].push(h);
+    });
+    const erosion = Object.entries(byProduct).map(([product, entries]) => {
+      const chrono = [...entries].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+      const firstCost = chrono[0].oldCost;
+      const lastCost = chrono[chrono.length - 1].newCost;
+      const sell = chrono[chrono.length - 1].sellPrice || 0;
+      const totalRise = Math.round((lastCost - firstCost) * 100) / 100;
+      const oldMargin = sell > 0 ? ((sell - firstCost) / sell) * 100 : 0;
+      const newMargin = sell > 0 ? ((sell - lastCost) / sell) * 100 : 0;
+      return { product, firstCost, lastCost, totalRise, sell, oldMargin, newMargin, changes: entries.length };
+    }).filter(e => e.totalRise !== 0)
+      .sort((a, b) => b.totalRise - a.totalRise);
+    return {
+      totalChanges: history.length,
+      thisMonthCount: thisMonth.length,
+      thisMonthPesos: Math.round(thisMonth.reduce((s, h) => s + Math.max(0, h.delta), 0) * 100) / 100,
+      erosion,
+    };
+  }, [history]);
 
   return (
     <div>
-      <Header title="Fridge Stock" subtitle="What's physically in your fridge right now"
-        right={<Btn variant="secondary" size="sm" onClick={setAllZero}><RefreshCw size={13} className="inline -mt-0.5 mr-1" />Reset All</Btn>} />
+      <Header title="Supplier Prices" subtitle="Every time your supplier changes a cost — and what it does to your margin" />
 
-      <div className="mb-5 px-4 py-3 rounded-md flex items-start gap-2 text-sm no-print" style={{ background: '#E5EDDE', color: '#2f4a2a' }}>
-        <Check size={15} className="mt-0.5 flex-shrink-0" style={{ color: THEME.green }} />
-        <div>
-          <span className="font-semibold">Stock now moves automatically.</span> When you mark an order <strong>Delivered</strong>, its items are subtracted from here. When new stock arrives from your supplier, add it manually below (type the new total or adjust the number).
-        </div>
-      </div>
+      {history.length === 0 ? (
+        <Card className="p-8">
+          <EmptyHint>
+            No supplier price changes recorded yet. Whenever you edit a product's <strong>Supplier Cost</strong> in the Price List, the change (date, item, old → new, and the effect on your margin) is automatically logged here. Nothing to do manually — just keep your Price List costs up to date.
+          </EmptyHint>
+        </Card>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+            <KpiCard label="Total Changes Logged" value={String(stats.totalChanges)} sub="All recorded cost changes" accent={THEME.brand} />
+            <KpiCard label="Increases This Month" value={String(stats.thisMonthCount)} sub={`+${m(stats.thisMonthPesos)} total per-kg`} accent={THEME.red} />
+            <KpiCard label="Items Affected" value={String(stats.erosion.length)} sub="Products with cost movement" accent={THEME.accent} />
+          </div>
 
-      <div className="grid grid-cols-3 gap-4 mb-6">
-        <KpiCard label="Total Stock" value={`${totalKg.toFixed(1)} kg`} sub="Across all products" accent={THEME.brand} />
-        <KpiCard label="Stock Value" value={peso(stockValue)} sub="At supplier cost" accent={THEME.accent} />
-        <KpiCard label="Out of Stock" value={String(catalog.filter(p => (inventory[p.name]?.qty || 0) === 0).length)} sub={`of ${catalog.length} products`} accent={THEME.red} />
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {groups.map((group) => {
-          const items = catalog.filter(c => c.group === group);
-          const emoji = group === 'Pork' ? '🐷' : group === 'Chicken' ? '🐔' : '🐄';
-          return (
-            <Card key={group} className="p-5">
-              <div className="flex items-center gap-2 mb-4">
-                <span className="text-xl">{emoji}</span>
-                <span className="font-display text-lg">{group}</span>
+          {stats.erosion.length > 0 && (
+            <Card className="p-5 mb-6">
+              <div className="font-display text-lg mb-1">Margin Impact Per Item</div>
+              <div className="text-xs mb-4" style={{ color: THEME.inkSoft }}>
+                Your selling price stayed the same — so every cost increase comes straight out of your profit. This is what you're losing per kg.
               </div>
-              <div className="space-y-2">
-                {items.map((p) => {
-                  const cur = inventory[p.name] || { qty: 0, dateAdded: '', notes: '' };
-                  const isOut = (Number(cur.qty) || 0) === 0;
-                  return (
-                    <div key={p.name} className="grid grid-cols-12 gap-2 items-center py-1.5 px-2 rounded" style={{ background: isOut ? 'transparent' : '#F8F2E8' }}>
-                      <div className="col-span-7 text-sm">{p.name}</div>
-                      <div className="col-span-5 flex items-center gap-1">
-                        <button onClick={() => updateItem(p.name, { qty: Math.max(0, (Number(cur.qty) || 0) - 1) })}
-                          className="w-7 h-7 rounded text-xs" style={{ background: THEME.line, color: THEME.ink }}>−</button>
-                        <input type="number" step="0.1" min="0" value={cur.qty}
-                          onChange={(e) => updateItem(p.name, { qty: e.target.value, dateAdded: cur.dateAdded || today() })}
-                          className="w-full px-2 py-1 text-sm rounded text-center"
-                          style={{ background: THEME.card, border: `1px solid ${THEME.line}` }} />
-                        <button onClick={() => updateItem(p.name, { qty: (Number(cur.qty) || 0) + 1, dateAdded: cur.dateAdded || today() })}
-                          className="w-7 h-7 rounded text-xs" style={{ background: THEME.brand, color: 'white' }}>+</button>
-                      </div>
-                    </div>
-                  );
-                })}
+              <div className="overflow-x-auto -mx-1">
+                <table className="w-full text-sm" style={{ minWidth: 560 }}>
+                  <thead>
+                    <tr style={{ color: THEME.inkSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                      <th className="text-left pb-2 font-medium">Product</th>
+                      <th className="text-right pb-2 font-medium">First Cost</th>
+                      <th className="text-right pb-2 font-medium">Now</th>
+                      <th className="text-right pb-2 font-medium">You Lose / kg</th>
+                      <th className="text-right pb-2 font-medium">Margin Then → Now</th>
+                      <th className="text-right pb-2 font-medium">Changes</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {stats.erosion.map((e) => (
+                      <tr key={e.product} style={{ borderTop: `1px solid ${THEME.line}` }}>
+                        <td className="py-2.5 font-medium">{e.product}</td>
+                        <td className="py-2.5 text-right" style={{ color: THEME.inkSoft }}>{m(e.firstCost)}</td>
+                        <td className="py-2.5 text-right">{m(e.lastCost)}</td>
+                        <td className="py-2.5 text-right font-medium" style={{ color: e.totalRise > 0 ? THEME.red : THEME.green }}>
+                          {e.totalRise > 0 ? '−' : '+'}{m(Math.abs(e.totalRise))}
+                        </td>
+                        <td className="py-2.5 text-right" style={{ color: THEME.inkSoft }}>
+                          {e.oldMargin.toFixed(0)}% → <span style={{ color: e.newMargin < e.oldMargin ? THEME.red : THEME.green, fontWeight: 600 }}>{e.newMargin.toFixed(0)}%</span>
+                        </td>
+                        <td className="py-2.5 text-right" style={{ color: THEME.inkSoft }}>{e.changes}×</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </Card>
-          );
-        })}
-      </div>
+          )}
 
-      <div className="mt-4 text-xs text-center" style={{ color: THEME.inkSoft }}>
-        💡 Update qty as you add or sell stock. Use the + / − buttons or type directly.
-      </div>
+          <Card className="p-5">
+            <div className="font-display text-lg mb-1">Change History</div>
+            <div className="text-xs mb-4" style={{ color: THEME.inkSoft }}>Every recorded supplier cost change, newest first</div>
+            <div className="overflow-x-auto -mx-1">
+              <table className="w-full text-sm" style={{ minWidth: 520 }}>
+                <thead>
+                  <tr style={{ color: THEME.inkSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                    <th className="text-left pb-2 font-medium">Date</th>
+                    <th className="text-left pb-2 font-medium">Product</th>
+                    <th className="text-right pb-2 font-medium">Old Cost</th>
+                    <th className="text-right pb-2 font-medium">New Cost</th>
+                    <th className="text-right pb-2 font-medium">Change</th>
+                    <th className="text-right pb-2 font-medium">Effect on You /kg</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sorted.map((h) => (
+                    <tr key={h.id} style={{ borderTop: `1px solid ${THEME.line}` }}>
+                      <td className="py-2.5" style={{ color: THEME.inkSoft }}>{fmtDateShort(h.date)}</td>
+                      <td className="py-2.5">{h.product}</td>
+                      <td className="py-2.5 text-right" style={{ color: THEME.inkSoft }}>{m(h.oldCost)}</td>
+                      <td className="py-2.5 text-right">{m(h.newCost)}</td>
+                      <td className="py-2.5 text-right font-medium" style={{ color: h.delta > 0 ? THEME.red : THEME.green }}>
+                        {h.delta > 0 ? '+' : ''}{m(h.delta)}
+                      </td>
+                      <td className="py-2.5 text-right font-medium" style={{ color: h.marginImpact < 0 ? THEME.red : THEME.green }}>
+                        {h.marginImpact < 0 ? '−' : '+'}{m(Math.abs(h.marginImpact))}/kg
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        </>
+      )}
     </div>
   );
 }
@@ -2492,7 +2532,7 @@ function Inventory({ inventory, setInventory, catalog }) {
    PRODUCTS / PRICE LIST
    ============================================================ */
 
-function Products({ catalog, setCatalog }) {
+function Products({ catalog, setCatalog, priceHistory, setPriceHistory }) {
   const [editing, setEditing] = useState(null);
 
   const updateProduct = (idx, patch) => setCatalog(catalog.map((p, i) => i === idx ? { ...p, ...patch } : p));
@@ -2500,8 +2540,30 @@ function Products({ catalog, setCatalog }) {
   const saveEdit = () => {
     if (!editing) return;
     if (!editing.data.name.trim()) return;
-    if (editing.isNew) setCatalog([...catalog, editing.data]);
-    else updateProduct(editing.idx, editing.data);
+    if (editing.isNew) {
+      setCatalog([...catalog, editing.data]);
+    } else {
+      const before = catalog[editing.idx];
+      const oldCost = Number(before?.cost) || 0;
+      const newCost = Number(editing.data.cost) || 0;
+      // Auto-capture a supplier price change when the cost actually moved.
+      if (before && oldCost !== newCost) {
+        const sellPrice = Number(editing.data.price) || 0;
+        const entry = {
+          id: 'PH-' + Date.now(),
+          date: today(),
+          product: editing.data.name,
+          oldCost,
+          newCost,
+          delta: Math.round((newCost - oldCost) * 100) / 100,
+          sellPrice,                       // selling price at the time of the change
+          // Margin impact in ₱ per unit, since selling price is unchanged:
+          marginImpact: Math.round((oldCost - newCost) * 100) / 100, // negative = you lose this much per kg
+        };
+        setPriceHistory([entry, ...(priceHistory || [])]);
+      }
+      updateProduct(editing.idx, editing.data);
+    }
     setEditing(null);
   };
   const removeProduct = (idx) => {
