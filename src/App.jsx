@@ -48,7 +48,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v3.8 · Quote Savings';
+const APP_VERSION = 'v3.9 · Retail Col + Keep Qtys';
 
 const THEME = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -254,6 +254,10 @@ export default function App() {
   const [loaded, setLoaded] = useState(false);
   const [view, setView] = useState('dashboard');
   const [mobileNav, setMobileNav] = useState(false);
+  // Shared quote quantities — kept at app level so they survive tab switches
+  // and are shared between Restaurant Quote and Quote Profit Check. Only the
+  // Clear button empties them.
+  const [quoteQtys, setQuoteQtys] = useState({});
   // Current user — hardcoded for now. When login is added later, this gets
   // set from the authenticated session (e.g. Marwin or his partner).
   const [currentUser, setCurrentUser] = useState({ name: 'Marwin' });
@@ -595,8 +599,8 @@ export default function App() {
           {view === 'salescheck' && <SalesCheck orders={orders} privacy={privacy} />}
           {view === 'expenses' && <Expenses expenses={expenses} setExpenses={setExpenses} />}
           {view === 'products' && <Products catalog={catalog} setCatalog={setCatalog} priceHistory={priceHistory} setPriceHistory={setPriceHistory} />}
-          {view === 'restaurantquote' && <RestaurantQuote catalog={catalog} />}
-          {view === 'profitcheck' && <QuoteProfitCheck catalog={catalog} privacy={privacy} />}
+          {view === 'restaurantquote' && <RestaurantQuote catalog={catalog} qtys={quoteQtys} setQtys={setQuoteQtys} />}
+          {view === 'profitcheck' && <QuoteProfitCheck catalog={catalog} privacy={privacy} qtys={quoteQtys} setQtys={setQuoteQtys} />}
           {view === 'supplierprices' && <SupplierPrices priceHistory={priceHistory} setPriceHistory={setPriceHistory} catalog={catalog} privacy={privacy} />}
         </main>
       </div>
@@ -2416,8 +2420,7 @@ function rqPricing(p) {
 }
 
 // ---- Client-facing quote: safe to show the restaurant ----
-function RestaurantQuote({ catalog }) {
-  const [qtys, setQtys] = useState({});
+function RestaurantQuote({ catalog, qtys, setQtys }) {
 
   const rows = useMemo(() => catalog.map((p) => {
     const pr = rqPricing(p);
@@ -2452,7 +2455,8 @@ function RestaurantQuote({ catalog }) {
                 <thead>
                   <tr style={{ color: THEME.inkSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                     <th className="text-left pb-2 font-medium">Product</th>
-                    <th className="text-right pb-2 font-medium">Price / kg</th>
+                    <th className="text-right pb-2 font-medium">Retail</th>
+                    <th className="text-right pb-2 font-medium">Our Price / kg</th>
                     <th className="text-right pb-2 font-medium" style={{ width: 90 }}>Kg</th>
                     <th className="text-right pb-2 font-medium">Amount</th>
                   </tr>
@@ -2460,10 +2464,11 @@ function RestaurantQuote({ catalog }) {
                 <tbody>
                   {['Pork', 'Chicken', 'Beef'].map((g) => (
                     <React.Fragment key={g}>
-                      <tr><td colSpan={4} className="pt-3 pb-1 text-xs font-semibold" style={{ color: THEME.brandSoft }}>{g}</td></tr>
+                      <tr><td colSpan={5} className="pt-3 pb-1 text-xs font-semibold" style={{ color: THEME.brandSoft }}>{g}</td></tr>
                       {rows.filter(r => r.group === g).map((r) => (
                         <tr key={r.name} style={{ borderTop: `1px solid ${THEME.line}` }}>
                           <td className="py-2">{r.name}</td>
+                          <td className="py-2 text-right" style={{ color: THEME.inkSoft, textDecoration: r.discounted ? 'line-through' : 'none' }}>{peso(r.price)}</td>
                           <td className="py-2 text-right font-medium">{peso(r.wholesale)}</td>
                           <td className="py-2 text-right">
                             <input type="number" min="0" step="0.5" value={qtys[r.name] || ''}
@@ -2522,8 +2527,7 @@ function RestaurantQuote({ catalog }) {
 }
 
 // ---- Private profit check: ONLY for the owner, never shown to a client ----
-function QuoteProfitCheck({ catalog, privacy }) {
-  const [qtys, setQtys] = useState({});
+function QuoteProfitCheck({ catalog, privacy, qtys, setQtys }) {
   const m = (n) => privacy ? '₱•••••' : peso(n);
 
   const rows = useMemo(() => catalog.map((p) => {
