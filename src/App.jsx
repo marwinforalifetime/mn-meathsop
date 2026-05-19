@@ -12,7 +12,7 @@ import {
 } from 'recharts';
 import { toPng } from 'html-to-image';
 import { LOGO_DATA_URL } from './logo.js';
-import { cloudLoad, cloudSave } from './supabase.js';
+import { cloudLoad, cloudSave, getSession, signIn, signOut, onAuthChange } from './supabase.js';
 
 /* ============================================================
    SEED DATA (from your spreadsheet)
@@ -48,7 +48,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v4.2 · Dark Mode';
+const APP_VERSION = 'v4.3 · Login Required';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -268,7 +268,7 @@ function EmptyHint({ children }) {
    MAIN APP
    ============================================================ */
 
-export default function App() {
+function MainApp() {
   const [loaded, setLoaded] = useState(false);
   const [view, setView] = useState('dashboard');
   const [mobileNav, setMobileNav] = useState(false);
@@ -575,6 +575,9 @@ export default function App() {
             <button onClick={() => { setShowBackup(true); setMobileNav(false); }} className="flex items-center gap-2 text-xs mb-2 hover:opacity-70" style={{ color: THEME.inkSoft }}>
               <HardDrive size={12} /> Backup & Restore
             </button>
+            <button onClick={async () => { if (confirm('Sign out of M&N Meatshop?')) { await signOut(); } }} className="flex items-center gap-2 text-xs mb-2 hover:opacity-70" style={{ color: THEME.inkSoft }}>
+              <ArrowLeft size={12} /> Sign Out
+            </button>
             <div className="text-xs flex items-center gap-2" style={{ color: THEME.inkSoft }}>
               {saving
                 ? (<><Loader2 size={11} className="animate-spin" /> Syncing…</>)
@@ -678,6 +681,103 @@ export default function App() {
       </Modal>
     </div>
   );
+}
+
+/* ============================================================
+   AUTH GATE — login required before the app loads
+   ============================================================ */
+
+function LoginScreen({ onSignedIn }) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  const submit = async () => {
+    if (!email.trim() || !password) { setErr('Enter your email and password.'); return; }
+    setBusy(true); setErr('');
+    try {
+      await signIn(email.trim(), password);
+      onSignedIn();
+    } catch (e) {
+      setErr('Wrong email or password, or no internet. Please try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center px-4"
+      style={{ background: THEME.bg, fontFamily: 'DM Sans, sans-serif' }}>
+      <div className="w-full max-w-sm">
+        <div className="flex flex-col items-center text-center mb-8">
+          <img src={LOGO_DATA_URL} alt="M&N Meatshop" className="w-20 h-20 rounded-full object-cover mb-3" />
+          <div className="font-display text-2xl" style={{ color: THEME.brand }}>M&N Meatshop</div>
+          <div className="text-sm mt-1" style={{ color: THEME.inkSoft }}>Please sign in to continue</div>
+        </div>
+        <Card className="p-6">
+          <div className="space-y-4">
+            <div>
+              <Label>Email</Label>
+              <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@example.com" />
+            </div>
+            <div>
+              <Label>Password</Label>
+              <input type="password" value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+                placeholder="Your password"
+                className="w-full px-3 py-2 rounded-md outline-none"
+                style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink }} />
+            </div>
+            {err && (
+              <div className="text-sm px-3 py-2 rounded" style={{ background: THEME.errorBg, color: THEME.red }}>
+                {err}
+              </div>
+            )}
+            <Btn variant="primary" onClick={submit} disabled={busy} className="w-full">
+              {busy ? 'Signing in…' : 'Sign In'}
+            </Btn>
+          </div>
+        </Card>
+        <div className="text-xs text-center mt-5" style={{ color: THEME.inkSoft }}>
+          Authorized users only. Your data is protected by this login.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function App() {
+  // 'checking' = verifying existing session, 'out' = show login, 'in' = app
+  const [authState, setAuthState] = useState('checking');
+
+  useEffect(() => {
+    let active = true;
+    getSession()
+      .then((session) => { if (active) setAuthState(session ? 'in' : 'out'); })
+      .catch(() => { if (active) setAuthState('out'); });
+    const sub = onAuthChange((session) => {
+      if (active) setAuthState(session ? 'in' : 'out');
+    });
+    return () => { active = false; if (sub) sub.unsubscribe(); };
+  }, []);
+
+  if (authState === 'checking') {
+    return (
+      <div className="min-h-screen flex items-center justify-center"
+        style={{ background: THEME.bg, color: THEME.inkSoft, fontFamily: 'DM Sans, sans-serif' }}>
+        <Loader2 size={22} className="animate-spin" />
+      </div>
+    );
+  }
+
+  if (authState === 'out') {
+    return <LoginScreen onSignedIn={() => setAuthState('in')} />;
+  }
+
+  return <MainApp />;
 }
 
 /* ============================================================

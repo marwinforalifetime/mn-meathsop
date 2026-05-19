@@ -44,3 +44,28 @@ export async function cloudSave(payload) {
   }
   return true;
 }
+
+// ---- Authentication ----
+// Real server-enforced auth via Supabase. The password is NEVER stored in this
+// code — it lives only in Supabase's secure auth system. We use one shared
+// account (email + password) created by the owner in the Supabase dashboard.
+
+export async function getSession() {
+  const { data } = await supabase.auth.getSession();
+  return data ? data.session : null;
+}
+
+export async function signIn(email, password) {
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) throw error;
+  return data.session;
+}
+
+export async function signOut() {
+  await supabase.auth.signOut();
+}
+
+export function onAuthChange(cb) {
+  const { data } = supabase.auth.onAuthStateChange((_event, session) => cb(session));
+  return data ? data.subscription : null;
+}
