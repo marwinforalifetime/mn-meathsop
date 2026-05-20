@@ -48,7 +48,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v4.7 · Stable';
+const APP_VERSION = 'v4.8 · Original Dashboard';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -804,8 +804,6 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
     const costByDate = {};         // supplier cost grouped by the order's date
     let pendingOrders = 0, pendingValue = 0;     // orders not yet delivered (being collected)
     let weekdayTotals = {};        // sales by weekday name (production pattern)
-    let cashReceived = 0;          // actual money received from customers (paid + partial paid)
-    let costOnPaidOrders = 0;      // supplier cost on the orders you've received money for
 
     ordersList.forEach((o) => {
       if (o.delivery_status === 'Cancelled') return;
@@ -813,16 +811,6 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
       const oCost = (o.items || []).reduce((s, i) => s + i.qty * i.cost, 0);
       totalSales += oSales;
       totalCost += oCost;
-      // Track actual cash received: Paid = full, Partial = the amount_paid, Unpaid = 0
-      if (o.payment_status === 'Paid') {
-        cashReceived += oSales;
-        costOnPaidOrders += oCost;
-      } else if (o.payment_status === 'Partial') {
-        const paid = Number(o.amount_paid) || 0;
-        cashReceived += paid;
-        // Proportional cost on the paid portion
-        if (oSales > 0) costOnPaidOrders += oCost * (paid / oSales);
-      }
       if (o.payment_status === 'Unpaid') unpaid += oSales;
       else if (o.payment_status === 'Partial') {
         const paid = Number(o.amount_paid) || 0;
@@ -855,12 +843,6 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
     const grossProfit = totalSales - totalCost;
     const monthProfit = monthSales - monthCost;
     const totalExpenses = expenses.reduce((s, e) => s + (e.amount || 0), 0);
-    const monthExpenses = expenses
-      .filter(e => (e.date || '').startsWith(thisMonthKey))
-      .reduce((s, e) => s + (e.amount || 0), 0);
-    // Real, honest take-home for the month: sales minus supplier cost minus
-    // operating expenses logged this month (gas, ice, packaging, etc.).
-    const realMonthProfit = monthProfit - monthExpenses;
     const netPosition = grossProfit - totalExpenses;
     const recoveryPct = totalExpenses > 0
       ? Math.min(100, Math.max(0, (grossProfit / totalExpenses) * 100))
@@ -900,14 +882,8 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
       .map(([name, v]) => ({ name: name.length > 16 ? name.slice(0, 16) + '…' : name, value: Math.round(v) }))
       .sort((a, b) => b.value - a.value).slice(0, 5);
 
-    // Cash on hand: real money you've received, minus supplier cost on those
-    // paid orders, minus operating expenses you've already paid. This is the
-    // honest "money in my pocket right now" number.
-    const moneyOnHand = cashReceived - costOnPaidOrders - totalExpenses;
-
     return {
-      totalSales, grossProfit, monthSales, monthProfit, monthExpenses, realMonthProfit, totalExpenses,
-      cashReceived, moneyOnHand,
+      totalSales, grossProfit, monthSales, monthProfit, totalExpenses,
       netPosition, unpaid, orderCount: ordersList.filter(o => o.delivery_status !== 'Cancelled').length,
       runCount, avgPerRun, avgSalesPerRun, productionRuns, weekdayPattern,
       lastRun, runChangePct,
@@ -1009,22 +985,15 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
         <Card className="lg:col-span-2 p-6 relative overflow-hidden" style={{ background: `linear-gradient(135deg, ${THEME.brand} 0%, ${THEME.brandSoft} 100%)`, border: 'none' }}>
           <div className="relative z-10">
-            <div className="text-xs uppercase tracking-widest" style={{ color: 'rgba(255,255,255,0.75)' }}>Money I Have</div>
-            <div className="font-display text-5xl mt-2 text-white">{m(stats.moneyOnHand)}</div>
-            <div className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.7)' }}>
-              cash received, minus supplier costs paid, minus expenses
-            </div>
-            <div className="flex gap-6 mt-4 flex-wrap">
+            <div className="text-xs uppercase tracking-widest" style={{ color: 'rgba(255,255,255,0.75)' }}>{monthName} Profit</div>
+            <div className="font-display text-5xl mt-2 text-white">{m(stats.monthProfit)}</div>
+            <div className="flex gap-6 mt-4">
               <div>
-                <div className="text-xs" style={{ color: 'rgba(255,255,255,0.7)' }}>Cash received</div>
-                <div className="text-lg font-medium text-white">{m(stats.cashReceived)}</div>
+                <div className="text-xs" style={{ color: 'rgba(255,255,255,0.7)' }}>Sales this month</div>
+                <div className="text-lg font-medium text-white">{m(stats.monthSales)}</div>
               </div>
               <div>
-                <div className="text-xs" style={{ color: 'rgba(255,255,255,0.7)' }}>{monthName} take-home</div>
-                <div className="text-lg font-medium text-white">{m(stats.realMonthProfit)}</div>
-              </div>
-              <div>
-                <div className="text-xs" style={{ color: 'rgba(255,255,255,0.7)' }}>Still owed to you</div>
+                <div className="text-xs" style={{ color: 'rgba(255,255,255,0.7)' }}>Money owed to you</div>
                 <div className="text-lg font-medium" style={{ color: stats.unpaid > 0 ? '#F0C674' : 'rgba(255,255,255,0.9)' }}>{m(stats.unpaid)}</div>
               </div>
             </div>
