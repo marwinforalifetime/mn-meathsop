@@ -35,3 +35,94 @@ body {
     background: white !important;
   }
 }
+
+/* ============================================================
+   MICRO-ANIMATIONS — subtle, fast, GPU-accelerated.
+   Only opacity & transform (no layout jank). Uses Apple's
+   signature spring-ease curve. Respects reduced-motion users.
+   ============================================================ */
+
+:root {
+  --ease-apple: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-out-soft: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/* View / page transition — soft fade up when switching sections */
+@keyframes mn-view-in {
+  from { opacity: 0; transform: translate3d(0, 8px, 0); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+.mn-view {
+  animation: mn-view-in 320ms var(--ease-apple);
+  will-change: opacity, transform;
+}
+
+/* Card entrance — gentle fade with a hint of rise */
+@keyframes mn-card-in {
+  from { opacity: 0; transform: translate3d(0, 6px, 0); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+.mn-card {
+  animation: mn-card-in 260ms var(--ease-out-soft);
+}
+
+/* Modal entrance — scale + fade, the iOS sheet feel */
+@keyframes mn-modal-in {
+  from { opacity: 0; transform: scale(0.96) translate3d(0, 8px, 0); }
+  to   { opacity: 1; transform: scale(1) translate3d(0, 0, 0); }
+}
+.mn-modal {
+  animation: mn-modal-in 220ms var(--ease-apple);
+  transform-origin: center;
+}
+@keyframes mn-overlay-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.mn-overlay {
+  animation: mn-overlay-in 180ms var(--ease-out-soft);
+}
+
+/* Buttons — subtle press response, smooth transitions */
+button, .mn-pressable {
+  transition: transform 140ms var(--ease-apple), box-shadow 200ms var(--ease-out-soft), background-color 180ms var(--ease-out-soft), border-color 180ms var(--ease-out-soft), color 180ms var(--ease-out-soft);
+}
+button:active, .mn-pressable:active {
+  transform: scale(0.97);
+}
+
+/* Cards lift gently on hover (desktop only — no-op on touch) */
+@media (hover: hover) {
+  .mn-card-hover {
+    transition: transform 220ms var(--ease-out-soft), box-shadow 260ms var(--ease-out-soft);
+  }
+  .mn-card-hover:hover {
+    transform: translate3d(0, -1px, 0);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+  }
+}
+
+/* Inputs — soft focus ring */
+input, select, textarea {
+  transition: border-color 180ms var(--ease-out-soft), box-shadow 180ms var(--ease-out-soft);
+}
+
+/* Number that counts up smoothly: applied to the headline figure.
+   This is purely visual — the underlying value updates instantly. */
+.mn-num {
+  display: inline-block;
+  transition: transform 240ms var(--ease-apple);
+}
+
+/* Respect users who've asked for reduced motion (iOS accessibility) */
+@media (prefers-reduced-motion: reduce) {
+  .mn-view, .mn-card, .mn-modal, .mn-overlay {
+    animation: none !important;
+  }
+  button:active, .mn-pressable:active {
+    transform: none !important;
+  }
+  * {
+    transition-duration: 0.01ms !important;
+  }
+}
