@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import {
   BarChart, Bar, PieChart, Pie, Cell, ResponsiveContainer, XAxis, YAxis,
-  Tooltip, CartesianGrid, LineChart, Line, Area, AreaChart,
+  Tooltip, CartesianGrid, LineChart, Line, Area, AreaChart, ReferenceLine,
 } from 'recharts';
 import { toPng } from 'html-to-image';
 import { LOGO_DATA_URL } from './logo.js';
@@ -48,7 +48,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v5.2 · Spend Trends';
+const APP_VERSION = 'v5.3 · Per-Pickup Line';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -3162,6 +3162,22 @@ function SupplierPayments({ payments, setPayments, privacy }) {
 
   const avgMonthly = monthly.length > 0 ? total / monthly.length : 0;
 
+  // Per-payment series for the "stock chart" line — each logged date is a
+  // point, value = that pickup's amount. Going up/down here = this pickup
+  // was bigger/smaller than the last. The reference line shows the average.
+  const perPayment = useMemo(() => {
+    const sorted = [...list].filter(p => p.date).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    return sorted.map((p) => ({
+      date: p.date,
+      label: fmtDateShort(p.date),
+      amount: Number(p.amount) || 0,
+      notes: p.notes || '',
+    }));
+  }, [list]);
+  const avgPayment = perPayment.length > 0
+    ? perPayment.reduce((s, p) => s + p.amount, 0) / perPayment.length
+    : 0;
+
   const startAdd = () => setAdding({ date: today(), amount: '', notes: '' });
   const save = () => {
     if (!adding) return;
@@ -3205,23 +3221,32 @@ function SupplierPayments({ payments, setPayments, privacy }) {
         <>
           <Card className="p-5 mb-4">
             <div className="flex items-baseline justify-between mb-1">
-              <div className="font-display text-lg">Monthly supplier spend</div>
-              <div className="text-xs" style={{ color: THEME.inkSoft }}>How much you paid the supplier each month</div>
+              <div className="font-display text-lg">Payment size per pickup</div>
+              <div className="text-xs" style={{ color: THEME.inkSoft }}>Each logged date plotted</div>
             </div>
-            <div className="text-xs mb-4" style={{ color: THEME.inkSoft }}>Each bar = total paid that month. Watch this for whether your supplier outflow is rising over time.</div>
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={monthly} margin={{ left: -8, right: 8, top: 8, bottom: 0 }}>
+            <div className="text-xs mb-4" style={{ color: THEME.inkSoft }}>
+              Each dot is a pickup payment. The line connects them in order of date. Dashed line = your average payment ({m(avgPayment)}). Dots <em>above</em> the line = bigger-than-usual pickup, <em>below</em> = smaller.
+            </div>
+            <ResponsiveContainer width="100%" height={240}>
+              <LineChart data={perPayment} margin={{ left: -8, right: 8, top: 8, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={THEME.line} vertical={false} />
                 <XAxis dataKey="label" tick={{ fill: THEME.inkSoft, fontSize: 11 }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fill: THEME.inkSoft, fontSize: 11 }} axisLine={false} tickLine={false}
                   tickFormatter={(v) => v >= 1000 ? `₱${(v/1000).toFixed(0)}k` : `₱${v}`} />
                 <Tooltip
-                  cursor={{ fill: THEME.brandBg }}
                   contentStyle={{ background: THEME.card, border: `1px solid ${THEME.line}`, borderRadius: 8, fontSize: 12 }}
-                  formatter={(v) => [privacy ? '₱•••••' : peso(v), 'Paid']}
+                  formatter={(v) => [privacy ? '₱•••••' : peso(v), 'This pickup']}
+                  labelFormatter={(label, payload) => {
+                    const p = payload && payload[0] && payload[0].payload;
+                    return p && p.notes ? `${label} · ${p.notes}` : label;
+                  }}
                 />
-                <Bar dataKey="amount" fill={THEME.brand} radius={[4, 4, 0, 0]} />
-              </BarChart>
+                <ReferenceLine y={avgPayment} stroke={THEME.inkSoft} strokeDasharray="4 4" strokeWidth={1}
+                  label={{ value: 'avg', position: 'right', fill: THEME.inkSoft, fontSize: 10 }} />
+                <Line type="monotone" dataKey="amount" stroke={THEME.brand} strokeWidth={2}
+                  dot={{ r: 4, fill: THEME.brand, strokeWidth: 0 }}
+                  activeDot={{ r: 6, fill: THEME.brand }} />
+              </LineChart>
             </ResponsiveContainer>
           </Card>
 
