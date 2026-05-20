@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import {
   BarChart, Bar, PieChart, Pie, Cell, ResponsiveContainer, XAxis, YAxis,
-  Tooltip, CartesianGrid,
+  Tooltip, CartesianGrid, LineChart, Line, Area, AreaChart,
 } from 'recharts';
 import { toPng } from 'html-to-image';
 import { LOGO_DATA_URL } from './logo.js';
@@ -48,7 +48,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v5.1 · Supplier Payments';
+const APP_VERSION = 'v5.2 · Spend Trends';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -3122,6 +3122,46 @@ function SupplierPayments({ payments, setPayments, privacy }) {
     [list, thisMonthKey]
   );
 
+  // Monthly totals — for the bar chart trend view
+  const monthly = useMemo(() => {
+    const byMonth = {};
+    list.forEach((p) => {
+      if (!p.date) return;
+      const key = p.date.slice(0, 7); // YYYY-MM
+      byMonth[key] = (byMonth[key] || 0) + (Number(p.amount) || 0);
+    });
+    return Object.entries(byMonth)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, value]) => {
+        const [y, mo] = key.split('-');
+        const d = new Date(Number(y), Number(mo) - 1, 1);
+        return {
+          key,
+          label: d.toLocaleString('en-PH', { month: 'short', year: '2-digit' }),
+          amount: Math.round(value * 100) / 100,
+        };
+      });
+  }, [list]);
+
+  // Cumulative spend — for the stock-chart-like line view (this one IS continuous)
+  const cumulative = useMemo(() => {
+    const sortedByDate = [...list]
+      .filter(p => p.date)
+      .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    let running = 0;
+    return sortedByDate.map((p) => {
+      running += Number(p.amount) || 0;
+      return {
+        date: p.date,
+        label: fmtDateShort(p.date),
+        cumulative: Math.round(running * 100) / 100,
+        amount: Number(p.amount) || 0,
+      };
+    });
+  }, [list]);
+
+  const avgMonthly = monthly.length > 0 ? total / monthly.length : 0;
+
   const startAdd = () => setAdding({ date: today(), amount: '', notes: '' });
   const save = () => {
     if (!adding) return;
@@ -3155,10 +3195,66 @@ function SupplierPayments({ payments, setPayments, privacy }) {
       <Header title="Supplier Payments" subtitle="Log of what you've paid the supplier on pickups"
         right={<Btn variant="primary" size="sm" onClick={startAdd}><PlusCircle size={14} className="inline -mt-0.5 mr-1" />Add payment</Btn>} />
 
-      <div className="grid grid-cols-2 gap-4 mb-6">
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
         <KpiCard label="Total Paid (All Time)" value={m(total)} sub={`${list.length} payment${list.length !== 1 ? 's' : ''}`} accent={THEME.brand} />
         <KpiCard label="This Month" value={m(monthTotal)} sub="Supplier payments logged this month" accent={THEME.accent} />
+        <KpiCard label="Avg / Month" value={m(avgMonthly)} sub={`${monthly.length} month${monthly.length !== 1 ? 's' : ''} of data`} accent={THEME.green} />
       </div>
+
+      {list.length > 0 && (
+        <>
+          <Card className="p-5 mb-4">
+            <div className="flex items-baseline justify-between mb-1">
+              <div className="font-display text-lg">Monthly supplier spend</div>
+              <div className="text-xs" style={{ color: THEME.inkSoft }}>How much you paid the supplier each month</div>
+            </div>
+            <div className="text-xs mb-4" style={{ color: THEME.inkSoft }}>Each bar = total paid that month. Watch this for whether your supplier outflow is rising over time.</div>
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={monthly} margin={{ left: -8, right: 8, top: 8, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={THEME.line} vertical={false} />
+                <XAxis dataKey="label" tick={{ fill: THEME.inkSoft, fontSize: 11 }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fill: THEME.inkSoft, fontSize: 11 }} axisLine={false} tickLine={false}
+                  tickFormatter={(v) => v >= 1000 ? `₱${(v/1000).toFixed(0)}k` : `₱${v}`} />
+                <Tooltip
+                  cursor={{ fill: THEME.brandBg }}
+                  contentStyle={{ background: THEME.card, border: `1px solid ${THEME.line}`, borderRadius: 8, fontSize: 12 }}
+                  formatter={(v) => [privacy ? '₱•••••' : peso(v), 'Paid']}
+                />
+                <Bar dataKey="amount" fill={THEME.brand} radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </Card>
+
+          {cumulative.length > 1 && (
+            <Card className="p-5 mb-4">
+              <div className="flex items-baseline justify-between mb-1">
+                <div className="font-display text-lg">Cumulative spend over time</div>
+                <div className="text-xs" style={{ color: THEME.inkSoft }}>Running total of all supplier payments</div>
+              </div>
+              <div className="text-xs mb-4" style={{ color: THEME.inkSoft }}>Like a stock chart — only goes one direction (up). The slope = how fast you're paying out. Steeper = faster spending.</div>
+              <ResponsiveContainer width="100%" height={220}>
+                <AreaChart data={cumulative} margin={{ left: -8, right: 8, top: 8, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="cumFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={THEME.brand} stopOpacity={0.25} />
+                      <stop offset="100%" stopColor={THEME.brand} stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke={THEME.line} vertical={false} />
+                  <XAxis dataKey="label" tick={{ fill: THEME.inkSoft, fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: THEME.inkSoft, fontSize: 11 }} axisLine={false} tickLine={false}
+                    tickFormatter={(v) => v >= 1000 ? `₱${(v/1000).toFixed(0)}k` : `₱${v}`} />
+                  <Tooltip
+                    contentStyle={{ background: THEME.card, border: `1px solid ${THEME.line}`, borderRadius: 8, fontSize: 12 }}
+                    formatter={(v, name) => [privacy ? '₱•••••' : peso(v), name === 'cumulative' ? 'Total paid' : 'This payment']}
+                  />
+                  <Area type="monotone" dataKey="cumulative" stroke={THEME.brand} strokeWidth={2} fill="url(#cumFill)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </Card>
+          )}
+        </>
+      )}
 
       <Card className="p-5">
         {list.length === 0 ? (
