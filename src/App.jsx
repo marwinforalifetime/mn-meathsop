@@ -48,7 +48,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v4.8 · Original Dashboard';
+const APP_VERSION = 'v4.9 · Pickup Total Kg';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -2152,6 +2152,8 @@ function Pickup({ orders }) {
   }, [selected, orders]);
 
   const grandTotal = rollup.reduce((s, r) => s + r.totalCost, 0);
+  // Total kilos across rollup (only items priced per kg, so the figure is meaningful).
+  const totalKg = rollup.reduce((s, r) => s + ((r.unit === 'kg' || !r.unit) ? r.qty : 0), 0);
 
   return (
     <div>
@@ -2223,7 +2225,12 @@ function Pickup({ orders }) {
                     <div className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft }}>Total to pay supplier</div>
                     <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>{selected.size} order{selected.size !== 1 ? 's' : ''} · {rollup.length} product{rollup.length !== 1 ? 's' : ''}</div>
                   </div>
-                  <div className="font-display text-3xl" style={{ color: THEME.brand }}>{peso(grandTotal)}</div>
+                  <div className="text-right">
+                    <div className="font-display text-3xl" style={{ color: THEME.brand }}>{peso(grandTotal)}</div>
+                    {totalKg > 0 && (
+                      <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>{totalKg.toFixed(2).replace(/\.00$/, '')} kg total</div>
+                    )}
+                  </div>
                 </div>
               </>
             )}
