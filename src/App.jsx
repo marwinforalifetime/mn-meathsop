@@ -48,7 +48,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v5.0 · Sales Profit';
+const APP_VERSION = 'v5.1 · Supplier Payments';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -285,6 +285,7 @@ function MainApp() {
   const [expenses, setExpenses] = useState([]);
   const [inventory, setInventory] = useState({});
   const [priceHistory, setPriceHistory] = useState([]);
+  const [supplierPayments, setSupplierPayments] = useState([]);
   const [meta, setMeta] = useState({ lastOrderNum: 0 });
   const [saving, setSaving] = useState(false);
   // Cloud sync status: 'connecting' | 'cloud' | 'local-only' | 'error'
@@ -331,6 +332,7 @@ function MainApp() {
       const localExpenses = storage.load('expenses', []);
       const localInventory = storage.load('inventory', null);
       const localPriceHistory = storage.load('priceHistory', []);
+      const localSupplierPayments = storage.load('supplierPayments', []);
       const localMeta = storage.load('meta', { lastOrderNum: 0 });
       const hasLocalData = (localOrders && Object.keys(localOrders).length > 0)
         || (localExpenses && localExpenses.length > 0);
@@ -350,6 +352,7 @@ function MainApp() {
           setExpenses(cloud.expenses || []);
           setInventory(cloud.inventory || Object.fromEntries(SEED_PRODUCTS.map(p => [p.name, { qty: 0, dateAdded: '', notes: '' }])));
           setPriceHistory(cloud.priceHistory || []);
+          setSupplierPayments(cloud.supplierPayments || []);
           setMeta(cloud.meta || { lastOrderNum: 0 });
           usedCloud = true;
           setSyncStatus('cloud');
@@ -360,6 +363,7 @@ function MainApp() {
           setExpenses(localExpenses || []);
           setInventory(localInventory || Object.fromEntries(SEED_PRODUCTS.map(p => [p.name, { qty: 0, dateAdded: '', notes: '' }])));
           setPriceHistory(localPriceHistory || []);
+          setSupplierPayments(localSupplierPayments || []);
           setMeta(localMeta || { lastOrderNum: 0 });
           setSyncStatus('cloud');
           if (hasLocalData) setNeedsImport(true);
@@ -372,6 +376,7 @@ function MainApp() {
         setExpenses(localExpenses || []);
         setInventory(localInventory || Object.fromEntries(SEED_PRODUCTS.map(p => [p.name, { qty: 0, dateAdded: '', notes: '' }])));
         setPriceHistory(localPriceHistory || []);
+        setSupplierPayments(localSupplierPayments || []);
         setMeta(localMeta || { lastOrderNum: 0 });
         setSyncStatus('local-only');
       }
@@ -400,6 +405,7 @@ function MainApp() {
     storage.save('expenses', expenses);
     storage.save('inventory', inventory);
     storage.save('priceHistory', priceHistory);
+    storage.save('supplierPayments', supplierPayments);
     storage.save('meta', meta);
     lastSaveRef.current = Date.now();
 
@@ -407,7 +413,7 @@ function MainApp() {
     let cancelled = false;
     const t = setTimeout(async () => {
       try {
-        await cloudSave({ catalog, orders, expenses, inventory, priceHistory, meta });
+        await cloudSave({ catalog, orders, expenses, inventory, priceHistory, supplierPayments, meta });
         if (!cancelled) {
           setSyncStatus('cloud');
           setSaving(false);
@@ -421,13 +427,13 @@ function MainApp() {
       }
     }, 600);
     return () => { cancelled = true; clearTimeout(t); };
-  }, [catalog, orders, expenses, inventory, priceHistory, meta, loaded]);
+  }, [catalog, orders, expenses, inventory, priceHistory, supplierPayments, meta, loaded]);
 
   // One-time import: push existing local data up to an empty cloud.
   const importLocalToCloud = async () => {
     setImporting(true);
     try {
-      await cloudSave({ catalog, orders, expenses, inventory, priceHistory, meta });
+      await cloudSave({ catalog, orders, expenses, inventory, priceHistory, supplierPayments, meta });
       setNeedsImport(false);
       setSyncStatus('cloud');
       alert('Your existing data is now saved to the cloud and will sync across your devices.');
@@ -444,7 +450,7 @@ function MainApp() {
     const data = {
       version: 1,
       exported_at: new Date().toISOString(),
-      catalog, orders, expenses, inventory, priceHistory, meta,
+      catalog, orders, expenses, inventory, priceHistory, supplierPayments, meta,
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -475,6 +481,7 @@ function MainApp() {
         setExpenses(data.expenses || []);
         setInventory(data.inventory || {});
         setPriceHistory(data.priceHistory || []);
+        setSupplierPayments(data.supplierPayments || []);
         setMeta(data.meta || { lastOrderNum: 0 });
         setShowBackup(false);
         alert('Backup restored successfully!');
@@ -507,6 +514,7 @@ function MainApp() {
     { id: 'restaurantquote', label: 'Restaurant Quote', icon: Store },
     { id: 'profitcheck', label: 'Quote Profit Check', icon: EyeOff },
     { id: 'supplierprices', label: 'Supplier Prices', icon: TrendingUp },
+    { id: 'supplierpayments', label: 'Supplier Payments', icon: Wallet },
   ];
 
   return (
@@ -649,6 +657,7 @@ function MainApp() {
           {view === 'restaurantquote' && <RestaurantQuote catalog={catalog} qtys={quoteQtys} setQtys={setQuoteQtys} />}
           {view === 'profitcheck' && <QuoteProfitCheck catalog={catalog} privacy={privacy} qtys={quoteQtys} setQtys={setQuoteQtys} />}
           {view === 'supplierprices' && <SupplierPrices priceHistory={priceHistory} setPriceHistory={setPriceHistory} catalog={catalog} privacy={privacy} />}
+          {view === 'supplierpayments' && <SupplierPayments payments={supplierPayments} setPayments={setSupplierPayments} privacy={privacy} />}
         </main>
       </div>
 
@@ -3086,6 +3095,135 @@ function SupplierPrices({ priceHistory, setPriceHistory, catalog, privacy }) {
     </div>
   );
 }
+
+/* ============================================================
+   SUPPLIER PAYMENTS (simple log of what you paid the supplier)
+   ============================================================ */
+
+function SupplierPayments({ payments, setPayments, privacy }) {
+  const m = (n) => privacy ? '₱•••••' : peso(n);
+  const list = payments || [];
+  const [adding, setAdding] = useState(null);   // null | { date, amount, notes }
+  const [editingId, setEditingId] = useState(null);
+
+  const sorted = useMemo(
+    () => [...list].sort((a, b) => {
+      if ((a.date || '') !== (b.date || '')) return (b.date || '').localeCompare(a.date || '');
+      return (b.id || '').localeCompare(a.id || '');
+    }),
+    [list]
+  );
+
+  const total = useMemo(() => list.reduce((s, p) => s + (Number(p.amount) || 0), 0), [list]);
+  const now = new Date();
+  const thisMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const monthTotal = useMemo(
+    () => list.filter(p => (p.date || '').startsWith(thisMonthKey)).reduce((s, p) => s + (Number(p.amount) || 0), 0),
+    [list, thisMonthKey]
+  );
+
+  const startAdd = () => setAdding({ date: today(), amount: '', notes: '' });
+  const save = () => {
+    if (!adding) return;
+    const amt = Number(adding.amount);
+    if (!(amt > 0)) { alert('Enter a valid amount.'); return; }
+    const entry = {
+      id: editingId || ('SP-' + Date.now()),
+      date: adding.date || today(),
+      amount: Math.round(amt * 100) / 100,
+      notes: (adding.notes || '').trim(),
+    };
+    if (editingId) {
+      setPayments(list.map(p => p.id === editingId ? entry : p));
+    } else {
+      setPayments([entry, ...list]);
+    }
+    setAdding(null);
+    setEditingId(null);
+  };
+  const startEdit = (p) => {
+    setEditingId(p.id);
+    setAdding({ date: p.date || today(), amount: String(p.amount), notes: p.notes || '' });
+  };
+  const remove = (id) => {
+    if (!confirm('Delete this payment entry?')) return;
+    setPayments(list.filter(p => p.id !== id));
+  };
+
+  return (
+    <div>
+      <Header title="Supplier Payments" subtitle="Log of what you've paid the supplier on pickups"
+        right={<Btn variant="primary" size="sm" onClick={startAdd}><PlusCircle size={14} className="inline -mt-0.5 mr-1" />Add payment</Btn>} />
+
+      <div className="grid grid-cols-2 gap-4 mb-6">
+        <KpiCard label="Total Paid (All Time)" value={m(total)} sub={`${list.length} payment${list.length !== 1 ? 's' : ''}`} accent={THEME.brand} />
+        <KpiCard label="This Month" value={m(monthTotal)} sub="Supplier payments logged this month" accent={THEME.accent} />
+      </div>
+
+      <Card className="p-5">
+        {list.length === 0 ? (
+          <EmptyHint>No supplier payments logged yet. Tap "Add payment" after each pickup to keep a clean record of what you paid and when.</EmptyHint>
+        ) : (
+          <div className="overflow-x-auto -mx-1">
+            <table className="w-full text-sm" style={{ minWidth: 520 }}>
+              <thead>
+                <tr style={{ color: THEME.inkSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                  <th className="text-left pb-2 font-medium">Date</th>
+                  <th className="text-left pb-2 font-medium">Notes</th>
+                  <th className="text-right pb-2 font-medium">Amount</th>
+                  <th className="text-right pb-2 font-medium" style={{ width: 80 }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map((p) => (
+                  <tr key={p.id} style={{ borderTop: `1px solid ${THEME.line}` }}>
+                    <td className="py-2.5" style={{ color: THEME.inkSoft }}>{fmtDate(p.date)}</td>
+                    <td className="py-2.5">{p.notes || <span style={{ color: THEME.inkSoft }}>—</span>}</td>
+                    <td className="py-2.5 text-right font-medium">{m(p.amount)}</td>
+                    <td className="py-2.5 text-right">
+                      <button onClick={() => startEdit(p)} className="text-xs px-2 py-1 mr-1 rounded hover:opacity-70" style={{ color: THEME.inkSoft }} title="Edit"><Edit3 size={13} /></button>
+                      <button onClick={() => remove(p.id)} className="text-xs px-2 py-1 rounded hover:opacity-70" style={{ color: THEME.red }} title="Delete"><Trash2 size={13} /></button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      <Modal open={!!adding} onClose={() => { setAdding(null); setEditingId(null); }} maxWidth="max-w-md">
+        {adding && (
+          <div className="p-6">
+            <div className="font-display text-xl mb-1">{editingId ? 'Edit payment' : 'Add supplier payment'}</div>
+            <div className="text-xs mb-5" style={{ color: THEME.inkSoft }}>Record what you paid the supplier on a pickup.</div>
+            <div className="space-y-4">
+              <div>
+                <Label>Date</Label>
+                <Input type="date" value={adding.date} onChange={(e) => setAdding({ ...adding, date: e.target.value })} />
+              </div>
+              <div>
+                <Label>Amount (₱)</Label>
+                <Input type="number" step="0.01" value={adding.amount}
+                  onChange={(e) => setAdding({ ...adding, amount: e.target.value })} placeholder="e.g. 4500" />
+              </div>
+              <div>
+                <Label>Notes (optional)</Label>
+                <Input type="text" value={adding.notes}
+                  onChange={(e) => setAdding({ ...adding, notes: e.target.value })} placeholder="e.g. Tuesday pickup, invoice #..." />
+              </div>
+            </div>
+            <div className="flex gap-2 mt-6">
+              <Btn variant="secondary" onClick={() => { setAdding(null); setEditingId(null); }} className="flex-1">Cancel</Btn>
+              <Btn variant="primary" onClick={save} className="flex-1">{editingId ? 'Save changes' : 'Save'}</Btn>
+            </div>
+          </div>
+        )}
+      </Modal>
+    </div>
+  );
+}
+
 
 /* ============================================================
    PRODUCTS / PRICE LIST
