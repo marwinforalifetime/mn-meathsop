@@ -48,7 +48,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v4.6 · Living App';
+const APP_VERSION = 'v4.7 · Stable';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -83,33 +83,6 @@ const peso = (n) => {
   return '₱' + Number(n).toLocaleString('en-PH', { maximumFractionDigits: 2 });
 };
 const pesoFull = (n) => '₱' + Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-// Smoothly animate a number from its previous value to a new target.
-// Pure visual sugar — the underlying state changes instantly, this just
-// makes the DISPLAYED digit change feel alive. ~480ms, Apple ease curve.
-function useCountUp(value, duration = 480) {
-  const [display, setDisplay] = useState(value);
-  const fromRef = useRef(value);
-  const rafRef = useRef(null);
-  useEffect(() => {
-    const from = fromRef.current;
-    const to = Number(value) || 0;
-    if (from === to) { setDisplay(to); return; }
-    const start = performance.now();
-    const tick = (now) => {
-      const t = Math.min(1, (now - start) / duration);
-      // Match the CSS ease (cubic-bezier(0.32, 0.72, 0, 1)) feel
-      const eased = 1 - Math.pow(1 - t, 3);
-      const cur = from + (to - from) * eased;
-      setDisplay(cur);
-      if (t < 1) rafRef.current = requestAnimationFrame(tick);
-      else fromRef.current = to;
-    };
-    rafRef.current = requestAnimationFrame(tick);
-    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
-  }, [value, duration]);
-  return display;
-}
 
 const today = () => new Date().toISOString().slice(0, 10);
 const fmtDate = (iso) => {
@@ -159,7 +132,7 @@ const storage = {
 
 function Card({ children, className = '', style = {} }) {
   return (
-    <div className={`rounded-lg mn-card ${className}`} style={{ background: THEME.card, border: `1px solid ${THEME.line}`, ...style }}>
+    <div className={`rounded-lg ${className}`} style={{ background: THEME.card, border: `1px solid ${THEME.line}`, ...style }}>
       {children}
     </div>
   );
@@ -242,9 +215,9 @@ function statusColor(status) {
 function Modal({ open, onClose, children, maxWidth = 'max-w-2xl' }) {
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 no-print mn-overlay"
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 no-print"
       style={{ background: 'rgba(42,38,36,0.55)' }} onClick={onClose}>
-      <div className={`w-full ${maxWidth} max-h-[90vh] overflow-auto rounded-lg mn-modal`} style={{ background: THEME.card }} onClick={(e) => e.stopPropagation()}>
+      <div className={`w-full ${maxWidth} max-h-[90vh] overflow-auto rounded-lg`} style={{ background: THEME.card }} onClick={(e) => e.stopPropagation()}>
         {children}
       </div>
     </div>
@@ -666,18 +639,16 @@ function MainApp() {
               </div>
             </div>
           )}
-          <div key={view} className="mn-view">
-            {view === 'dashboard' && <Dashboard orders={orders} expenses={expenses} catalog={catalog} setView={setView} privacy={privacy} setPrivacy={setPrivacy} currentUser={currentUser} theme={theme} setTheme={setTheme} />}
-            {view === 'new' && <NewOrder catalog={catalog} meta={meta} setMeta={setMeta} orders={orders} setOrders={setOrders} onSaved={() => setView('orders')} />}
-            {view === 'orders' && <Orders orders={orders} setOrders={setOrders} productByName={productByName} catalog={catalog} />}
-            {view === 'pickup' && <Pickup orders={orders} />}
-            {view === 'salescheck' && <SalesCheck orders={orders} privacy={privacy} />}
-            {view === 'expenses' && <Expenses expenses={expenses} setExpenses={setExpenses} />}
-            {view === 'products' && <Products catalog={catalog} setCatalog={setCatalog} priceHistory={priceHistory} setPriceHistory={setPriceHistory} />}
-            {view === 'restaurantquote' && <RestaurantQuote catalog={catalog} qtys={quoteQtys} setQtys={setQuoteQtys} />}
-            {view === 'profitcheck' && <QuoteProfitCheck catalog={catalog} privacy={privacy} qtys={quoteQtys} setQtys={setQuoteQtys} />}
-            {view === 'supplierprices' && <SupplierPrices priceHistory={priceHistory} setPriceHistory={setPriceHistory} catalog={catalog} privacy={privacy} />}
-          </div>
+          {view === 'dashboard' && <Dashboard orders={orders} expenses={expenses} catalog={catalog} setView={setView} privacy={privacy} setPrivacy={setPrivacy} currentUser={currentUser} theme={theme} setTheme={setTheme} />}
+          {view === 'new' && <NewOrder catalog={catalog} meta={meta} setMeta={setMeta} orders={orders} setOrders={setOrders} onSaved={() => setView('orders')} />}
+          {view === 'orders' && <Orders orders={orders} setOrders={setOrders} productByName={productByName} catalog={catalog} />}
+          {view === 'pickup' && <Pickup orders={orders} />}
+          {view === 'salescheck' && <SalesCheck orders={orders} privacy={privacy} />}
+          {view === 'expenses' && <Expenses expenses={expenses} setExpenses={setExpenses} />}
+          {view === 'products' && <Products catalog={catalog} setCatalog={setCatalog} priceHistory={priceHistory} setPriceHistory={setPriceHistory} />}
+          {view === 'restaurantquote' && <RestaurantQuote catalog={catalog} qtys={quoteQtys} setQtys={setQuoteQtys} />}
+          {view === 'profitcheck' && <QuoteProfitCheck catalog={catalog} privacy={privacy} qtys={quoteQtys} setQtys={setQuoteQtys} />}
+          {view === 'supplierprices' && <SupplierPrices priceHistory={priceHistory} setPriceHistory={setPriceHistory} catalog={catalog} privacy={privacy} />}
         </main>
       </div>
 
@@ -960,7 +931,6 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
   );
 
   const monthName = now.toLocaleString('en-PH', { month: 'long' });
-  const animatedMoney = useCountUp(stats.moneyOnHand);
 
   return (
     <div>
@@ -1040,7 +1010,7 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
         <Card className="lg:col-span-2 p-6 relative overflow-hidden" style={{ background: `linear-gradient(135deg, ${THEME.brand} 0%, ${THEME.brandSoft} 100%)`, border: 'none' }}>
           <div className="relative z-10">
             <div className="text-xs uppercase tracking-widest" style={{ color: 'rgba(255,255,255,0.75)' }}>Money I Have</div>
-            <div className="font-display text-5xl mt-2 text-white mn-num">{m(animatedMoney)}</div>
+            <div className="font-display text-5xl mt-2 text-white">{m(stats.moneyOnHand)}</div>
             <div className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.7)' }}>
               cash received, minus supplier costs paid, minus expenses
             </div>
