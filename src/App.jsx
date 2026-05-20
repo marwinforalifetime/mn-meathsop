@@ -48,7 +48,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v4.3 · Login Required';
+const APP_VERSION = 'v4.4 · Real Take-Home';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -842,6 +842,12 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
     const grossProfit = totalSales - totalCost;
     const monthProfit = monthSales - monthCost;
     const totalExpenses = expenses.reduce((s, e) => s + (e.amount || 0), 0);
+    const monthExpenses = expenses
+      .filter(e => (e.date || '').startsWith(thisMonthKey))
+      .reduce((s, e) => s + (e.amount || 0), 0);
+    // Real, honest take-home for the month: sales minus supplier cost minus
+    // operating expenses logged this month (gas, ice, packaging, etc.).
+    const realMonthProfit = monthProfit - monthExpenses;
     const netPosition = grossProfit - totalExpenses;
     const recoveryPct = totalExpenses > 0
       ? Math.min(100, Math.max(0, (grossProfit / totalExpenses) * 100))
@@ -882,7 +888,7 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
       .sort((a, b) => b.value - a.value).slice(0, 5);
 
     return {
-      totalSales, grossProfit, monthSales, monthProfit, totalExpenses,
+      totalSales, grossProfit, monthSales, monthProfit, monthExpenses, realMonthProfit, totalExpenses,
       netPosition, unpaid, orderCount: ordersList.filter(o => o.delivery_status !== 'Cancelled').length,
       runCount, avgPerRun, avgSalesPerRun, productionRuns, weekdayPattern,
       lastRun, runChangePct,
@@ -984,12 +990,19 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
         <Card className="lg:col-span-2 p-6 relative overflow-hidden" style={{ background: `linear-gradient(135deg, ${THEME.brand} 0%, ${THEME.brandSoft} 100%)`, border: 'none' }}>
           <div className="relative z-10">
-            <div className="text-xs uppercase tracking-widest" style={{ color: 'rgba(255,255,255,0.75)' }}>{monthName} Profit</div>
-            <div className="font-display text-5xl mt-2 text-white">{m(stats.monthProfit)}</div>
+            <div className="text-xs uppercase tracking-widest" style={{ color: 'rgba(255,255,255,0.75)' }}>{monthName} Take-Home</div>
+            <div className="font-display text-5xl mt-2 text-white">{m(stats.realMonthProfit)}</div>
+            <div className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.7)' }}>
+              after {m(stats.monthExpenses)} in expenses this month
+            </div>
             <div className="flex gap-6 mt-4">
               <div>
                 <div className="text-xs" style={{ color: 'rgba(255,255,255,0.7)' }}>Sales this month</div>
                 <div className="text-lg font-medium text-white">{m(stats.monthSales)}</div>
+              </div>
+              <div>
+                <div className="text-xs" style={{ color: 'rgba(255,255,255,0.7)' }}>Before expenses</div>
+                <div className="text-lg font-medium text-white">{m(stats.monthProfit)}</div>
               </div>
               <div>
                 <div className="text-xs" style={{ color: 'rgba(255,255,255,0.7)' }}>Money owed to you</div>
