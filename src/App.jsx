@@ -48,7 +48,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v4.9 · Pickup Total Kg';
+const APP_VERSION = 'v5.0 · Sales Profit';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -2272,17 +2272,21 @@ function SalesCheck({ orders, privacy }) {
       if (!order) return;
       (order.items || []).forEach((it) => {
         if (!byProduct[it.product]) {
-          byProduct[it.product] = { product: it.product, qty: 0, price: 0, totalPrice: 0, unit: it.unit };
+          byProduct[it.product] = { product: it.product, qty: 0, price: 0, totalPrice: 0, totalCost: 0, unit: it.unit };
         }
         byProduct[it.product].qty += it.qty;
         byProduct[it.product].price = it.price;
         byProduct[it.product].totalPrice += it.qty * it.price;
+        byProduct[it.product].totalCost += it.qty * (Number(it.cost) || 0);
       });
     });
     return Object.values(byProduct).sort((a, b) => a.product.localeCompare(b.product));
   }, [selected, orders]);
 
   const grandTotal = rollup.reduce((s, r) => s + r.totalPrice, 0);
+  const grandCost = rollup.reduce((s, r) => s + r.totalCost, 0);
+  const grandProfit = grandTotal - grandCost;
+  const totalKg = rollup.reduce((s, r) => s + ((r.unit === 'kg' || !r.unit) ? r.qty : 0), 0);
 
   return (
     <div>
@@ -2354,7 +2358,17 @@ function SalesCheck({ orders, privacy }) {
                     <div className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft }}>Total sales value</div>
                     <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>{selected.size} order{selected.size !== 1 ? 's' : ''} · {rollup.length} product{rollup.length !== 1 ? 's' : ''}</div>
                   </div>
-                  <div className="font-display text-3xl" style={{ color: THEME.brand }}>{m(grandTotal)}</div>
+                  <div className="text-right">
+                    <div className="font-display text-3xl" style={{ color: THEME.brand }}>{m(grandTotal)}</div>
+                    {totalKg > 0 && (
+                      <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>{totalKg.toFixed(2).replace(/\.00$/, '')} kg total</div>
+                    )}
+                    {grandTotal > 0 && (
+                      <div className="text-sm mt-1 font-medium" style={{ color: grandProfit >= 0 ? THEME.green : THEME.red }}>
+                        Profit: {m(grandProfit)}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </>
             )}
