@@ -48,7 +48,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v5.4 · Centavo Fix';
+const APP_VERSION = 'v5.5 · Print Price Sheet';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -2623,6 +2623,8 @@ function rqPricing(p) {
 
 // ---- Client-facing quote: safe to show the restaurant ----
 function RestaurantQuote({ catalog, qtys, setQtys }) {
+  const sheetRef = useRef(null);
+  const [savingSheet, setSavingSheet] = useState(false);
 
   const rows = useMemo(() => catalog.map((p) => {
     const pr = rqPricing(p);
@@ -2644,10 +2646,57 @@ function RestaurantQuote({ catalog, qtys, setQtys }) {
   const setQty = (name, v) => setQtys({ ...qtys, [name]: v });
   const clearAll = () => setQtys({});
 
+  // Export the price sheet element as a full-HD PNG, ready to print or share.
+  const saveSheetImage = async () => {
+    if (!sheetRef.current) return;
+    setSavingSheet(true);
+    try {
+      const node = sheetRef.current;
+      // Temporarily make the element visible at its natural size for capture
+      const prev = node.style.cssText;
+      node.style.cssText = 'position:absolute;left:0;top:0;z-index:-1;opacity:1;pointer-events:none;';
+      // Wait for the logo (base64) to finish decoding
+      const imgs = Array.from(node.querySelectorAll('img'));
+      await Promise.all(imgs.map((img) => {
+        if (img.complete && img.naturalWidth > 0) return Promise.resolve();
+        return new Promise((res) => { img.onload = res; img.onerror = res; });
+      }));
+      await new Promise((r) => setTimeout(r, 200));
+      const dataUrl = await toPng(node, {
+        quality: 1,
+        pixelRatio: 2, // = ~1600px wide → full HD when printed at A4
+        backgroundColor: '#ffffff',
+        width: node.scrollWidth,
+        height: node.scrollHeight,
+      });
+      node.style.cssText = prev;
+      const a = document.createElement('a');
+      const ts = new Date().toISOString().slice(0, 10);
+      a.href = dataUrl;
+      a.download = `M&N Wholesale Price Sheet - ${ts}.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch (e) {
+      alert('Could not save the image. Please try again.');
+      console.error(e);
+    } finally {
+      setSavingSheet(false);
+    }
+  };
+
   return (
     <div>
       <Header title="Restaurant Quote" subtitle="Our wholesale pricing — build the order together"
-        right={<Btn variant="secondary" size="sm" onClick={clearAll}><RefreshCw size={13} className="inline -mt-0.5 mr-1" />Clear</Btn>} />
+        right={
+          <div className="flex gap-2">
+            <Btn variant="secondary" size="sm" onClick={saveSheetImage} disabled={savingSheet}>
+              <Download size={13} className="inline -mt-0.5 mr-1" />
+              {savingSheet ? 'Saving…' : 'Price Sheet'}
+            </Btn>
+            <Btn variant="secondary" size="sm" onClick={clearAll}><RefreshCw size={13} className="inline -mt-0.5 mr-1" />Clear</Btn>
+          </div>
+        } />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2">
@@ -2722,6 +2771,93 @@ function RestaurantQuote({ catalog, qtys, setQtys }) {
               M&N Meatshop · fresh, cut to your spec, delivered on schedule.
             </div>
           </Card>
+        </div>
+      </div>
+
+      {/* ============================================================
+          HIDDEN PRICE SHEET — rendered offscreen, captured as PNG by
+          saveSheetImage(). Designed at ~800px wide; pixelRatio:2 → 1600px.
+          Print-friendly proportions, editorial styling.
+          ============================================================ */}
+      <div style={{ position: 'absolute', left: -99999, top: 0, opacity: 0, pointerEvents: 'none' }}>
+        <div ref={sheetRef} style={{
+          width: 800, background: '#FFFEF8', color: '#2A2624',
+          fontFamily: 'DM Sans, sans-serif', padding: '48px 56px',
+          boxSizing: 'border-box',
+        }}>
+          {/* Header */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 18, paddingBottom: 24, borderBottom: '1px solid #E8DFD2' }}>
+            <img src={LOGO_DATA_URL} alt="" style={{ width: 72, height: 72, borderRadius: '50%', objectFit: 'cover' }} />
+            <div>
+              <div style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 32, color: '#7A2E33', lineHeight: 1.1 }}>M&N Meatshop</div>
+              <div style={{ fontSize: 13, color: '#6B5F58', marginTop: 4 }}>Wholesale Price Sheet · For Restaurant Clients</div>
+            </div>
+            <div style={{ marginLeft: 'auto', textAlign: 'right', fontSize: 11, color: '#6B5F58' }}>
+              <div>Effective:</div>
+              <div style={{ fontSize: 13, color: '#2A2624', marginTop: 2 }}>{new Date().toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' })}</div>
+            </div>
+          </div>
+
+          {/* Intro */}
+          <div style={{ fontSize: 13, color: '#6B5F58', marginTop: 20, marginBottom: 8, lineHeight: 1.55 }}>
+            Wholesale pricing for restaurant clients. Cut to your specification, delivered on our Tuesday &amp; Saturday schedule.
+            All prices are per kilogram. Volume totals shown for reference.
+          </div>
+
+          {/* Table */}
+          <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 18, fontSize: 12.5 }}>
+            <thead>
+              <tr style={{ borderBottom: '1.5px solid #2A2624' }}>
+                <th style={{ textAlign: 'left', padding: '10px 6px 8px', fontSize: 10.5, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#6B5F58', fontWeight: 600 }}>Product</th>
+                <th style={{ textAlign: 'right', padding: '10px 6px 8px', fontSize: 10.5, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#6B5F58', fontWeight: 600 }}>Per kg</th>
+                <th style={{ textAlign: 'right', padding: '10px 6px 8px', fontSize: 10.5, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#6B5F58', fontWeight: 600 }}>5 kg</th>
+                <th style={{ textAlign: 'right', padding: '10px 6px 8px', fontSize: 10.5, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#6B5F58', fontWeight: 600 }}>10 kg</th>
+                <th style={{ textAlign: 'right', padding: '10px 6px 8px', fontSize: 10.5, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#6B5F58', fontWeight: 600 }}>15 kg</th>
+                <th style={{ textAlign: 'right', padding: '10px 6px 8px', fontSize: 10.5, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#6B5F58', fontWeight: 600 }}>20 kg</th>
+              </tr>
+            </thead>
+            <tbody>
+              {['Pork', 'Chicken', 'Beef'].map((g) => {
+                const items = rows.filter(r => r.group === g);
+                if (items.length === 0) return null;
+                return (
+                  <React.Fragment key={g}>
+                    <tr>
+                      <td colSpan={6} style={{ padding: '14px 6px 4px', fontFamily: 'Fraunces, Georgia, serif', fontSize: 15, color: '#7A2E33', fontWeight: 600 }}>{g}</td>
+                    </tr>
+                    {items.map((r) => (
+                      <tr key={r.name} style={{ borderTop: '1px solid #EFE7DA' }}>
+                        <td style={{ padding: '9px 6px', color: '#2A2624' }}>{r.name}</td>
+                        <td style={{ padding: '9px 6px', textAlign: 'right', fontWeight: 600 }}>{peso(r.wholesale)}</td>
+                        <td style={{ padding: '9px 6px', textAlign: 'right', color: '#2A2624' }}>{peso(r.wholesale * 5)}</td>
+                        <td style={{ padding: '9px 6px', textAlign: 'right', color: '#2A2624' }}>{peso(r.wholesale * 10)}</td>
+                        <td style={{ padding: '9px 6px', textAlign: 'right', color: '#2A2624' }}>{peso(r.wholesale * 15)}</td>
+                        <td style={{ padding: '9px 6px', textAlign: 'right', color: '#2A2624' }}>{peso(r.wholesale * 20)}</td>
+                      </tr>
+                    ))}
+                  </React.Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+
+          {/* What we offer */}
+          <div style={{ marginTop: 32, padding: '20px 22px', background: '#FAF5EE', borderRadius: 8 }}>
+            <div style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 14, color: '#7A2E33', marginBottom: 8, fontWeight: 600 }}>What we offer</div>
+            <ul style={{ margin: 0, padding: 0, listStyle: 'none', fontSize: 12, color: '#2A2624', lineHeight: 1.7 }}>
+              <li>· Mixed orders welcome — pork, chicken, and beef in the same delivery</li>
+              <li>· Cut to your specification — sinigang cut, menudo, cubes, fillet, etc.</li>
+              <li>· No minimum order — order what you actually need, when you need it</li>
+              <li>· Delivered Tuesdays &amp; Saturdays on our regular production schedule</li>
+              <li>· One reliable person to call — we're a family business, not a hotline</li>
+            </ul>
+          </div>
+
+          {/* Footer */}
+          <div style={{ marginTop: 24, paddingTop: 16, borderTop: '1px solid #E8DFD2', display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontSize: 11, color: '#6B5F58' }}>
+            <div>Prices subject to change with supplier cost adjustments. Quoted upon order confirmation.</div>
+            <div style={{ fontFamily: 'Fraunces, Georgia, serif', fontStyle: 'italic' }}>M&amp;N Meatshop</div>
+          </div>
         </div>
       </div>
     </div>
