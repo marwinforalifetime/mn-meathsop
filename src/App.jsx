@@ -48,7 +48,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v5.3 · Per-Pickup Line';
+const APP_VERSION = 'v5.4 · Centavo Fix';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -80,7 +80,14 @@ function applyTheme(mode) {
 
 const peso = (n) => {
   if (n === null || n === undefined || isNaN(n)) return '₱0';
-  return '₱' + Number(n).toLocaleString('en-PH', { maximumFractionDigits: 2 });
+  const num = Number(n);
+  // Whole pesos stay clean (₱239). Partial values always show 2 decimals
+  // (₱77.50, not ₱77.5) — proper money formatting.
+  const hasDecimals = Math.round(num * 100) % 100 !== 0;
+  return '₱' + num.toLocaleString('en-PH', {
+    minimumFractionDigits: hasDecimals ? 2 : 0,
+    maximumFractionDigits: 2,
+  });
 };
 const pesoFull = (n) => '₱' + Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
