@@ -48,7 +48,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v5.6 · Landscape Sheet';
+const APP_VERSION = 'v5.7 · Landscape Sheet v2';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -2781,100 +2781,83 @@ function RestaurantQuote({ catalog, qtys, setQtys }) {
           ============================================================ */}
       <div style={{ position: 'absolute', left: -99999, top: 0, opacity: 0, pointerEvents: 'none' }}>
         <div ref={sheetRef} style={{
-          width: 1100, minHeight: 780,
+          // True A4 landscape ratio (297×210mm = 1.414:1). Generous canvas
+          // 1600×1131 → captured at 2× pixel ratio = 3200×2262 PNG.
+          // Big enough that comfortable type sizes fit without crowding,
+          // exact landscape proportions for one-page A4 printing.
+          width: 1600, height: 1131,
           background: '#FFFEF8', color: '#2A2624',
-          fontFamily: 'DM Sans, sans-serif', padding: '40px 56px',
+          fontFamily: 'DM Sans, sans-serif', padding: '56px 80px',
           boxSizing: 'border-box',
-          // A4 landscape ratio ~1.414. At width 1100 → height ~778.
-          // Captured at 2× pixel ratio = ~2200×1560 PNG, prints cleanly on A4.
+          display: 'flex', flexDirection: 'column',
         }}>
           {/* Header */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 18, paddingBottom: 24, borderBottom: '1px solid #E8DFD2' }}>
-            <img src={LOGO_DATA_URL} alt="" style={{ width: 72, height: 72, borderRadius: '50%', objectFit: 'cover' }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 22, paddingBottom: 22, borderBottom: '1px solid #E8DFD2' }}>
+            <img src={LOGO_DATA_URL} alt="" style={{ width: 88, height: 88, borderRadius: '50%', objectFit: 'cover' }} />
             <div>
-              <div style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 32, color: '#7A2E33', lineHeight: 1.1 }}>M&N Meatshop</div>
-              <div style={{ fontSize: 13, color: '#6B5F58', marginTop: 4 }}>Wholesale Price Sheet · For Restaurant Clients</div>
+              <div style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 38, color: '#7A2E33', lineHeight: 1.05 }}>M&N Meatshop</div>
+              <div style={{ fontSize: 15, color: '#6B5F58', marginTop: 5 }}>Wholesale Price Sheet · For Restaurant Clients</div>
             </div>
-            <div style={{ marginLeft: 'auto', textAlign: 'right', fontSize: 11, color: '#6B5F58' }}>
-              <div>Effective:</div>
-              <div style={{ fontSize: 13, color: '#2A2624', marginTop: 2 }}>{new Date().toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' })}</div>
+            <div style={{ marginLeft: 'auto', textAlign: 'right', fontSize: 12, color: '#6B5F58' }}>
+              <div style={{ letterSpacing: '0.08em', textTransform: 'uppercase' }}>Effective</div>
+              <div style={{ fontSize: 15, color: '#2A2624', marginTop: 4 }}>{new Date().toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' })}</div>
             </div>
           </div>
 
           {/* Intro */}
-          <div style={{ fontSize: 13, color: '#6B5F58', marginTop: 20, marginBottom: 8, lineHeight: 1.55 }}>
-            Wholesale pricing for restaurant clients. Cut to your specification, delivered on our Tuesday &amp; Saturday schedule.
-            All prices are per kilogram. Volume totals shown for reference.
+          <div style={{ fontSize: 14, color: '#6B5F58', marginTop: 18, lineHeight: 1.55 }}>
+            Wholesale pricing for restaurant clients. Cut to your specification, delivered on our Tuesday &amp; Saturday schedule. All prices are per kilogram; volume totals shown for reference.
           </div>
 
-          {/* Two-column table — landscape uses width efficiently */}
-          <div style={{ display: 'flex', gap: 32, marginTop: 16 }}>
-            {[
-              ['Pork'],
-              ['Chicken', 'Beef'],
-            ].map((groups, colIdx) => (
-              <table key={colIdx} style={{ flex: 1, borderCollapse: 'collapse', fontSize: 12, tableLayout: 'fixed' }}>
-                <colgroup>
-                  <col style={{ width: '36%' }} />
-                  <col style={{ width: '14%' }} />
-                  <col style={{ width: '12.5%' }} />
-                  <col style={{ width: '12.5%' }} />
-                  <col style={{ width: '12.5%' }} />
-                  <col style={{ width: '12.5%' }} />
-                </colgroup>
-                <thead>
-                  <tr style={{ borderBottom: '1.5px solid #2A2624' }}>
-                    <th style={{ textAlign: 'left', padding: '8px 4px 6px', fontSize: 9.5, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#6B5F58', fontWeight: 600 }}>Product</th>
-                    <th style={{ textAlign: 'right', padding: '8px 4px 6px', fontSize: 9.5, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#6B5F58', fontWeight: 600 }}>Per kg</th>
-                    <th style={{ textAlign: 'right', padding: '8px 4px 6px', fontSize: 9.5, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#6B5F58', fontWeight: 600 }}>5 kg</th>
-                    <th style={{ textAlign: 'right', padding: '8px 4px 6px', fontSize: 9.5, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#6B5F58', fontWeight: 600 }}>10 kg</th>
-                    <th style={{ textAlign: 'right', padding: '8px 4px 6px', fontSize: 9.5, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#6B5F58', fontWeight: 600 }}>15 kg</th>
-                    <th style={{ textAlign: 'right', padding: '8px 4px 6px', fontSize: 9.5, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#6B5F58', fontWeight: 600 }}>20 kg</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {groups.map((g) => {
-                    const items = rows.filter(r => r.group === g);
-                    if (items.length === 0) return null;
-                    return (
-                      <React.Fragment key={g}>
-                        <tr>
-                          <td colSpan={6} style={{ padding: '12px 4px 3px', fontFamily: 'Fraunces, Georgia, serif', fontSize: 14, color: '#7A2E33', fontWeight: 600 }}>{g}</td>
-                        </tr>
-                        {items.map((r) => (
-                          <tr key={r.name} style={{ borderTop: '1px solid #EFE7DA' }}>
-                            <td style={{ padding: '7px 4px', color: '#2A2624', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.name}</td>
-                            <td style={{ padding: '7px 4px', textAlign: 'right', fontWeight: 600 }}>{peso(r.wholesale)}</td>
-                            <td style={{ padding: '7px 4px', textAlign: 'right', color: '#2A2624' }}>{peso(r.wholesale * 5)}</td>
-                            <td style={{ padding: '7px 4px', textAlign: 'right', color: '#2A2624' }}>{peso(r.wholesale * 10)}</td>
-                            <td style={{ padding: '7px 4px', textAlign: 'right', color: '#2A2624' }}>{peso(r.wholesale * 15)}</td>
-                            <td style={{ padding: '7px 4px', textAlign: 'right', color: '#2A2624' }}>{peso(r.wholesale * 20)}</td>
-                          </tr>
-                        ))}
-                      </React.Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
-            ))}
-          </div>
-
-          {/* What we offer */}
-          <div style={{ marginTop: 20, padding: '14px 18px', background: '#FAF5EE', borderRadius: 8 }}>
-            <div style={{ fontFamily: 'Fraunces, Georgia, serif', fontSize: 13, color: '#7A2E33', marginBottom: 6, fontWeight: 600 }}>What we offer</div>
-            <ul style={{ margin: 0, padding: 0, listStyle: 'none', fontSize: 11.5, color: '#2A2624', lineHeight: 1.6 }}>
-              <li>· Mixed orders welcome — pork, chicken, and beef in the same delivery</li>
-              <li>· Cut to your specification — sinigang cut, menudo, cubes, fillet, etc.</li>
-              <li>· No minimum order — order what you actually need, when you need it</li>
-              <li>· Delivered Tuesdays &amp; Saturdays on our regular production schedule</li>
-              <li>· One reliable person to call — we're a family business, not a hotline</li>
-            </ul>
-          </div>
+          {/* Single full-width table — landscape gives plenty of room */}
+          <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 18, fontSize: 14, tableLayout: 'fixed' }}>
+            <colgroup>
+              <col style={{ width: '32%' }} />
+              <col style={{ width: '14%' }} />
+              <col style={{ width: '13.5%' }} />
+              <col style={{ width: '13.5%' }} />
+              <col style={{ width: '13.5%' }} />
+              <col style={{ width: '13.5%' }} />
+            </colgroup>
+            <thead>
+              <tr style={{ borderBottom: '2px solid #2A2624' }}>
+                <th style={{ textAlign: 'left', padding: '10px 8px', fontSize: 11.5, letterSpacing: '0.10em', textTransform: 'uppercase', color: '#6B5F58', fontWeight: 600 }}>Product</th>
+                <th style={{ textAlign: 'right', padding: '10px 8px', fontSize: 11.5, letterSpacing: '0.10em', textTransform: 'uppercase', color: '#6B5F58', fontWeight: 600 }}>Per kg</th>
+                <th style={{ textAlign: 'right', padding: '10px 8px', fontSize: 11.5, letterSpacing: '0.10em', textTransform: 'uppercase', color: '#6B5F58', fontWeight: 600 }}>5 kg</th>
+                <th style={{ textAlign: 'right', padding: '10px 8px', fontSize: 11.5, letterSpacing: '0.10em', textTransform: 'uppercase', color: '#6B5F58', fontWeight: 600 }}>10 kg</th>
+                <th style={{ textAlign: 'right', padding: '10px 8px', fontSize: 11.5, letterSpacing: '0.10em', textTransform: 'uppercase', color: '#6B5F58', fontWeight: 600 }}>15 kg</th>
+                <th style={{ textAlign: 'right', padding: '10px 8px', fontSize: 11.5, letterSpacing: '0.10em', textTransform: 'uppercase', color: '#6B5F58', fontWeight: 600 }}>20 kg</th>
+              </tr>
+            </thead>
+            <tbody>
+              {['Pork', 'Chicken', 'Beef'].map((g) => {
+                const items = rows.filter(r => r.group === g);
+                if (items.length === 0) return null;
+                return (
+                  <React.Fragment key={g}>
+                    <tr>
+                      <td colSpan={6} style={{ padding: '14px 8px 4px', fontFamily: 'Fraunces, Georgia, serif', fontSize: 17, color: '#7A2E33', fontWeight: 600 }}>{g}</td>
+                    </tr>
+                    {items.map((r) => (
+                      <tr key={r.name} style={{ borderTop: '1px solid #EFE7DA' }}>
+                        <td style={{ padding: '9px 8px', color: '#2A2624' }}>{r.name}</td>
+                        <td style={{ padding: '9px 8px', textAlign: 'right', fontWeight: 600, color: '#7A2E33' }}>{peso(r.wholesale)}</td>
+                        <td style={{ padding: '9px 8px', textAlign: 'right', color: '#2A2624' }}>{peso(r.wholesale * 5)}</td>
+                        <td style={{ padding: '9px 8px', textAlign: 'right', color: '#2A2624' }}>{peso(r.wholesale * 10)}</td>
+                        <td style={{ padding: '9px 8px', textAlign: 'right', color: '#2A2624' }}>{peso(r.wholesale * 15)}</td>
+                        <td style={{ padding: '9px 8px', textAlign: 'right', color: '#2A2624' }}>{peso(r.wholesale * 20)}</td>
+                      </tr>
+                    ))}
+                  </React.Fragment>
+                );
+              })}
+            </tbody>
+          </table>
 
           {/* Footer */}
-          <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid #E8DFD2', display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontSize: 10.5, color: '#6B5F58' }}>
-            <div>Prices subject to change with supplier cost adjustments. Quoted upon order confirmation.</div>
-            <div style={{ fontFamily: 'Fraunces, Georgia, serif', fontStyle: 'italic' }}>M&amp;N Meatshop</div>
+          <div style={{ marginTop: 'auto', paddingTop: 18, borderTop: '1px solid #E8DFD2', display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontSize: 13, color: '#6B5F58' }}>
+            <div style={{ maxWidth: '70%', lineHeight: 1.55 }}>Cut to your specification · Delivered Tuesdays &amp; Saturdays · No minimum order · Prices subject to supplier cost adjustments.</div>
+            <div style={{ fontFamily: 'Fraunces, Georgia, serif', fontStyle: 'italic', fontSize: 15 }}>M&amp;N Meatshop</div>
           </div>
         </div>
       </div>
