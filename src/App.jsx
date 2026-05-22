@@ -48,7 +48,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v5.8 · Landscape Fixed';
+const APP_VERSION = 'v5.9 · Clean Invoice Export';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -1939,6 +1939,18 @@ function PrintableView({ order, mode, onBack }) {
     setSavingImg(true);
     try {
       const node = docRef.current;
+      // Temporarily turn off any internal overflow (e.g. the table's
+      // overflow-x-auto for mobile scrolling) so the export doesn't render
+      // a scrollbar in the PNG. Restored after capture below.
+      const scrollables = Array.from(node.querySelectorAll('*')).filter((el) => {
+        const cs = getComputedStyle(el);
+        return cs.overflowX === 'auto' || cs.overflowX === 'scroll' ||
+               cs.overflowY === 'auto' || cs.overflowY === 'scroll' ||
+               cs.overflow === 'auto' || cs.overflow === 'scroll';
+      });
+      const savedOverflow = scrollables.map((el) => ({ el, prev: el.style.overflow }));
+      scrollables.forEach(({ }, i) => { savedOverflow[i].el.style.overflow = 'visible'; });
+
       // Capture the FULL document using its real scroll size so nothing is clipped
       const fullWidth = node.scrollWidth;
       const fullHeight = node.scrollHeight;
@@ -1965,6 +1977,8 @@ function PrintableView({ order, mode, onBack }) {
           transform: 'none',
         },
       });
+      // Restore the original overflow styles on the on-screen view
+      savedOverflow.forEach(({ el, prev }) => { el.style.overflow = prev; });
       const a = document.createElement('a');
       // Filename: "ORD-042 - Mac Hermann" (keep spaces/caps for readability,
       // strip only characters that are illegal in filenames).
