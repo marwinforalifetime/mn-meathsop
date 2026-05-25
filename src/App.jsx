@@ -48,7 +48,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v5.9 · Clean Invoice Export';
+const APP_VERSION = 'v6.0 · Wholesale Orders';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -1249,6 +1249,10 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
   const [paymentMethod, setPaymentMethod] = useState('Cash');
   const [deliveryStatus, setDeliveryStatus] = useState('Pending');
   const [notes, setNotes] = useState('');
+  // Wholesale toggle: when ON, all line items default to wholesale pricing
+  // (the same prices used in the Restaurant Quote / Wholesale Price Sheet).
+  // Per-line checkbox can override for mixed orders.
+  const [wholesaleOrder, setWholesaleOrder] = useState(false);
 
   // Build a directory of past customers (most recent phone wins)
   const pastCustomers = useMemo(() => {
@@ -1281,20 +1285,32 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
     if (c.phone) setPhone(c.phone);
     setShowSuggest(false);
   };
-  const [items, setItems] = useState([{ product: '', qty: 1, note: '' }]);
+  const [items, setItems] = useState([{ product: '', qty: 1, note: '', wholesale: false }]);
   const [error, setError] = useState('');
   const [hideAmounts, setHideAmounts] = useState(false);
 
   const productByName = useMemo(() => Object.fromEntries(catalog.map(p => [p.name, p])), [catalog]);
   const m = (n) => hideAmounts ? '₱•••••' : peso(n);
-  const lineTotal = (it) => { const p = productByName[it.product]; return p ? (Number(it.qty) || 0) * p.price : 0; };
+  // Effective unit price: wholesale (from rqPricing) when the line is flagged,
+  // otherwise the catalog retail price.
+  const linePrice = (it) => {
+    const p = productByName[it.product];
+    if (!p) return 0;
+    return it.wholesale ? rqPricing(p).wholesale : p.price;
+  };
+  const lineTotal = (it) => (Number(it.qty) || 0) * linePrice(it);
   const lineCost = (it) => { const p = productByName[it.product]; return p ? (Number(it.qty) || 0) * p.cost : 0; };
   const orderTotal = items.reduce((s, it) => s + lineTotal(it), 0);
   const orderCost = items.reduce((s, it) => s + lineCost(it), 0);
   const orderProfit = orderTotal - orderCost;
 
   const updateItem = (idx, patch) => setItems(items.map((it, i) => i === idx ? { ...it, ...patch } : it));
-  const addItem = () => setItems([...items, { product: '', qty: 1, note: '' }]);
+  const setOrderWholesale = (on) => {
+    setWholesaleOrder(on);
+    // Cascade to every line so it feels like one decision applied everywhere
+    setItems((prev) => prev.map((it) => ({ ...it, wholesale: on })));
+  };
+  const addItem = () => setItems([...items, { product: '', qty: 1, note: '', wholesale: wholesaleOrder }]);
   const removeItem = (idx) => setItems(items.filter((_, i) => i !== idx));
 
   const save = () => {
@@ -1306,7 +1322,8 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
     const id = nextOrderId(meta.lastOrderNum || 0);
     const snapshotItems = cleanItems.map((it) => {
       const p = productByName[it.product];
-      return { product: it.product, qty: Number(it.qty), price: p.price, cost: p.cost, unit: p.unit, note: (it.note || '').trim() };
+      const usedPrice = it.wholesale ? rqPricing(p).wholesale : p.price;
+      return { product: it.product, qty: Number(it.qty), price: usedPrice, cost: p.cost, unit: p.unit, note: (it.note || '').trim(), wholesale: !!it.wholesale };
     });
     const order = {
       id, date, customer: customer.trim(), phone: phone.trim(),
@@ -1375,6 +1392,24 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
               <div className="font-display text-lg">Order Items</div>
               <Btn variant="secondary" size="sm" onClick={addItem}><Plus size={14} className="inline -mt-0.5" /> Add item</Btn>
             </div>
+
+            {/* Wholesale toggle — applies wholesale (business client) pricing
+                to every line. Per-line checkboxes can override for mixed orders. */}
+            <label className="flex items-start gap-3 mb-4 p-3 rounded-md cursor-pointer"
+              style={{ background: wholesaleOrder ? THEME.brandBg : 'transparent', border: `1px solid ${wholesaleOrder ? THEME.brand : THEME.line}` }}>
+              <input type="checkbox" checked={wholesaleOrder}
+                onChange={(e) => setOrderWholesale(e.target.checked)}
+                className="mt-0.5" style={{ width: 18, height: 18, accentColor: THEME.brand }} />
+              <div className="text-sm">
+                <span className="font-medium" style={{ color: wholesaleOrder ? THEME.brand : THEME.ink }}>
+                  Wholesale order (business client)
+                </span>
+                <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>
+                  Use wholesale pricing instead of retail. Per-line checkbox below can override individual items.
+                </div>
+              </div>
+            </label>
+
             <div className="space-y-3">
               {items.map((it, idx) => {
                 const p = productByName[it.product];
@@ -1403,7 +1438,24 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
                     </div>
                     <div className="col-span-1 sm:col-span-2">
                       <Label>Line</Label>
-                      <div className="px-2 py-2 text-sm font-medium">{lineTotal(it) > 0 ? m(lineTotal(it)) : '—'}</div>
+                      <div className="px-2 py-2 text-sm font-medium">
+                        {lineTotal(it) > 0 ? m(lineTotal(it)) : '—'}
+                        {p && it.wholesale && (
+                          <span className="block text-xs font-normal mt-0.5" style={{ color: THEME.brand }}>
+                            @ {peso(linePrice(it))}/kg
+                          </span>
+                        )}
+                      </div>
+                      {p && (
+                        <label className="flex items-center gap-1.5 mt-1 cursor-pointer">
+                          <input type="checkbox" checked={!!it.wholesale}
+                            onChange={(e) => updateItem(idx, { wholesale: e.target.checked })}
+                            style={{ width: 13, height: 13, accentColor: THEME.brand }} />
+                          <span className="text-xs" style={{ color: it.wholesale ? THEME.brand : THEME.inkSoft }}>
+                            Wholesale
+                          </span>
+                        </label>
+                      )}
                     </div>
                     <div className="col-span-1 sm:col-span-1 flex items-end justify-end sm:block">
                       <span className="hidden sm:block"><Label>&nbsp;</Label></span>
