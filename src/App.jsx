@@ -30,6 +30,7 @@ const SEED_PRODUCTS = [
   { name: 'Pork Pata Hock', unit: 'kg', cost: 153, price: 239, group: 'Pork' },
   { name: 'Pork Ear', unit: 'kg', cost: 158, price: 229, group: 'Pork' },
   { name: 'Pork Pata Feet', unit: 'kg', cost: 100, price: 179, group: 'Pork' },
+  { name: 'Sawdust', unit: 'kg', cost: 60, price: 80, wholesalePrice: 70, group: 'Pork' },
   { name: 'Chicken Leg Quarter', unit: 'kg', cost: 148, price: 179, group: 'Chicken' },
   { name: 'Chicken Wings', unit: 'kg', cost: 158, price: 189, group: 'Chicken' },
   { name: 'Chicken Drumstick', unit: 'kg', cost: 150, price: 185, group: 'Chicken' },
@@ -48,7 +49,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v6.0 · Wholesale Orders';
+const APP_VERSION = 'v6.1 · Custom Wholesale + Sawdust';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -2671,10 +2672,16 @@ const RQ_THIN_FLOOR_KG = 20;   // thin items: min GROSS (price-cost), per owner
 function rqPricing(p) {
   const cost = Number(p.cost) || 0;
   const retail = Number(p.price) || 0;
+  // If a custom wholesale price is set on the product itself, honor it. This
+  // is for special items where you've deliberately chosen a price below the
+  // safety floor (e.g. courtesy/loss-leader items). Otherwise the formula
+  // protects you with a ₱20 gross floor on thin items.
+  const custom = Number(p.wholesalePrice);
+  if (custom > 0) {
+    return { wholesale: Math.round(custom), discounted: custom < retail, thin: false, floor: custom, custom: true };
+  }
   const headroom = retail - cost;
   if (headroom < 60) {
-    // Thin item: discount toward retail*0.92 but never below the ₱20 gross floor,
-    // and never above retail (if retail is already at/under floor, hold retail).
     const thinFloor = cost + RQ_THIN_FLOOR_KG;
     let w = Math.round(retail * 0.92);
     w = Math.max(w, thinFloor);
@@ -3715,6 +3722,15 @@ function Products({ catalog, setCatalog, priceHistory, setPriceHistory }) {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div><Label>Supplier Cost (₱)</Label><Input type="number" step="0.01" value={editing.data.cost} onChange={(e) => setEditing({ ...editing, data: { ...editing.data, cost: Number(e.target.value) } })} /></div>
                 <div><Label>Selling Price (₱)</Label><Input type="number" step="0.01" value={editing.data.price} onChange={(e) => setEditing({ ...editing, data: { ...editing.data, price: Number(e.target.value) } })} /></div>
+              </div>
+              <div>
+                <Label>Custom Wholesale Price (₱) — optional</Label>
+                <Input type="number" step="0.01" value={editing.data.wholesalePrice || ''}
+                  onChange={(e) => setEditing({ ...editing, data: { ...editing.data, wholesalePrice: e.target.value === '' ? undefined : Number(e.target.value) } })}
+                  placeholder="Leave blank to use auto-calculated wholesale price" />
+                <div className="text-xs mt-1" style={{ color: THEME.inkSoft }}>
+                  Set this only if you want a specific wholesale price that overrides the formula. Otherwise leave blank.
+                </div>
               </div>
               <div className="text-sm pt-2" style={{ color: THEME.inkSoft, borderTop: `1px solid ${THEME.line}` }}>
                 Profit per unit: <span style={{ color: THEME.green }} className="font-medium">{peso((editing.data.price || 0) - (editing.data.cost || 0))}</span>
