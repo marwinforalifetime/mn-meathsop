@@ -12,6 +12,7 @@ import {
 } from 'recharts';
 import { toPng } from 'html-to-image';
 import { LOGO_DATA_URL } from './logo.js';
+import { GCASH_QR, GCASH_NUMBER } from './gcash-qr.js';
 import { cloudLoad, cloudSave, getSession, signIn, signOut, onAuthChange } from './supabase.js';
 
 /* ============================================================
@@ -49,7 +50,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v6.1 · Custom Wholesale + Sawdust';
+const APP_VERSION = 'v6.2 · GCash Invoice Footer';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -2184,6 +2185,37 @@ function PrintableView({ order, mode, onBack }) {
             <span className="font-medium">Order Notes: </span>{order.notes}
           </div>
         )}
+
+          {/* GCash payment strip — invoice only, Layout C full-width style.
+              Lives between the total and the Thank You so the customer sees
+              payment options at the natural eye-flow point after the total. */}
+          {isInvoice && (
+            <div className="mt-8 flex items-center justify-between gap-4 px-4 py-4 rounded-md"
+              style={{ background: THEME.brandBg, border: `1px solid ${THEME.line}` }}>
+              <div className="flex items-center gap-3">
+                <div className="p-1.5 rounded-md"
+                  style={{ background: 'white', border: `1px solid ${THEME.line}`, boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                  <img src={GCASH_QR} alt="GCash QR" style={{ width: 88, height: 'auto', display: 'block' }} />
+                </div>
+                <div>
+                  <div className="text-[9px] font-semibold uppercase mb-0.5"
+                    style={{ color: THEME.brand, letterSpacing: '0.14em' }}>
+                    Pay via GCash / InstaPay
+                  </div>
+                  <div className="text-lg font-bold leading-tight" style={{ color: '#0066CC', letterSpacing: '0.02em' }}>
+                    {GCASH_NUMBER}
+                  </div>
+                </div>
+              </div>
+              <div className="text-right text-[10.5px] italic leading-relaxed" style={{ color: THEME.inkSoft }}>
+                Scan QR or send to number above<br />
+                Cash also accepted<br />
+                <span className="text-[10px]" style={{ color: THEME.inkSoft, opacity: 0.75 }}>
+                  Please send screenshot as confirmation
+                </span>
+              </div>
+            </div>
+          )}
 
           <div className="text-center mt-10 pt-6 text-sm" style={{ borderTop: `1px solid ${THEME.line}`, color: THEME.inkSoft }}>
             {isInvoice ? 'Thank you for your order!' : 'For supplier use only  ·  M&N Meatshop'}
