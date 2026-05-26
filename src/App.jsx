@@ -50,7 +50,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v6.2 · GCash Invoice Footer';
+const APP_VERSION = 'v6.2.1 · Scannable QR Fix';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -2195,7 +2195,7 @@ function PrintableView({ order, mode, onBack }) {
               <div className="flex items-center gap-3">
                 <div className="p-1.5 rounded-md"
                   style={{ background: 'white', border: `1px solid ${THEME.line}`, boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-                  <img src={GCASH_QR} alt="GCash QR" style={{ width: 88, height: 'auto', display: 'block' }} />
+                  <img src={GCASH_QR} alt="GCash QR" style={{ width: 96, height: 96, display: 'block' }} />
                 </div>
                 <div>
                   <div className="text-[9px] font-semibold uppercase mb-0.5"
