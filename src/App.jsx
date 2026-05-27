@@ -50,7 +50,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v6.4 · Delivery Batches + Pickup Mode';
+const APP_VERSION = 'v6.5 · Date Fix + Smart Batch';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -93,7 +93,10 @@ const peso = (n) => {
 };
 const pesoFull = (n) => '₱' + Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
 const fmtDate = (iso) => {
   if (!iso) return '';
   return new Date(iso).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -104,18 +107,26 @@ const fmtDateShort = (iso) => {
 };
 const nextOrderId = (lastNum) => 'ORD-' + String(lastNum + 1).padStart(3, '0');
 
-// Delivery batch helpers — Tuesday=2, Saturday=6 in JS Date (Sunday=0)
-// Given any date, compute the next Tuesday or Saturday on or after that date.
+// Delivery batch helpers — Tuesday=2, Saturday=6 in JS Date (Sunday=0).
+// IMPORTANT: dates are stored as local YYYY-MM-DD strings, never via
+// toISOString() which converts to UTC and breaks the day in PH (UTC+8).
+const isoLocal = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const nextDayOfWeek = (fromIso, targetDow) => {
   const d = fromIso ? new Date(fromIso + 'T00:00:00') : new Date();
   const dow = d.getDay();
-  // If today is already the target day, return today; otherwise jump forward.
   const delta = (targetDow - dow + 7) % 7;
   d.setDate(d.getDate() + delta);
-  return d.toISOString().slice(0, 10);
+  return isoLocal(d);
 };
 const nextTuesday = (fromIso) => nextDayOfWeek(fromIso || today(), 2);
 const nextSaturday = (fromIso) => nextDayOfWeek(fromIso || today(), 6);
+// Smart default — return the closer of next Tuesday or next Saturday from today.
+// Most orders should land on one of these without the user having to pick.
+const suggestedBatch = (fromIso) => {
+  const tue = nextTuesday(fromIso);
+  const sat = nextSaturday(fromIso);
+  return tue <= sat ? tue : sat;
+};
 // Human-readable batch label, e.g. "Tue · May 27" or "Sat · May 31"
 const batchLabel = (iso) => {
   if (!iso) return 'Unassigned';
@@ -123,6 +134,71 @@ const batchLabel = (iso) => {
   const dow = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()];
   return `${dow} · ${d.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}`;
 };
+
+/* ============================================================
+   DELIVERY BATCH PICKER (compact, expandable)
+   ============================================================
+   Shows the currently-selected batch as a small chip, with a
+   "Change" affordance that expands the full picker inline.
+   Default selection is set by parent — usually suggestedBatch().
+   ============================================================ */
+function DeliveryBatchPicker({ value, onChange, allowUnassign = false }) {
+  const [expanded, setExpanded] = useState(false);
+  const tue = nextTuesday();
+  const sat = nextSaturday();
+  const isStandard = value === tue || value === sat;
+  const isCustom = value && !isStandard;
+
+  return (
+    <div className="mt-4">
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-xs uppercase font-medium tracking-wider" style={{ color: '#6B5F58', letterSpacing: '0.08em' }}>
+          Delivery Batch
+        </span>
+        {!expanded && (
+          <button type="button" onClick={() => setExpanded(true)}
+            className="text-xs underline" style={{ color: '#6B5F58' }}>
+            Change
+          </button>
+        )}
+      </div>
+      {!expanded ? (
+        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md"
+          style={{ background: value ? '#F5E6E1' : '#FEF3C7', color: value ? '#7A2E33' : '#92400E', border: `1px solid ${value ? '#7A2E33' : '#FCD34D'}` }}>
+          <Truck size={14} />
+          <span className="text-sm font-semibold">{value ? batchLabel(value) : 'Unassigned'}</span>
+        </div>
+      ) : (
+        <div className="flex flex-wrap gap-2 mt-1">
+          <button type="button" onClick={() => { onChange(tue); setExpanded(false); }}
+            className="px-3 py-2 text-sm rounded-md inline-flex items-center gap-1.5"
+            style={{ background: value === tue ? '#7A2E33' : 'transparent', color: value === tue ? 'white' : '#2A2624', border: `1px solid ${value === tue ? '#7A2E33' : '#E8DFD2'}` }}>
+            <Truck size={13} /> Tuesday <span className="opacity-75">({batchLabel(tue).split(' · ')[1]})</span>
+          </button>
+          <button type="button" onClick={() => { onChange(sat); setExpanded(false); }}
+            className="px-3 py-2 text-sm rounded-md inline-flex items-center gap-1.5"
+            style={{ background: value === sat ? '#7A2E33' : 'transparent', color: value === sat ? 'white' : '#2A2624', border: `1px solid ${value === sat ? '#7A2E33' : '#E8DFD2'}` }}>
+            <Truck size={13} /> Saturday <span className="opacity-75">({batchLabel(sat).split(' · ')[1]})</span>
+          </button>
+          <input type="date" value={isCustom ? value : ''}
+            onChange={(e) => { if (e.target.value) { onChange(e.target.value); setExpanded(false); } }}
+            className="px-3 py-2 text-sm rounded-md outline-none"
+            style={{ background: '#FFFEF8', border: `1px solid #E8DFD2`, color: '#2A2624', minWidth: 140, opacity: isCustom ? 1 : 0.6 }} />
+          {allowUnassign && value && (
+            <button type="button" onClick={() => { onChange(''); setExpanded(false); }}
+              className="px-3 py-2 text-sm rounded-md" style={{ color: '#6B5F58', border: `1px solid #E8DFD2` }}>
+              Unassign
+            </button>
+          )}
+          <button type="button" onClick={() => setExpanded(false)}
+            className="px-2 py-2 text-xs underline" style={{ color: '#6B5F58' }}>
+            Done
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 /* ============================================================
    STORAGE (localStorage with safe wrappers)
@@ -1270,7 +1346,7 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
   const [paymentStatus, setPaymentStatus] = useState('Paid');
   const [paymentMethod, setPaymentMethod] = useState('Cash');
   const [deliveryStatus, setDeliveryStatus] = useState('Pending');
-  const [deliveryBatch, setDeliveryBatch] = useState(nextTuesday());
+  const [deliveryBatch, setDeliveryBatch] = useState(suggestedBatch());
   const [notes, setNotes] = useState('');
   // Wholesale toggle: when ON, all line items default to wholesale pricing
   // (the same prices used in the Restaurant Quote / Wholesale Price Sheet).
@@ -1410,35 +1486,8 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
               <div><Label>Phone (optional)</Label><Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="0917 123 4567" /></div>
             </div>
 
-            {/* Delivery batch picker — Tuesday / Saturday / Custom */}
-            <div className="mt-4">
-              <Label>Delivery Batch</Label>
-              <div className="flex flex-wrap gap-2 mt-1">
-                {(() => {
-                  const tue = nextTuesday();
-                  const sat = nextSaturday();
-                  const isCustom = deliveryBatch !== tue && deliveryBatch !== sat;
-                  return (
-                    <>
-                      <button type="button" onClick={() => setDeliveryBatch(tue)}
-                        className="px-3 py-2 text-sm rounded-md inline-flex items-center gap-1.5"
-                        style={{ background: deliveryBatch === tue ? THEME.brand : 'transparent', color: deliveryBatch === tue ? 'white' : THEME.ink, border: `1px solid ${deliveryBatch === tue ? THEME.brand : THEME.line}` }}>
-                        <Truck size={13} /> Next Tuesday <span className="opacity-75">({batchLabel(tue).split(' · ')[1]})</span>
-                      </button>
-                      <button type="button" onClick={() => setDeliveryBatch(sat)}
-                        className="px-3 py-2 text-sm rounded-md inline-flex items-center gap-1.5"
-                        style={{ background: deliveryBatch === sat ? THEME.brand : 'transparent', color: deliveryBatch === sat ? 'white' : THEME.ink, border: `1px solid ${deliveryBatch === sat ? THEME.brand : THEME.line}` }}>
-                        <Truck size={13} /> Next Saturday <span className="opacity-75">({batchLabel(sat).split(' · ')[1]})</span>
-                      </button>
-                      <div className="flex items-center gap-2 flex-shrink-0">
-                        <Input type="date" value={isCustom ? deliveryBatch : ''} onChange={(e) => setDeliveryBatch(e.target.value)}
-                          placeholder="Custom" style={{ minWidth: 140, opacity: isCustom ? 1 : 0.6 }} />
-                      </div>
-                    </>
-                  );
-                })()}
-              </div>
-            </div>
+            {/* Delivery batch — smart default, expandable to change */}
+            <DeliveryBatchPicker value={deliveryBatch} onChange={setDeliveryBatch} />
           </Card>
 
           <Card className="p-6">
@@ -1608,8 +1657,15 @@ function Orders({ orders, setOrders, productByName, catalog }) {
   // Available batches — derived from existing orders' delivery_batch, plus the next 2 Tuesdays and Saturdays.
   const availableBatches = useMemo(() => {
     const set = new Set();
-    Object.values(orders).forEach(o => { if (o.delivery_batch) set.add(o.delivery_batch); });
-    // Always include the next Tue and next Sat as choices
+    const todayIso = today();
+    // Only include batches from orders that are today or in the future —
+    // past delivery dates clutter the filter without adding value.
+    Object.values(orders).forEach(o => {
+      if (o.delivery_batch && o.delivery_batch >= todayIso && o.delivery_status !== 'Cancelled') {
+        set.add(o.delivery_batch);
+      }
+    });
+    // Always include next Tue and next Sat as choices, even with zero orders.
     set.add(nextTuesday());
     set.add(nextSaturday());
     return Array.from(set).sort();
@@ -1919,36 +1975,11 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
             <div><Label>Phone</Label><Input value={draft.phone} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} placeholder="optional" /></div>
           </div>
           <div className="mb-5">
-            <Label>Delivery Batch</Label>
-            <div className="flex flex-wrap gap-2 mt-1">
-              {(() => {
-                const tue = nextTuesday();
-                const sat = nextSaturday();
-                const isCustom = draft.delivery_batch && draft.delivery_batch !== tue && draft.delivery_batch !== sat;
-                return (
-                  <>
-                    <button type="button" onClick={() => setDraft({ ...draft, delivery_batch: tue })}
-                      className="px-3 py-2 text-sm rounded-md inline-flex items-center gap-1.5"
-                      style={{ background: draft.delivery_batch === tue ? THEME.brand : 'transparent', color: draft.delivery_batch === tue ? 'white' : THEME.ink, border: `1px solid ${draft.delivery_batch === tue ? THEME.brand : THEME.line}` }}>
-                      <Truck size={13} /> Next Tuesday <span className="opacity-75">({batchLabel(tue).split(' · ')[1]})</span>
-                    </button>
-                    <button type="button" onClick={() => setDraft({ ...draft, delivery_batch: sat })}
-                      className="px-3 py-2 text-sm rounded-md inline-flex items-center gap-1.5"
-                      style={{ background: draft.delivery_batch === sat ? THEME.brand : 'transparent', color: draft.delivery_batch === sat ? 'white' : THEME.ink, border: `1px solid ${draft.delivery_batch === sat ? THEME.brand : THEME.line}` }}>
-                      <Truck size={13} /> Next Saturday <span className="opacity-75">({batchLabel(sat).split(' · ')[1]})</span>
-                    </button>
-                    <Input type="date" value={isCustom ? draft.delivery_batch : ''} onChange={(e) => setDraft({ ...draft, delivery_batch: e.target.value })}
-                      style={{ minWidth: 140, opacity: isCustom ? 1 : 0.6 }} />
-                    {draft.delivery_batch && (
-                      <button type="button" onClick={() => setDraft({ ...draft, delivery_batch: '' })}
-                        className="px-3 py-2 text-sm rounded-md" style={{ color: THEME.inkSoft, border: `1px solid ${THEME.line}` }}>
-                        Unassign
-                      </button>
-                    )}
-                  </>
-                );
-              })()}
-            </div>
+            <DeliveryBatchPicker
+              value={draft.delivery_batch}
+              onChange={(v) => setDraft({ ...draft, delivery_batch: v })}
+              allowUnassign
+            />
           </div>
           </>
         )}
