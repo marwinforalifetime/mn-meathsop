@@ -4,7 +4,7 @@ import {
   Printer, Trash2, Edit3, Search, X, Check, AlertCircle, TrendingUp,
   Receipt, FileText, ChevronRight, Save, Loader2, Plus,
   Eye, EyeOff, ArrowLeft, RefreshCw, Download, Upload, HardDrive, Image as ImageIcon,
-  Activity, Menu, Store, Moon, Sun
+  Activity, Menu, Store, Moon, Sun, CheckCircle
 } from 'lucide-react';
 import {
   BarChart, Bar, PieChart, Pie, Cell, ResponsiveContainer, XAxis, YAxis,
@@ -50,7 +50,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v6.2.1 · Scannable QR Fix';
+const APP_VERSION = 'v6.3 · Pickup Checklist';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -1637,12 +1637,23 @@ function Orders({ orders, setOrders, productByName, catalog }) {
               {ordersList.map((o) => {
                 const total = (o.items || []).reduce((s, i) => s + i.qty * i.price, 0);
                 const isCancelled = o.delivery_status === 'Cancelled';
+                const items = o.items || [];
+                const picked = o.picked || {};
+                const allPicked = items.length > 0 && items.every((_, i) => picked[i]);
                 return (
                   <tr key={o.id} style={{ borderTop: `1px solid ${THEME.line}`, opacity: isCancelled ? 0.5 : 1 }} className="hover:bg-amber-50 cursor-pointer" onClick={() => setSelected(o)}>
                     <td className="py-2.5 font-medium" style={{ textDecoration: isCancelled ? 'line-through' : 'none' }}>{o.id}</td>
                     <td className="py-2.5" style={{ color: THEME.inkSoft }}>{fmtDate(o.date)}</td>
-                    <td className="py-2.5" style={{ textDecoration: isCancelled ? 'line-through' : 'none' }}>{o.customer}</td>
-                    <td className="py-2.5" style={{ color: THEME.inkSoft }}>{(o.items || []).length} item{(o.items || []).length !== 1 ? 's' : ''}</td>
+                    <td className="py-2.5" style={{ textDecoration: isCancelled ? 'line-through' : 'none' }}>
+                      <span>{o.customer}</span>
+                      {allPicked && (
+                        <span className="ml-2 inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full font-semibold"
+                          style={{ background: '#D1FAE5', color: '#065F46' }}>
+                          <CheckCircle size={10} /> All Picked
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2.5" style={{ color: THEME.inkSoft }}>{items.length} item{items.length !== 1 ? 's' : ''}</td>
                     <td className="py-2.5 text-right font-medium">{peso(total)}</td>
                     <td className="py-2.5"><Badge color={statusColor(o.payment_status)}>{o.payment_status}</Badge></td>
                     <td className="py-2.5"><Badge color={statusColor(o.delivery_status)}>{o.delivery_status}</Badge></td>
@@ -1794,9 +1805,52 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
 
         {/* ===== Items ===== */}
         {!editing ? (
+          <>
+          {/* Picking checklist header — shows progress and clear button */}
+          {(() => {
+            const items = order.items || [];
+            const picked = order.picked || {};
+            const pickedCount = items.filter((_, i) => picked[i]).length;
+            const allPicked = items.length > 0 && pickedCount === items.length;
+            return (
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <div className="text-xs font-semibold uppercase tracking-wider" style={{ color: THEME.inkSoft, letterSpacing: '0.1em' }}>
+                    Pickup Checklist
+                  </div>
+                  <div className="text-xs px-2 py-0.5 rounded-full font-medium"
+                    style={{ background: allPicked ? '#D1FAE5' : THEME.brandBg, color: allPicked ? '#065F46' : THEME.brand }}>
+                    {pickedCount}/{items.length} picked
+                  </div>
+                </div>
+                {pickedCount > 0 && (
+                  <button className="text-xs underline" style={{ color: THEME.inkSoft }}
+                    onClick={() => onSaveFull({ ...order, picked: {} })}>
+                    Clear picks
+                  </button>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* All picked banner */}
+          {(() => {
+            const items = order.items || [];
+            const picked = order.picked || {};
+            const allPicked = items.length > 0 && items.every((_, i) => picked[i]);
+            return allPicked ? (
+              <div className="mb-4 px-4 py-2.5 rounded-md flex items-center gap-2"
+                style={{ background: '#D1FAE5', color: '#065F46' }}>
+                <CheckCircle size={15} className="flex-shrink-0" />
+                <span className="text-sm font-semibold">All items picked for {order.customer}!</span>
+              </div>
+            ) : null;
+          })()}
+
           <table className="w-full text-sm mb-4">
             <thead>
               <tr style={{ color: THEME.inkSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                <th className="text-left pb-2 font-medium w-8">✓</th>
                 <th className="text-left pb-2 font-medium">Product</th>
                 <th className="text-right pb-2 font-medium">Qty</th>
                 <th className="text-left pb-2 font-medium pl-4">Notes / Special Cut</th>
@@ -1805,17 +1859,29 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
               </tr>
             </thead>
             <tbody>
-              {(order.items || []).map((it, i) => (
-                <tr key={i} style={{ borderTop: `1px solid ${THEME.line}` }}>
-                  <td className="py-2.5">{it.product}</td>
-                  <td className="py-2.5 text-right">{it.qty} {it.unit}</td>
-                  <td className="py-2.5 pl-4" style={{ color: it.note ? THEME.ink : THEME.inkSoft }}>{it.note || '—'}</td>
-                  <td className="py-2.5 text-right">{peso(it.price)}</td>
-                  <td className="py-2.5 text-right font-medium">{peso(it.qty * it.price)}</td>
-                </tr>
-              ))}
+              {(order.items || []).map((it, i) => {
+                const isPicked = !!(order.picked || {})[i];
+                return (
+                  <tr key={i} style={{ borderTop: `1px solid ${THEME.line}`, background: isPicked ? '#F0FDF4' : 'transparent', opacity: isPicked ? 0.75 : 1 }}>
+                    <td className="py-2.5">
+                      <input type="checkbox" checked={isPicked}
+                        onChange={() => {
+                          const newPicked = { ...(order.picked || {}), [i]: !isPicked };
+                          onSaveFull({ ...order, picked: newPicked });
+                        }}
+                        style={{ width: 16, height: 16, accentColor: '#059669', cursor: 'pointer' }} />
+                    </td>
+                    <td className="py-2.5" style={{ textDecoration: isPicked ? 'line-through' : 'none', color: isPicked ? THEME.inkSoft : THEME.ink }}>{it.product}</td>
+                    <td className="py-2.5 text-right" style={{ color: isPicked ? THEME.inkSoft : THEME.ink }}>{it.qty} {it.unit}</td>
+                    <td className="py-2.5 pl-4" style={{ color: it.note ? (isPicked ? THEME.inkSoft : THEME.ink) : THEME.inkSoft }}>{it.note || '—'}</td>
+                    <td className="py-2.5 text-right" style={{ color: isPicked ? THEME.inkSoft : THEME.ink }}>{peso(it.price)}</td>
+                    <td className="py-2.5 text-right font-medium" style={{ color: isPicked ? THEME.inkSoft : THEME.ink }}>{peso(it.qty * it.price)}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
+          </>
         ) : (
           <div className="mb-4">
             <div className="flex items-center justify-between mb-3">
