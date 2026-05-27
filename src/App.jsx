@@ -50,7 +50,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v6.3 · Pickup Checklist';
+const APP_VERSION = 'v6.4 · Delivery Batches + Pickup Mode';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -103,6 +103,26 @@ const fmtDateShort = (iso) => {
   return new Date(iso).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' });
 };
 const nextOrderId = (lastNum) => 'ORD-' + String(lastNum + 1).padStart(3, '0');
+
+// Delivery batch helpers — Tuesday=2, Saturday=6 in JS Date (Sunday=0)
+// Given any date, compute the next Tuesday or Saturday on or after that date.
+const nextDayOfWeek = (fromIso, targetDow) => {
+  const d = fromIso ? new Date(fromIso + 'T00:00:00') : new Date();
+  const dow = d.getDay();
+  // If today is already the target day, return today; otherwise jump forward.
+  const delta = (targetDow - dow + 7) % 7;
+  d.setDate(d.getDate() + delta);
+  return d.toISOString().slice(0, 10);
+};
+const nextTuesday = (fromIso) => nextDayOfWeek(fromIso || today(), 2);
+const nextSaturday = (fromIso) => nextDayOfWeek(fromIso || today(), 6);
+// Human-readable batch label, e.g. "Tue · May 27" or "Sat · May 31"
+const batchLabel = (iso) => {
+  if (!iso) return 'Unassigned';
+  const d = new Date(iso + 'T00:00:00');
+  const dow = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()];
+  return `${dow} · ${d.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}`;
+};
 
 /* ============================================================
    STORAGE (localStorage with safe wrappers)
@@ -1250,6 +1270,7 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
   const [paymentStatus, setPaymentStatus] = useState('Paid');
   const [paymentMethod, setPaymentMethod] = useState('Cash');
   const [deliveryStatus, setDeliveryStatus] = useState('Pending');
+  const [deliveryBatch, setDeliveryBatch] = useState(nextTuesday());
   const [notes, setNotes] = useState('');
   // Wholesale toggle: when ON, all line items default to wholesale pricing
   // (the same prices used in the Restaurant Quote / Wholesale Price Sheet).
@@ -1330,6 +1351,7 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
     const order = {
       id, date, customer: customer.trim(), phone: phone.trim(),
       payment_status: paymentStatus, payment_method: paymentMethod, delivery_status: deliveryStatus,
+      delivery_batch: deliveryBatch,
       notes: notes.trim(), items: snapshotItems, created_at: new Date().toISOString(),
     };
     setOrders({ ...orders, [id]: order });
@@ -1386,6 +1408,36 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
                 )}
               </div>
               <div><Label>Phone (optional)</Label><Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="0917 123 4567" /></div>
+            </div>
+
+            {/* Delivery batch picker — Tuesday / Saturday / Custom */}
+            <div className="mt-4">
+              <Label>Delivery Batch</Label>
+              <div className="flex flex-wrap gap-2 mt-1">
+                {(() => {
+                  const tue = nextTuesday();
+                  const sat = nextSaturday();
+                  const isCustom = deliveryBatch !== tue && deliveryBatch !== sat;
+                  return (
+                    <>
+                      <button type="button" onClick={() => setDeliveryBatch(tue)}
+                        className="px-3 py-2 text-sm rounded-md inline-flex items-center gap-1.5"
+                        style={{ background: deliveryBatch === tue ? THEME.brand : 'transparent', color: deliveryBatch === tue ? 'white' : THEME.ink, border: `1px solid ${deliveryBatch === tue ? THEME.brand : THEME.line}` }}>
+                        <Truck size={13} /> Next Tuesday <span className="opacity-75">({batchLabel(tue).split(' · ')[1]})</span>
+                      </button>
+                      <button type="button" onClick={() => setDeliveryBatch(sat)}
+                        className="px-3 py-2 text-sm rounded-md inline-flex items-center gap-1.5"
+                        style={{ background: deliveryBatch === sat ? THEME.brand : 'transparent', color: deliveryBatch === sat ? 'white' : THEME.ink, border: `1px solid ${deliveryBatch === sat ? THEME.brand : THEME.line}` }}>
+                        <Truck size={13} /> Next Saturday <span className="opacity-75">({batchLabel(sat).split(' · ')[1]})</span>
+                      </button>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <Input type="date" value={isCustom ? deliveryBatch : ''} onChange={(e) => setDeliveryBatch(e.target.value)}
+                          placeholder="Custom" style={{ minWidth: 140, opacity: isCustom ? 1 : 0.6 }} />
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
             </div>
           </Card>
 
@@ -1529,13 +1581,19 @@ function Orders({ orders, setOrders, productByName, catalog }) {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all');
   const [deliveryFilter, setDeliveryFilter] = useState('all');
+  const [batchFilter, setBatchFilter] = useState('all');
   const [selected, setSelected] = useState(null);
   const [printMode, setPrintMode] = useState(null);
+  const [pickupMode, setPickupMode] = useState(false);
 
   const ordersList = useMemo(() => {
     let list = Object.values(orders);
     if (filter !== 'all') list = list.filter(o => o.payment_status === filter);
     if (deliveryFilter !== 'all') list = list.filter(o => (o.delivery_status || 'Pending') === deliveryFilter);
+    if (batchFilter !== 'all') {
+      if (batchFilter === 'unassigned') list = list.filter(o => !o.delivery_batch);
+      else list = list.filter(o => o.delivery_batch === batchFilter);
+    }
     if (search.trim()) {
       const q = search.toLowerCase();
       list = list.filter(o =>
@@ -1545,7 +1603,17 @@ function Orders({ orders, setOrders, productByName, catalog }) {
       );
     }
     return list.sort((a, b) => (b.id || '').localeCompare(a.id || ''));
-  }, [orders, search, filter, deliveryFilter]);
+  }, [orders, search, filter, deliveryFilter, batchFilter]);
+
+  // Available batches — derived from existing orders' delivery_batch, plus the next 2 Tuesdays and Saturdays.
+  const availableBatches = useMemo(() => {
+    const set = new Set();
+    Object.values(orders).forEach(o => { if (o.delivery_batch) set.add(o.delivery_batch); });
+    // Always include the next Tue and next Sat as choices
+    set.add(nextTuesday());
+    set.add(nextSaturday());
+    return Array.from(set).sort();
+  }, [orders]);
 
   const deleteOrder = (id) => {
     if (!confirm(`Delete order ${id}? This cannot be undone.`)) return;
@@ -1567,6 +1635,13 @@ function Orders({ orders, setOrders, productByName, catalog }) {
 
   if (printMode && selected) {
     return <PrintableView order={selected} mode={printMode} onBack={() => setPrintMode(null)} />;
+  }
+
+  if (pickupMode) {
+    const batchOrders = Object.values(orders)
+      .filter(o => o.delivery_batch === batchFilter && o.delivery_status !== 'Cancelled')
+      .sort((a, b) => (a.customer || '').localeCompare(b.customer || ''));
+    return <PickupMode batch={batchFilter} orders={batchOrders} onBack={() => setPickupMode(false)} />;
   }
 
   return (
@@ -1614,6 +1689,45 @@ function Orders({ orders, setOrders, productByName, catalog }) {
               </div>
             </div>
           </div>
+
+          {/* Batch filter row + Pickup Mode entry */}
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 mt-2.5 pt-2.5" style={{ borderTop: `1px solid ${THEME.line}` }}>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft, letterSpacing: '0.06em' }}>Batch</span>
+              <div className="flex gap-1 flex-wrap">
+                <button onClick={() => setBatchFilter('all')}
+                  className="px-3 py-1.5 text-sm rounded-md"
+                  style={{ background: batchFilter === 'all' ? THEME.brand : 'transparent', color: batchFilter === 'all' ? 'white' : THEME.ink, border: `1px solid ${batchFilter === 'all' ? THEME.brand : THEME.line}` }}>All</button>
+                {availableBatches.map((b) => {
+                  const count = Object.values(orders).filter(o => o.delivery_batch === b && o.delivery_status !== 'Cancelled').length;
+                  return (
+                    <button key={b} onClick={() => setBatchFilter(b)}
+                      className="px-3 py-1.5 text-sm rounded-md inline-flex items-center gap-1.5"
+                      style={{ background: batchFilter === b ? THEME.brand : 'transparent', color: batchFilter === b ? 'white' : THEME.ink, border: `1px solid ${batchFilter === b ? THEME.brand : THEME.line}` }}>
+                      {batchLabel(b)} <span className="text-xs opacity-75">({count})</span>
+                    </button>
+                  );
+                })}
+                {(() => {
+                  const unassignedCount = Object.values(orders).filter(o => !o.delivery_batch && o.delivery_status !== 'Cancelled').length;
+                  if (unassignedCount === 0) return null;
+                  return (
+                    <button onClick={() => setBatchFilter('unassigned')}
+                      className="px-3 py-1.5 text-sm rounded-md inline-flex items-center gap-1.5"
+                      style={{ background: batchFilter === 'unassigned' ? THEME.red : 'transparent', color: batchFilter === 'unassigned' ? 'white' : THEME.red, border: `1px solid ${THEME.red}` }}>
+                      Unassigned <span className="text-xs opacity-75">({unassignedCount})</span>
+                    </button>
+                  );
+                })()}
+              </div>
+            </div>
+            {/* Pickup Mode button — only shows when a specific batch is selected */}
+            {batchFilter !== 'all' && batchFilter !== 'unassigned' && (
+              <Btn variant="primary" size="sm" onClick={() => setPickupMode(true)}>
+                <Check size={14} className="inline -mt-0.5 mr-1" /> Pickup Mode
+              </Btn>
+            )}
+          </div>
         </div>
 
         {ordersList.length === 0 ? (
@@ -1626,6 +1740,7 @@ function Orders({ orders, setOrders, productByName, catalog }) {
                 <th className="pb-2 font-medium">Order ID</th>
                 <th className="pb-2 font-medium">Date</th>
                 <th className="pb-2 font-medium">Customer</th>
+                <th className="pb-2 font-medium">Batch</th>
                 <th className="pb-2 font-medium">Items</th>
                 <th className="pb-2 font-medium text-right">Total</th>
                 <th className="pb-2 font-medium">Payment</th>
@@ -1637,23 +1752,22 @@ function Orders({ orders, setOrders, productByName, catalog }) {
               {ordersList.map((o) => {
                 const total = (o.items || []).reduce((s, i) => s + i.qty * i.price, 0);
                 const isCancelled = o.delivery_status === 'Cancelled';
-                const items = o.items || [];
-                const picked = o.picked || {};
-                const allPicked = items.length > 0 && items.every((_, i) => picked[i]);
                 return (
                   <tr key={o.id} style={{ borderTop: `1px solid ${THEME.line}`, opacity: isCancelled ? 0.5 : 1 }} className="hover:bg-amber-50 cursor-pointer" onClick={() => setSelected(o)}>
                     <td className="py-2.5 font-medium" style={{ textDecoration: isCancelled ? 'line-through' : 'none' }}>{o.id}</td>
                     <td className="py-2.5" style={{ color: THEME.inkSoft }}>{fmtDate(o.date)}</td>
-                    <td className="py-2.5" style={{ textDecoration: isCancelled ? 'line-through' : 'none' }}>
-                      <span>{o.customer}</span>
-                      {allPicked && (
-                        <span className="ml-2 inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full font-semibold"
-                          style={{ background: '#D1FAE5', color: '#065F46' }}>
-                          <CheckCircle size={10} /> All Picked
+                    <td className="py-2.5" style={{ textDecoration: isCancelled ? 'line-through' : 'none' }}>{o.customer}</td>
+                    <td className="py-2.5">
+                      {o.delivery_batch ? (
+                        <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium"
+                          style={{ background: THEME.brandBg, color: THEME.brand }}>
+                          <Truck size={10} /> {batchLabel(o.delivery_batch)}
                         </span>
+                      ) : (
+                        <span className="text-xs italic" style={{ color: THEME.inkSoft }}>Unassigned</span>
                       )}
                     </td>
-                    <td className="py-2.5" style={{ color: THEME.inkSoft }}>{items.length} item{items.length !== 1 ? 's' : ''}</td>
+                    <td className="py-2.5" style={{ color: THEME.inkSoft }}>{(o.items || []).length} item{(o.items || []).length !== 1 ? 's' : ''}</td>
                     <td className="py-2.5 text-right font-medium">{peso(total)}</td>
                     <td className="py-2.5"><Badge color={statusColor(o.payment_status)}>{o.payment_status}</Badge></td>
                     <td className="py-2.5"><Badge color={statusColor(o.delivery_status)}>{o.delivery_status}</Badge></td>
@@ -1700,6 +1814,7 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
       payment_status: order.payment_status || 'Paid',
       payment_method: order.payment_method || 'Cash',
       delivery_status: order.delivery_status || 'Pending',
+      delivery_batch: order.delivery_batch || '',
       notes: order.notes || '',
       amount_paid: order.amount_paid ?? '',
       items: (order.items || []).map((it) => ({ ...it })),
@@ -1750,6 +1865,7 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
       payment_status: draft.payment_status,
       payment_method: draft.payment_method,
       delivery_status: draft.delivery_status,
+      delivery_batch: draft.delivery_batch || '',
       notes: draft.notes.trim(),
       amount_paid: draft.payment_status === 'Partial' ? (draft.amount_paid === '' ? '' : Number(draft.amount_paid) || 0) : '',
       items: cleanItems,
@@ -1796,61 +1912,86 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
 
         {/* ===== Edit mode: customer + date ===== */}
         {editing && (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
+          <>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
             <div><Label>Date</Label><Input type="date" value={draft.date} onChange={(e) => setDraft({ ...draft, date: e.target.value })} /></div>
             <div><Label>Customer Name</Label><Input value={draft.customer} onChange={(e) => setDraft({ ...draft, customer: e.target.value })} /></div>
             <div><Label>Phone</Label><Input value={draft.phone} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} placeholder="optional" /></div>
+          </div>
+          <div className="mb-5">
+            <Label>Delivery Batch</Label>
+            <div className="flex flex-wrap gap-2 mt-1">
+              {(() => {
+                const tue = nextTuesday();
+                const sat = nextSaturday();
+                const isCustom = draft.delivery_batch && draft.delivery_batch !== tue && draft.delivery_batch !== sat;
+                return (
+                  <>
+                    <button type="button" onClick={() => setDraft({ ...draft, delivery_batch: tue })}
+                      className="px-3 py-2 text-sm rounded-md inline-flex items-center gap-1.5"
+                      style={{ background: draft.delivery_batch === tue ? THEME.brand : 'transparent', color: draft.delivery_batch === tue ? 'white' : THEME.ink, border: `1px solid ${draft.delivery_batch === tue ? THEME.brand : THEME.line}` }}>
+                      <Truck size={13} /> Next Tuesday <span className="opacity-75">({batchLabel(tue).split(' · ')[1]})</span>
+                    </button>
+                    <button type="button" onClick={() => setDraft({ ...draft, delivery_batch: sat })}
+                      className="px-3 py-2 text-sm rounded-md inline-flex items-center gap-1.5"
+                      style={{ background: draft.delivery_batch === sat ? THEME.brand : 'transparent', color: draft.delivery_batch === sat ? 'white' : THEME.ink, border: `1px solid ${draft.delivery_batch === sat ? THEME.brand : THEME.line}` }}>
+                      <Truck size={13} /> Next Saturday <span className="opacity-75">({batchLabel(sat).split(' · ')[1]})</span>
+                    </button>
+                    <Input type="date" value={isCustom ? draft.delivery_batch : ''} onChange={(e) => setDraft({ ...draft, delivery_batch: e.target.value })}
+                      style={{ minWidth: 140, opacity: isCustom ? 1 : 0.6 }} />
+                    {draft.delivery_batch && (
+                      <button type="button" onClick={() => setDraft({ ...draft, delivery_batch: '' })}
+                        className="px-3 py-2 text-sm rounded-md" style={{ color: THEME.inkSoft, border: `1px solid ${THEME.line}` }}>
+                        Unassign
+                      </button>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+          </div>
+          </>
+        )}
+
+        {/* Quick batch-set banner — shows in view mode when order has no batch yet */}
+        {!editing && !order.delivery_batch && order.delivery_status !== 'Cancelled' && (
+          <div className="mb-5 px-4 py-3 rounded-md flex items-center justify-between gap-3 flex-wrap"
+            style={{ background: '#FEF3C7', color: '#92400E', border: '1px solid #FCD34D' }}>
+            <div className="flex items-center gap-2 text-sm">
+              <AlertCircle size={16} className="flex-shrink-0" />
+              <span>No delivery batch yet. Set one so it shows up in the right pickup list.</span>
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              <button onClick={() => onSaveFull({ ...order, delivery_batch: nextTuesday() })}
+                className="px-3 py-1.5 text-xs font-semibold rounded-md inline-flex items-center gap-1"
+                style={{ background: THEME.brand, color: 'white' }}>
+                <Truck size={12} /> Tuesday ({batchLabel(nextTuesday()).split(' · ')[1]})
+              </button>
+              <button onClick={() => onSaveFull({ ...order, delivery_batch: nextSaturday() })}
+                className="px-3 py-1.5 text-xs font-semibold rounded-md inline-flex items-center gap-1"
+                style={{ background: THEME.brand, color: 'white' }}>
+                <Truck size={12} /> Saturday ({batchLabel(nextSaturday()).split(' · ')[1]})
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Batch info — shows in view mode when batch is set */}
+        {!editing && order.delivery_batch && (
+          <div className="mb-4 px-4 py-2.5 rounded-md flex items-center gap-2"
+            style={{ background: THEME.brandBg, color: THEME.brand }}>
+            <Truck size={15} className="flex-shrink-0" />
+            <span className="text-sm">
+              <span className="font-semibold">Delivery Batch:</span> {batchLabel(order.delivery_batch)}
+            </span>
           </div>
         )}
 
         {/* ===== Items ===== */}
         {!editing ? (
-          <>
-          {/* Picking checklist header — shows progress and clear button */}
-          {(() => {
-            const items = order.items || [];
-            const picked = order.picked || {};
-            const pickedCount = items.filter((_, i) => picked[i]).length;
-            const allPicked = items.length > 0 && pickedCount === items.length;
-            return (
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <div className="text-xs font-semibold uppercase tracking-wider" style={{ color: THEME.inkSoft, letterSpacing: '0.1em' }}>
-                    Pickup Checklist
-                  </div>
-                  <div className="text-xs px-2 py-0.5 rounded-full font-medium"
-                    style={{ background: allPicked ? '#D1FAE5' : THEME.brandBg, color: allPicked ? '#065F46' : THEME.brand }}>
-                    {pickedCount}/{items.length} picked
-                  </div>
-                </div>
-                {pickedCount > 0 && (
-                  <button className="text-xs underline" style={{ color: THEME.inkSoft }}
-                    onClick={() => onSaveFull({ ...order, picked: {} })}>
-                    Clear picks
-                  </button>
-                )}
-              </div>
-            );
-          })()}
-
-          {/* All picked banner */}
-          {(() => {
-            const items = order.items || [];
-            const picked = order.picked || {};
-            const allPicked = items.length > 0 && items.every((_, i) => picked[i]);
-            return allPicked ? (
-              <div className="mb-4 px-4 py-2.5 rounded-md flex items-center gap-2"
-                style={{ background: '#D1FAE5', color: '#065F46' }}>
-                <CheckCircle size={15} className="flex-shrink-0" />
-                <span className="text-sm font-semibold">All items picked for {order.customer}!</span>
-              </div>
-            ) : null;
-          })()}
-
           <table className="w-full text-sm mb-4">
             <thead>
               <tr style={{ color: THEME.inkSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                <th className="text-left pb-2 font-medium w-8">✓</th>
                 <th className="text-left pb-2 font-medium">Product</th>
                 <th className="text-right pb-2 font-medium">Qty</th>
                 <th className="text-left pb-2 font-medium pl-4">Notes / Special Cut</th>
@@ -1859,29 +2000,17 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
               </tr>
             </thead>
             <tbody>
-              {(order.items || []).map((it, i) => {
-                const isPicked = !!(order.picked || {})[i];
-                return (
-                  <tr key={i} style={{ borderTop: `1px solid ${THEME.line}`, background: isPicked ? '#F0FDF4' : 'transparent', opacity: isPicked ? 0.75 : 1 }}>
-                    <td className="py-2.5">
-                      <input type="checkbox" checked={isPicked}
-                        onChange={() => {
-                          const newPicked = { ...(order.picked || {}), [i]: !isPicked };
-                          onSaveFull({ ...order, picked: newPicked });
-                        }}
-                        style={{ width: 16, height: 16, accentColor: '#059669', cursor: 'pointer' }} />
-                    </td>
-                    <td className="py-2.5" style={{ textDecoration: isPicked ? 'line-through' : 'none', color: isPicked ? THEME.inkSoft : THEME.ink }}>{it.product}</td>
-                    <td className="py-2.5 text-right" style={{ color: isPicked ? THEME.inkSoft : THEME.ink }}>{it.qty} {it.unit}</td>
-                    <td className="py-2.5 pl-4" style={{ color: it.note ? (isPicked ? THEME.inkSoft : THEME.ink) : THEME.inkSoft }}>{it.note || '—'}</td>
-                    <td className="py-2.5 text-right" style={{ color: isPicked ? THEME.inkSoft : THEME.ink }}>{peso(it.price)}</td>
-                    <td className="py-2.5 text-right font-medium" style={{ color: isPicked ? THEME.inkSoft : THEME.ink }}>{peso(it.qty * it.price)}</td>
-                  </tr>
-                );
-              })}
+              {(order.items || []).map((it, i) => (
+                <tr key={i} style={{ borderTop: `1px solid ${THEME.line}` }}>
+                  <td className="py-2.5">{it.product}</td>
+                  <td className="py-2.5 text-right">{it.qty} {it.unit}</td>
+                  <td className="py-2.5 pl-4" style={{ color: it.note ? THEME.ink : THEME.inkSoft }}>{it.note || '—'}</td>
+                  <td className="py-2.5 text-right">{peso(it.price)}</td>
+                  <td className="py-2.5 text-right font-medium">{peso(it.qty * it.price)}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
-          </>
         ) : (
           <div className="mb-4">
             <div className="flex items-center justify-between mb-3">
@@ -2038,6 +2167,161 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
             </div>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   PICKUP MODE
+   ============================================================
+   Single-page checklist view of all customers in a batch.
+   Designed for use at the supplier while picking meat.
+   - Temporary checkboxes (local state only — not saved to DB)
+   - Resets when the screen closes
+   - Shows progress per customer and overall
+   ============================================================ */
+
+function PickupMode({ batch, orders, onBack }) {
+  // Local state: { [orderId]: { [itemIndex]: true } }
+  const [picked, setPicked] = useState({});
+
+  const togglePick = (orderId, itemIdx) => {
+    setPicked(prev => {
+      const orderPicks = prev[orderId] || {};
+      return { ...prev, [orderId]: { ...orderPicks, [itemIdx]: !orderPicks[itemIdx] } };
+    });
+  };
+
+  // Aggregate totals for supplier-buying reference
+  const totalsByProduct = useMemo(() => {
+    const m = new Map();
+    orders.forEach(o => (o.items || []).forEach(it => {
+      const prev = m.get(it.product) || 0;
+      m.set(it.product, prev + (Number(it.qty) || 0));
+    }));
+    return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
+  }, [orders]);
+
+  const totalItems = orders.reduce((s, o) => s + (o.items?.length || 0), 0);
+  const pickedItems = orders.reduce((s, o) => {
+    const op = picked[o.id] || {};
+    return s + (o.items || []).filter((_, i) => op[i]).length;
+  }, 0);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-5">
+        <div>
+          <button onClick={onBack} className="flex items-center gap-1.5 text-sm mb-2" style={{ color: THEME.inkSoft }}>
+            <ArrowLeft size={14} /> Back to Orders
+          </button>
+          <div className="font-display text-2xl" style={{ color: THEME.brand }}>Pickup Mode</div>
+          <div className="text-sm mt-1" style={{ color: THEME.inkSoft }}>
+            Batch: <span className="font-medium" style={{ color: THEME.ink }}>{batchLabel(batch)}</span> · {orders.length} customer{orders.length !== 1 ? 's' : ''} · {totalItems} item{totalItems !== 1 ? 's' : ''}
+          </div>
+        </div>
+        <div className="text-right">
+          <div className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft, letterSpacing: '0.08em' }}>Picked</div>
+          <div className="font-display text-2xl" style={{ color: pickedItems === totalItems && totalItems > 0 ? '#059669' : THEME.brand }}>
+            {pickedItems}/{totalItems}
+          </div>
+        </div>
+      </div>
+
+      {/* Aggregate totals — handy reference for supplier buying */}
+      {totalsByProduct.length > 0 && (
+        <Card className="p-4 mb-5" style={{ background: THEME.brandBg }}>
+          <div className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: THEME.brand, letterSpacing: '0.1em' }}>
+            Total to buy from supplier
+          </div>
+          <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+            {totalsByProduct.map(([prod, qty]) => (
+              <span key={prod} className="text-sm">
+                <span style={{ color: THEME.ink }}>{prod}:</span>{' '}
+                <span className="font-semibold" style={{ color: THEME.brand }}>{qty} kg</span>
+              </span>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {orders.length === 0 ? (
+        <Card className="p-8 text-center">
+          <div style={{ color: THEME.inkSoft }} className="text-sm">No orders in this batch yet.</div>
+        </Card>
+      ) : (
+        <div className="space-y-4">
+          {orders.map(order => {
+            const items = order.items || [];
+            const orderPicks = picked[order.id] || {};
+            const pickedCount = items.filter((_, i) => orderPicks[i]).length;
+            const allDone = pickedCount === items.length && items.length > 0;
+            return (
+              <Card key={order.id} className="p-5" style={{
+                background: allDone ? '#F0FDF4' : THEME.card,
+                borderColor: allDone ? '#86EFAC' : THEME.line,
+              }}>
+                <div className="flex items-center justify-between mb-3 pb-3" style={{ borderBottom: `1px solid ${THEME.line}` }}>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <div className="font-display text-lg" style={{ color: allDone ? '#065F46' : THEME.brand }}>
+                        {order.customer}
+                      </div>
+                      {allDone && (
+                        <CheckCircle size={18} style={{ color: '#059669' }} />
+                      )}
+                    </div>
+                    <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>
+                      {order.id} · {items.length} item{items.length !== 1 ? 's' : ''}
+                    </div>
+                  </div>
+                  <div className="text-sm font-semibold px-2.5 py-1 rounded-full"
+                    style={{
+                      background: allDone ? '#D1FAE5' : THEME.brandBg,
+                      color: allDone ? '#065F46' : THEME.brand
+                    }}>
+                    {pickedCount}/{items.length}
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  {items.map((it, i) => {
+                    const isPicked = !!orderPicks[i];
+                    return (
+                      <label key={i}
+                        className="flex items-center gap-3 px-3 py-2.5 rounded-md cursor-pointer"
+                        style={{
+                          background: isPicked ? '#ECFDF5' : 'transparent',
+                          border: `1px solid ${isPicked ? '#A7F3D0' : THEME.line}`,
+                        }}>
+                        <input type="checkbox" checked={isPicked}
+                          onChange={() => togglePick(order.id, i)}
+                          style={{ width: 22, height: 22, accentColor: '#059669', cursor: 'pointer', flexShrink: 0 }} />
+                        <div className="flex-1 flex items-center justify-between gap-3">
+                          <div style={{ textDecoration: isPicked ? 'line-through' : 'none', color: isPicked ? THEME.inkSoft : THEME.ink }}>
+                            <div className="text-sm font-medium">{it.product}</div>
+                            {it.note && (
+                              <div className="text-xs italic mt-0.5" style={{ color: THEME.inkSoft }}>{it.note}</div>
+                            )}
+                          </div>
+                          <div className="text-base font-semibold flex-shrink-0"
+                            style={{ color: isPicked ? THEME.inkSoft : THEME.brand }}>
+                            {it.qty} {it.unit}
+                          </div>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="text-center mt-6 text-xs" style={{ color: THEME.inkSoft }}>
+        💡 Checkboxes here are temporary and reset when you leave this screen.
       </div>
     </div>
   );
