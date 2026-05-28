@@ -31,6 +31,7 @@ const SEED_PRODUCTS = [
   { name: 'Pork Pata Hock', unit: 'kg', cost: 153, price: 239, group: 'Pork' },
   { name: 'Pork Ear', unit: 'kg', cost: 158, price: 229, group: 'Pork' },
   { name: 'Pork Pata Feet', unit: 'kg', cost: 100, price: 179, group: 'Pork' },
+  { name: 'Pork Loin / Porloin (Boneless)', unit: 'kg', cost: 200, price: 279, wholesalePrice: 249, group: 'Pork' },
   { name: 'Sawdust', unit: 'kg', cost: 60, price: 80, wholesalePrice: 70, group: 'Pork' },
   { name: 'Chicken Leg Quarter', unit: 'kg', cost: 148, price: 179, group: 'Chicken' },
   { name: 'Chicken Wings', unit: 'kg', cost: 158, price: 189, group: 'Chicken' },
@@ -50,7 +51,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v6.5 · Date Fix + Smart Batch';
+const APP_VERSION = 'v6.6 · Pork Loin Added';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
