@@ -51,7 +51,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v6.8 · Dashboard Refresh';
+const APP_VERSION = 'v6.8.1 · Dark Mode Hover Fix';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -424,6 +424,10 @@ function MainApp() {
   useEffect(() => {
     try {
       document.body.style.background = THEME.bg;
+      // Expose a theme-aware hover colour as a CSS variable so hover states
+      // adapt to dark mode (a hardcoded light hover hid text in dark mode).
+      document.documentElement.style.setProperty('--row-hover', theme === 'dark' ? '#3A322C' : '#FBF3E8');
+      document.documentElement.style.setProperty('--danger-hover', theme === 'dark' ? '#3A2222' : '#FBEAEA');
       const meta = document.querySelector('meta[name="theme-color"]');
       if (meta) meta.setAttribute('content', theme === 'dark' ? '#1A1614' : '#7A2E33');
     } catch (e) {}
@@ -1304,7 +1308,7 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
               {unpaidOrders.map((o) => {
                 const t = (o.items || []).reduce((s, i) => s + i.qty * i.price, 0);
                 return (
-                  <div key={o.id} className="flex items-center justify-between py-2 px-2 rounded hover:bg-amber-50 cursor-pointer"
+                  <div key={o.id} className="flex items-center justify-between py-2 px-2 rounded row-hover cursor-pointer"
                     onClick={() => setView('orders')}>
                     <div>
                       <div className="text-sm font-medium">{o.customer}</div>
@@ -1522,7 +1526,7 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
                         key={c.name}
                         type="button"
                         onMouseDown={(e) => { e.preventDefault(); pickCustomer(c); }}
-                        className="w-full text-left px-3 py-2 text-sm hover:bg-amber-50 flex items-center justify-between"
+                        className="w-full text-left px-3 py-2 text-sm row-hover flex items-center justify-between"
                         style={{ color: THEME.ink }}
                       >
                         <span>{c.name}{c.phone ? <span style={{ color: THEME.inkSoft }}> · {c.phone}</span> : ''}</span>
@@ -1612,7 +1616,7 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
                     <div className="col-span-1 sm:col-span-1 flex items-end justify-end sm:block">
                       <span className="hidden sm:block"><Label>&nbsp;</Label></span>
                       {items.length > 1 && (
-                        <button onClick={() => removeItem(idx)} className="p-2 rounded hover:bg-red-50" style={{ color: THEME.red }}><X size={14} /></button>
+                        <button onClick={() => removeItem(idx)} className="p-2 rounded danger-hover" style={{ color: THEME.red }}><X size={14} /></button>
                       )}
                     </div>
                   </div>
@@ -1858,7 +1862,7 @@ function Orders({ orders, setOrders, productByName, catalog }) {
                 const total = (o.items || []).reduce((s, i) => s + i.qty * i.price, 0);
                 const isCancelled = o.delivery_status === 'Cancelled';
                 return (
-                  <tr key={o.id} style={{ borderTop: `1px solid ${THEME.line}`, opacity: isCancelled ? 0.5 : 1 }} className="hover:bg-amber-50 cursor-pointer" onClick={() => setSelected(o)}>
+                  <tr key={o.id} style={{ borderTop: `1px solid ${THEME.line}`, opacity: isCancelled ? 0.5 : 1 }} className="row-hover cursor-pointer" onClick={() => setSelected(o)}>
                     <td className="py-2.5 font-medium" style={{ textDecoration: isCancelled ? 'line-through' : 'none' }}>{o.id}</td>
                     <td className="py-2.5" style={{ color: THEME.inkSoft }}>{fmtDate(o.date)}</td>
                     <td className="py-2.5" style={{ textDecoration: isCancelled ? 'line-through' : 'none' }}>{o.customer}</td>
@@ -1999,7 +2003,7 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
           {!editing && (
             <Btn variant="secondary" size="sm" onClick={startEdit}><Edit3 size={14} className="inline -mt-0.5 mr-1" /> Edit</Btn>
           )}
-          <button onClick={onClose} className="p-2 rounded hover:bg-amber-50"><X size={18} /></button>
+          <button onClick={onClose} className="p-2 rounded row-hover"><X size={18} /></button>
         </div>
       </div>
 
@@ -2130,7 +2134,7 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
                     <div className="col-span-1 sm:col-span-1 flex items-end justify-end sm:block">
                       <span className="hidden sm:block"><Label>&nbsp;</Label></span>
                       {draft.items.length > 1 && (
-                        <button onClick={() => dRemoveItem(idx)} className="p-2 rounded hover:bg-red-50" style={{ color: THEME.red }}><X size={14} /></button>
+                        <button onClick={() => dRemoveItem(idx)} className="p-2 rounded danger-hover" style={{ color: THEME.red }}><X size={14} /></button>
                       )}
                     </div>
                   </div>

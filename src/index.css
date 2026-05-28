@@ -27,6 +27,22 @@ body {
   font-family: 'DM Sans', sans-serif;
 }
 
+/* Theme-aware hover for clickable rows and list items.
+   --row-hover is set from JS based on light/dark theme, so hover
+   backgrounds never wash out text in dark mode. */
+.row-hover {
+  transition: background-color 0.12s ease;
+}
+.row-hover:hover {
+  background-color: var(--row-hover, #FBF3E8) !important;
+}
+.danger-hover {
+  transition: background-color 0.12s ease;
+}
+.danger-hover:hover {
+  background-color: var(--danger-hover, #FBEAEA) !important;
+}
+
 @media print {
   .no-print {
     display: none !important;
