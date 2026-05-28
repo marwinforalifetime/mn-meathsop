@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   LayoutDashboard, PlusCircle, ListOrdered, Truck, Wallet, Tag,
   Printer, Trash2, Edit3, Search, X, Check, AlertCircle, TrendingUp,
-  Receipt, FileText, ChevronRight, Save, Loader2, Plus,
+  Receipt, FileText, ChevronRight, ChevronUp, ChevronDown, Save, Loader2, Plus,
   Eye, EyeOff, ArrowLeft, RefreshCw, Download, Upload, HardDrive, Image as ImageIcon,
   Activity, Menu, Store, Moon, Sun, CheckCircle
 } from 'lucide-react';
@@ -51,7 +51,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v6.6 · Pork Loin Added';
+const APP_VERSION = 'v6.7 · Reorder Products';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -4068,6 +4068,22 @@ function Products({ catalog, setCatalog, priceHistory, setPriceHistory }) {
     setCatalog(catalog.filter((_, i) => i !== idx));
   };
 
+  // Move a product up or down within its group. Swaps its position in the
+  // catalog array with the nearest product that shares the same group, so
+  // the display order (which follows array order) updates accordingly.
+  const moveProduct = (idx, direction) => {
+    const group = catalog[idx].group;
+    // Find indices of all products in the same group, in array order.
+    const groupIdxs = catalog.map((p, i) => ({ i, group: p.group })).filter(x => x.group === group).map(x => x.i);
+    const posInGroup = groupIdxs.indexOf(idx);
+    const targetPos = direction === 'up' ? posInGroup - 1 : posInGroup + 1;
+    if (targetPos < 0 || targetPos >= groupIdxs.length) return; // already at edge
+    const swapWith = groupIdxs[targetPos];
+    const next = [...catalog];
+    [next[idx], next[swapWith]] = [next[swapWith], next[idx]];
+    setCatalog(next);
+  };
+
   const groups = ['Pork', 'Chicken', 'Beef'];
 
   return (
@@ -4099,7 +4115,7 @@ function Products({ catalog, setCatalog, priceHistory, setPriceHistory }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {items.map((p) => {
+                  {items.map((p, posInGroup) => {
                     const margin = p.price > 0 ? ((p.price - p.cost) / p.price) * 100 : 0;
                     return (
                       <tr key={p.idx} style={{ borderTop: `1px solid ${THEME.line}` }}>
@@ -4109,7 +4125,11 @@ function Products({ catalog, setCatalog, priceHistory, setPriceHistory }) {
                         <td className="py-2.5 text-right font-medium">{peso(p.price)}</td>
                         <td className="py-2.5 text-right" style={{ color: THEME.green }}>{peso(p.price - p.cost)}</td>
                         <td className="py-2.5 text-right" style={{ color: THEME.inkSoft }}>{margin.toFixed(1)}%</td>
-                        <td className="py-2.5 text-right">
+                        <td className="py-2.5 text-right whitespace-nowrap">
+                          <button onClick={() => moveProduct(p.idx, 'up')} disabled={posInGroup === 0}
+                            className="p-1" style={{ color: posInGroup === 0 ? THEME.line : THEME.inkSoft, cursor: posInGroup === 0 ? 'default' : 'pointer' }} title="Move up"><ChevronUp size={14} /></button>
+                          <button onClick={() => moveProduct(p.idx, 'down')} disabled={posInGroup === items.length - 1}
+                            className="p-1 mr-1" style={{ color: posInGroup === items.length - 1 ? THEME.line : THEME.inkSoft, cursor: posInGroup === items.length - 1 ? 'default' : 'pointer' }} title="Move down"><ChevronDown size={14} /></button>
                           <button onClick={() => setEditing({ idx: p.idx, isNew: false, data: { ...catalog[p.idx] } })} className="p-1 mr-1" style={{ color: THEME.inkSoft }}><Edit3 size={13} /></button>
                           <button onClick={() => removeProduct(p.idx)} className="p-1" style={{ color: THEME.red }}><Trash2 size={13} /></button>
                         </td>
