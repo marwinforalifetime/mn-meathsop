@@ -51,7 +51,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v6.7 · Reorder Products';
+const APP_VERSION = 'v6.8 · Dashboard Refresh';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -913,12 +913,16 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
   const stats = useMemo(() => {
     let totalSales = 0, totalCost = 0, unpaid = 0;
     let monthSales = 0, monthCost = 0;
+    let monthUnpaid = 0;                          // owed within this month (for collection rate)
     const productQty = {};
     const byOrderDate = {};        // sales grouped by the order's date
     const profitByDate = {};
     const costByDate = {};         // supplier cost grouped by the order's date
     let pendingOrders = 0, pendingValue = 0;     // orders not yet delivered (being collected)
     let weekdayTotals = {};        // sales by weekday name (production pattern)
+    const customerOrderCount = {}; // how many orders each customer placed this month
+    let b2bRevenue = 0, b2bOrders = 0;           // Pick N' Go and other business clients
+    let monthOrderCount = 0, monthOrderValueSum = 0;
 
     ordersList.forEach((o) => {
       if (o.delivery_status === 'Cancelled') return;
@@ -934,6 +938,20 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
       if ((o.date || '').startsWith(thisMonthKey)) {
         monthSales += oSales;
         monthCost += oCost;
+        monthOrderCount += 1;
+        monthOrderValueSum += oSales;
+        // Track owed amount within this month for collection rate
+        if (o.payment_status === 'Unpaid') monthUnpaid += oSales;
+        else if (o.payment_status === 'Partial') {
+          const paid = Number(o.amount_paid) || 0;
+          monthUnpaid += Math.max(0, oSales - paid);
+        }
+        // Count orders per customer this month (for repeat-customer rate)
+        const cname = (o.customer || '').trim().toLowerCase();
+        if (cname) customerOrderCount[cname] = (customerOrderCount[cname] || 0) + 1;
+        // B2B revenue — orders that used wholesale pricing OR match a known business client
+        const isWholesale = (o.items || []).some(it => it.wholesale) || /pick\s*n.?\s*go/i.test(o.customer || '');
+        if (isWholesale) { b2bRevenue += oSales; b2bOrders += 1; }
       }
       // Orders still pending delivery = the batch being collected for next production
       if ((o.delivery_status || 'Pending') === 'Pending') {
@@ -997,6 +1015,38 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
       .map(([name, v]) => ({ name: name.length > 16 ? name.slice(0, 16) + '…' : name, value: Math.round(v) }))
       .sort((a, b) => b.value - a.value).slice(0, 5);
 
+    // ── New metrics ──
+    // Collection rate: % of this month's sales actually collected
+    const monthCollected = monthSales - monthUnpaid;
+    const collectionRate = monthSales > 0 ? Math.round((monthCollected / monthSales) * 100) : 100;
+
+    // Repeat customer rate: % of this month's customers who ordered 2+ times
+    const monthCustomers = Object.keys(customerOrderCount).length;
+    const repeatCustomers = Object.values(customerOrderCount).filter(c => c >= 2).length;
+    const repeatRate = monthCustomers > 0 ? Math.round((repeatCustomers / monthCustomers) * 100) : 0;
+
+    // Average order value this month
+    const avgOrderValue = monthOrderCount > 0 ? monthOrderValueSum / monthOrderCount : 0;
+
+    // Next delivery batch — soonest upcoming batch with pending orders
+    const todayIso = todayKey;
+    const upcomingByBatch = {};
+    ordersList.forEach((o) => {
+      if (o.delivery_status === 'Cancelled') return;
+      if ((o.delivery_status || 'Pending') !== 'Pending') return;
+      const b = o.delivery_batch;
+      if (!b || b < todayIso) return;
+      if (!upcomingByBatch[b]) upcomingByBatch[b] = { batch: b, orders: [], total: 0 };
+      const oSales = (o.items || []).reduce((s, i) => s + i.qty * i.price, 0);
+      upcomingByBatch[b].orders.push({ customer: o.customer, total: Math.round(oSales), id: o.id });
+      upcomingByBatch[b].total += oSales;
+    });
+    const nextBatch = Object.values(upcomingByBatch).sort((a, b) => a.batch.localeCompare(b.batch))[0] || null;
+    if (nextBatch) {
+      nextBatch.total = Math.round(nextBatch.total);
+      nextBatch.orders.sort((a, b) => b.total - a.total);
+    }
+
     return {
       totalSales, grossProfit, monthSales, monthProfit, totalExpenses,
       netPosition, unpaid, orderCount: ordersList.filter(o => o.delivery_status !== 'Cancelled').length,
@@ -1005,6 +1055,8 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
       pendingOrders, pendingValue,
       topProducts,
       recoveryPct, isSelfSustaining, amountToBreakEven,
+      collectionRate, monthUnpaid, repeatRate, repeatCustomers, monthCustomers,
+      avgOrderValue, monthOrderCount, b2bRevenue, b2bOrders, nextBatch,
     };
   }, [orders, expenses, thisMonthKey, todayKey]);
 
@@ -1013,11 +1065,6 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
       .filter(o => (o.payment_status === 'Unpaid' || o.payment_status === 'Partial') && o.delivery_status !== 'Cancelled')
       .sort((a, b) => (b.id || '').localeCompare(a.id || ''))
       .slice(0, 5),
-    [orders]
-  );
-
-  const recentOrders = useMemo(
-    () => ordersList.sort((a, b) => (b.id || '').localeCompare(a.id || '')).slice(0, 5),
     [orders]
   );
 
@@ -1119,20 +1166,89 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
         </Card>
 
         <Card className="p-6 flex flex-col justify-center">
-          <div className="text-xs uppercase tracking-wider mb-2" style={{ color: THEME.inkSoft }}>All-Time Profit</div>
-          <div className="font-display text-3xl" style={{ color: THEME.green }}>{m(stats.grossProfit)}</div>
-          <div className="text-xs mt-1" style={{ color: THEME.inkSoft }}>From {m(stats.totalSales)} total sales</div>
+          <div className="text-xs uppercase tracking-wider mb-2" style={{ color: THEME.inkSoft }}>Collection Rate · {monthName}</div>
+          <div className="font-display text-3xl" style={{ color: stats.collectionRate >= 80 ? THEME.green : stats.collectionRate >= 60 ? THEME.amber : THEME.red }}>
+            {stats.collectionRate}%
+          </div>
+          <div className="text-xs mt-1" style={{ color: THEME.inkSoft }}>
+            {stats.monthUnpaid > 0 ? `${m(stats.monthUnpaid)} still to collect this month` : 'Everything collected — nice'}
+          </div>
+          <div className="mt-3 h-2 rounded-full overflow-hidden" style={{ background: THEME.line }}>
+            <div className="h-full rounded-full" style={{ width: `${stats.collectionRate}%`, background: stats.collectionRate >= 80 ? THEME.green : stats.collectionRate >= 60 ? THEME.amber : THEME.red }} />
+          </div>
           <div className="mt-4 pt-4" style={{ borderTop: `1px solid ${THEME.line}` }}>
-            <div className="text-xs uppercase tracking-wider mb-1" style={{ color: THEME.inkSoft }}>Avg Profit / Production Run</div>
-            <div className="font-display text-xl" style={{ color: THEME.ink }}>{m(stats.avgPerRun)}</div>
-            <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>Across {stats.runCount} production day{stats.runCount !== 1 ? 's' : ''}</div>
+            <div className="flex justify-between items-baseline">
+              <span className="text-xs" style={{ color: THEME.inkSoft }}>All-time profit</span>
+              <span className="text-sm font-medium" style={{ color: THEME.green }}>{m(stats.grossProfit)}</span>
+            </div>
+            <div className="flex justify-between items-baseline mt-1">
+              <span className="text-xs" style={{ color: THEME.inkSoft }}>Avg / production run</span>
+              <span className="text-sm font-medium" style={{ color: THEME.ink }}>{m(stats.avgPerRun)}</span>
+            </div>
           </div>
         </Card>
       </div>
 
-      {/* ===== Production run performance + weekday pattern ===== */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
-        <Card className="col-span-2 p-5">
+      {/* ===== Key metrics row ===== */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+        <Card className="p-4">
+          <div className="text-xs mb-1" style={{ color: THEME.inkSoft }}>Orders · {monthName}</div>
+          <div className="font-display text-2xl" style={{ color: THEME.ink }}>{stats.monthOrderCount}</div>
+          <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>this month</div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-xs mb-1" style={{ color: THEME.inkSoft }}>Repeat customers</div>
+          <div className="font-display text-2xl" style={{ color: stats.repeatRate >= 50 ? THEME.green : THEME.ink }}>{stats.repeatRate}%</div>
+          <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>{stats.repeatCustomers} of {stats.monthCustomers} ordered 2+</div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-xs mb-1" style={{ color: THEME.inkSoft }}>Avg order value</div>
+          <div className="font-display text-2xl" style={{ color: THEME.ink }}>{m(stats.avgOrderValue)}</div>
+          <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>this month</div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-xs mb-1" style={{ color: THEME.inkSoft }}>B2B revenue</div>
+          <div className="font-display text-2xl" style={{ color: THEME.brand }}>{m(stats.b2bRevenue)}</div>
+          <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>{stats.b2bOrders} wholesale order{stats.b2bOrders !== 1 ? 's' : ''}</div>
+        </Card>
+      </div>
+
+      {/* ===== Next batch preview ===== */}
+      {stats.nextBatch && (
+        <Card className="p-5 mb-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Truck size={17} style={{ color: THEME.brand }} />
+              <span className="font-display text-lg">Next Batch · {batchLabel(stats.nextBatch.batch)}</span>
+              <Badge color="blue">{stats.nextBatch.orders.length} order{stats.nextBatch.orders.length !== 1 ? 's' : ''}</Badge>
+            </div>
+            <div className="text-right">
+              <div className="text-xs" style={{ color: THEME.inkSoft }}>Projected</div>
+              <div className="font-display text-xl" style={{ color: THEME.brand }}>{m(stats.nextBatch.total)}</div>
+            </div>
+          </div>
+          <div className="space-y-1">
+            {stats.nextBatch.orders.slice(0, 5).map((o) => (
+              <div key={o.id} className="flex items-center justify-between py-1.5 text-sm" style={{ borderTop: `1px solid ${THEME.line}` }}>
+                <span>{o.customer}</span>
+                <span style={{ color: THEME.inkSoft }}>{m(o.total)}</span>
+              </div>
+            ))}
+            {stats.nextBatch.orders.length > 5 && (
+              <div className="text-xs pt-1" style={{ color: THEME.inkSoft }}>+ {stats.nextBatch.orders.length - 5} more</div>
+            )}
+          </div>
+          <div className="mt-3 pt-2" style={{ borderTop: `1px solid ${THEME.line}` }}>
+            <Btn variant="secondary" size="sm" onClick={() => setView('pickup')}>
+              Open Pickup Mode <ChevronRight size={14} className="inline" />
+            </Btn>
+          </div>
+        </Card>
+      )}
+
+      {/* ===== Production run performance ===== */}
+      <div className="grid grid-cols-1 gap-4 mb-4">
+        <Card className="p-5">
           <div className="flex items-center justify-between mb-1">
             <div className="font-display text-lg">Production Run Performance</div>
             {stats.runChangePct !== null && (
@@ -1166,35 +1282,6 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
             <span className="flex items-center gap-1.5"><span className="w-3 h-3 inline-block rounded-sm" style={{ background: THEME.green }} /> Profit (what you keep)</span>
             <span className="flex items-center gap-1.5"><span className="w-3 h-3 inline-block rounded-sm" style={{ background: THEME.brandSoft }} /> Supplier cost</span>
           </div>
-        </Card>
-
-        <Card className="p-5">
-          <div className="font-display text-lg mb-1">Best Production Day</div>
-          <div className="text-xs mb-4" style={{ color: THEME.inkSoft }}>Average sales by weekday</div>
-          {stats.weekdayPattern.length === 0 ? (
-            <EmptyHint>Not enough data yet.</EmptyHint>
-          ) : (
-            <div className="space-y-3">
-              {stats.weekdayPattern.map((w, i) => {
-                const max = stats.weekdayPattern[0].avg || 1;
-                const pct = Math.max(4, (w.avg / max) * 100);
-                return (
-                  <div key={w.full}>
-                    <div className="flex items-center justify-between text-sm mb-1">
-                      <span className="font-medium" style={{ color: i === 0 ? THEME.brand : THEME.ink }}>
-                        {w.full}{i === 0 ? ' ★' : ''}
-                      </span>
-                      <span style={{ color: THEME.inkSoft }}>{m(w.avg)}</span>
-                    </div>
-                    <div className="h-2.5 rounded-full overflow-hidden" style={{ background: THEME.line }}>
-                      <div className="h-full rounded-full" style={{ width: `${pct}%`, background: i === 0 ? THEME.brand : THEME.brandSoft }} />
-                    </div>
-                    <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>{w.runs} run{w.runs !== 1 ? 's' : ''}</div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
         </Card>
       </div>
 
@@ -1255,45 +1342,6 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
           )}
         </Card>
       </div>
-
-      {/* ===== Recent orders ===== */}
-      <Card className="p-5 mb-4">
-        <div className="flex items-center justify-between mb-4">
-          <div className="font-display text-lg">Recent Orders</div>
-          <Btn variant="secondary" size="sm" onClick={() => setView('orders')}>View all <ChevronRight size={14} className="inline" /></Btn>
-        </div>
-        {recentOrders.length === 0 ? (
-          <EmptyHint>No orders yet. Click "New Order" to log your first sale.</EmptyHint>
-        ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left" style={{ color: THEME.inkSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                <th className="pb-2 font-medium">Order</th>
-                <th className="pb-2 font-medium">Date</th>
-                <th className="pb-2 font-medium">Customer</th>
-                <th className="pb-2 font-medium">Items</th>
-                <th className="pb-2 font-medium text-right">Total</th>
-                <th className="pb-2 font-medium">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {recentOrders.map((o) => {
-                const t = (o.items || []).reduce((s, i) => s + i.qty * i.price, 0);
-                return (
-                  <tr key={o.id} style={{ borderTop: `1px solid ${THEME.line}` }}>
-                    <td className="py-2.5 font-medium">{o.id}</td>
-                    <td className="py-2.5" style={{ color: THEME.inkSoft }}>{fmtDate(o.date)}</td>
-                    <td className="py-2.5">{o.customer}</td>
-                    <td className="py-2.5" style={{ color: THEME.inkSoft }}>{(o.items || []).length} item{(o.items || []).length !== 1 ? 's' : ''}</td>
-                    <td className="py-2.5 text-right font-medium">{m(t)}</td>
-                    <td className="py-2.5"><Badge color={statusColor(o.payment_status)}>{o.payment_status}</Badge></td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-      </Card>
 
       {/* ===== Business health: demoted to one compact strip ===== */}
       <Card className="px-5 py-4">
