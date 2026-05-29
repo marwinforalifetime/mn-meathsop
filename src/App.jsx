@@ -51,7 +51,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v6.8.1 · Dark Mode Hover Fix';
+const APP_VERSION = 'v6.9.1 · Mobile Export Fix';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -906,6 +906,7 @@ export default function App() {
 
 function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, currentUser, theme, setTheme }) {
   const ordersList = Object.values(orders);
+  const [showWeekly, setShowWeekly] = useState(false);
 
   // Privacy-aware money formatter
   const m = (n) => privacy ? '₱•••••' : peso(n);
@@ -1064,6 +1065,65 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
     };
   }, [orders, expenses, thisMonthKey, todayKey]);
 
+  // ── Weekly summary (Mon–Sun of the current calendar week) ──
+  const weekly = useMemo(() => {
+    const n = new Date();
+    // Find Monday of this week (getDay: Sun=0..Sat=6)
+    const dow = n.getDay();
+    const daysSinceMon = (dow + 6) % 7;
+    const monday = new Date(n);
+    monday.setDate(n.getDate() - daysSinceMon);
+    monday.setHours(0, 0, 0, 0);
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    sunday.setHours(23, 59, 59, 999);
+    const mIso = `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, '0')}-${String(monday.getDate()).padStart(2, '0')}`;
+    const sIso = `${sunday.getFullYear()}-${String(sunday.getMonth() + 1).padStart(2, '0')}-${String(sunday.getDate()).padStart(2, '0')}`;
+
+    let sales = 0, cost = 0, owed = 0, orderCount = 0;
+    const customers = new Set();
+    const byBatch = {};
+    ordersList.forEach((o) => {
+      if (o.delivery_status === 'Cancelled') return;
+      const d = o.date || '';
+      if (d < mIso || d > sIso) return;
+      const oSales = (o.items || []).reduce((s, i) => s + i.qty * i.price, 0);
+      const oCost = (o.items || []).reduce((s, i) => s + i.qty * i.cost, 0);
+      sales += oSales; cost += oCost; orderCount += 1;
+      if (o.customer) customers.add(o.customer.trim().toLowerCase());
+      if (o.payment_status === 'Unpaid') owed += oSales;
+      else if (o.payment_status === 'Partial') owed += Math.max(0, oSales - (Number(o.amount_paid) || 0));
+      const b = o.delivery_batch || 'Unassigned';
+      if (!byBatch[b]) byBatch[b] = { sales: 0, count: 0 };
+      byBatch[b].sales += oSales; byBatch[b].count += 1;
+    });
+    return {
+      mIso, sIso, monday, sunday,
+      sales: Math.round(sales), cost: Math.round(cost), profit: Math.round(sales - cost),
+      owed: Math.round(owed), orderCount, customerCount: customers.size,
+      byBatch: Object.entries(byBatch).map(([batch, v]) => ({ batch, sales: Math.round(v.sales), count: v.count }))
+        .sort((a, b) => a.batch.localeCompare(b.batch)),
+    };
+  }, [orders]);
+
+  // Build the shareable text version of the weekly summary
+  const weeklyText = useMemo(() => {
+    const range = `${weekly.monday.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })} – ${weekly.sunday.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}`;
+    let t = `📊 M&N Meatshop — Weekly Summary\n${range}\n\n`;
+    t += `Sales: ${peso(weekly.sales)}\n`;
+    t += `Supplier cost: ${peso(weekly.cost)}\n`;
+    t += `Profit: ${peso(weekly.profit)}\n`;
+    t += `Orders: ${weekly.orderCount} from ${weekly.customerCount} customer${weekly.customerCount !== 1 ? 's' : ''}\n`;
+    if (weekly.owed > 0) t += `Still to collect: ${peso(weekly.owed)}\n`;
+    if (weekly.byBatch.length > 0) {
+      t += `\nBy delivery:\n`;
+      weekly.byBatch.forEach((b) => {
+        t += `• ${batchLabel(b.batch)}: ${peso(b.sales)} (${b.count} order${b.count !== 1 ? 's' : ''})\n`;
+      });
+    }
+    return t;
+  }, [weekly]);
+
   const unpaidOrders = useMemo(() =>
     ordersList
       .filter(o => (o.payment_status === 'Unpaid' || o.payment_status === 'Partial') && o.delivery_status !== 'Cancelled')
@@ -1113,6 +1173,7 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
             {privacy ? <EyeOff size={15} /> : <Eye size={15} />}
             {privacy ? 'Amounts hidden' : 'Hide amounts'}
           </button>
+          <Btn variant="secondary" onClick={() => setShowWeekly(true)}><FileText size={16} className="inline mr-1.5 -mt-0.5" />Weekly</Btn>
           <Btn variant="primary" onClick={() => setView('new')}><PlusCircle size={16} className="inline mr-1.5 -mt-0.5" />New Order</Btn>
         </div>
       </div>
@@ -1383,6 +1444,79 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
           </div>
         </div>
       </Card>
+
+      {/* ===== Weekly Summary modal ===== */}
+      {showWeekly && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 no-print"
+          style={{ background: 'rgba(0,0,0,0.5)' }} onClick={() => setShowWeekly(false)}>
+          <div className="w-full max-w-md rounded-xl overflow-hidden" style={{ background: THEME.card, maxHeight: '90vh', overflowY: 'auto' }}
+            onClick={(e) => e.stopPropagation()}>
+            <div className="px-6 py-5" style={{ borderBottom: `1px solid ${THEME.line}` }}>
+              <div className="flex items-center justify-between">
+                <div className="font-display text-xl" style={{ color: THEME.brand }}>Weekly Summary</div>
+                <button onClick={() => setShowWeekly(false)} className="p-1.5 rounded row-hover"><X size={18} /></button>
+              </div>
+              <div className="text-sm mt-1" style={{ color: THEME.inkSoft }}>
+                {weekly.monday.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })} – {weekly.sunday.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}
+              </div>
+            </div>
+
+            <div className="px-6 py-5 space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3 rounded-lg" style={{ background: THEME.brandBg }}>
+                  <div className="text-xs" style={{ color: THEME.inkSoft }}>Sales</div>
+                  <div className="font-display text-2xl" style={{ color: THEME.brand }}>{m(weekly.sales)}</div>
+                </div>
+                <div className="p-3 rounded-lg" style={{ background: THEME.successBg }}>
+                  <div className="text-xs" style={{ color: THEME.inkSoft }}>Profit</div>
+                  <div className="font-display text-2xl" style={{ color: THEME.green }}>{m(weekly.profit)}</div>
+                </div>
+              </div>
+
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between"><span style={{ color: THEME.inkSoft }}>Supplier cost</span><span>{m(weekly.cost)}</span></div>
+                <div className="flex justify-between"><span style={{ color: THEME.inkSoft }}>Orders</span><span>{weekly.orderCount} from {weekly.customerCount} customer{weekly.customerCount !== 1 ? 's' : ''}</span></div>
+                {weekly.owed > 0 && (
+                  <div className="flex justify-between"><span style={{ color: THEME.inkSoft }}>Still to collect</span><span style={{ color: THEME.red }}>{m(weekly.owed)}</span></div>
+                )}
+              </div>
+
+              {weekly.byBatch.length > 0 && (
+                <div className="pt-3" style={{ borderTop: `1px solid ${THEME.line}` }}>
+                  <div className="text-xs uppercase tracking-wider mb-2" style={{ color: THEME.inkSoft }}>By delivery</div>
+                  <div className="space-y-1.5">
+                    {weekly.byBatch.map((b) => (
+                      <div key={b.batch} className="flex justify-between text-sm">
+                        <span>{batchLabel(b.batch)}</span>
+                        <span style={{ color: THEME.inkSoft }}>{m(b.sales)} · {b.count} order{b.count !== 1 ? 's' : ''}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {weekly.orderCount === 0 && (
+                <div className="text-center py-4 text-sm" style={{ color: THEME.inkSoft }}>
+                  No orders yet this week.
+                </div>
+              )}
+            </div>
+
+            <div className="px-6 py-4 flex gap-2" style={{ borderTop: `1px solid ${THEME.line}` }}>
+              <Btn variant="primary" className="flex-1" onClick={async () => {
+                const text = weeklyText;
+                try {
+                  if (navigator.share) { await navigator.share({ text }); }
+                  else { await navigator.clipboard.writeText(text); alert('Summary copied! Paste it into Messenger.'); }
+                } catch (e) { /* user cancelled share — ignore */ }
+              }}>
+                <Upload size={15} className="inline mr-1.5 -mt-0.5" />Share / Copy
+              </Btn>
+              <Btn variant="secondary" onClick={() => setShowWeekly(false)}>Close</Btn>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2442,29 +2576,36 @@ function PrintableView({ order, mode, onBack }) {
       // Capture the FULL document using its real scroll size so nothing is clipped
       const fullWidth = node.scrollWidth;
       const fullHeight = node.scrollHeight;
-      // Make sure every image (esp. the base64 logo) is fully decoded first,
-      // otherwise it can render as a broken-image icon in the capture.
+      // Make sure every image (logo + QR, both base64) is fully decoded first.
+      // On mobile (esp. iOS Safari) the .complete check isn't enough — we also
+      // call .decode() which forces the browser to fully prepare the bitmap.
       const imgs = Array.from(node.querySelectorAll('img'));
-      await Promise.all(imgs.map((img) => {
-        if (img.complete && img.naturalWidth > 0) return Promise.resolve();
-        return new Promise((res) => {
-          img.onload = res;
-          img.onerror = res;
-        });
+      await Promise.all(imgs.map(async (img) => {
+        try {
+          if (typeof img.decode === 'function') { await img.decode(); return; }
+        } catch (e) { /* decode can reject on some browsers — fall through */ }
+        if (img.complete && img.naturalWidth > 0) return;
+        await new Promise((res) => { img.onload = res; img.onerror = res; });
       }));
-      // Extra settle tick for fonts
-      await new Promise((r) => setTimeout(r, 200));
-      const dataUrl = await toPng(node, {
+      // Let fonts settle.
+      await new Promise((r) => setTimeout(r, 250));
+
+      const opts = {
         quality: 1,
         pixelRatio: 2,
         backgroundColor: '#ffffff',
         width: fullWidth,
         height: fullHeight,
-        style: {
-          margin: '0',
-          transform: 'none',
-        },
-      });
+        cacheBust: true,            // avoid stale cached image fetches on mobile
+        style: { margin: '0', transform: 'none' },
+      };
+
+      // iOS Safari renders base64 images unreliably on the FIRST capture —
+      // the documented fix is to run the capture a few times and keep the
+      // last result, by which point all images are committed to the layer.
+      let dataUrl = await toPng(node, opts);
+      dataUrl = await toPng(node, opts);
+      dataUrl = await toPng(node, opts);
       // Restore the original overflow styles on the on-screen view
       savedOverflow.forEach(({ el, prev }) => { el.style.overflow = prev; });
       const a = document.createElement('a');
@@ -2508,8 +2649,7 @@ function PrintableView({ order, mode, onBack }) {
             <img src={LOGO_DATA_URL} alt="M&N Meatshop"
               width="96" height="96"
               className="w-20 h-20 sm:w-24 sm:h-24 rounded-full object-cover mb-3"
-              style={{ display: 'block' }}
-              onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+              style={{ display: 'block' }} />
             <div className="font-display text-2xl sm:text-3xl" style={{ color: THEME.brand }}>M&N MEATSHOP</div>
             <div className="text-xs sm:text-sm mt-0.5" style={{ color: THEME.inkSoft }}>
               Your Daily Meat Choice
