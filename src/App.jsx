@@ -51,7 +51,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v6.9.1 · Mobile Export Fix';
+const APP_VERSION = 'v6.9.2 · Invoice Export Fix';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -2561,9 +2561,33 @@ function PrintableView({ order, mode, onBack }) {
     setSavingImg(true);
     try {
       const node = docRef.current;
-      // Temporarily turn off any internal overflow (e.g. the table's
-      // overflow-x-auto for mobile scrolling) so the export doesn't render
-      // a scrollbar in the PNG. Restored after capture below.
+
+      // ── MOBILE FIX: force a fixed desktop-width render during capture ──
+      // On mobile the invoice renders at phone screen width (~390px on iPhone 12),
+      // which squishes the table columns and distorts the QR aspect ratio.
+      // We temporarily override the node's width to match the web layout (680px),
+      // capture at that size, then restore everything. This makes the exported PNG
+      // identical on all devices — phone, tablet, desktop — every time.
+      const EXPORT_WIDTH = 680;
+      const prevStyles = {
+        width: node.style.width,
+        minWidth: node.style.minWidth,
+        maxWidth: node.style.maxWidth,
+        overflow: node.style.overflow,
+        position: node.style.position,
+      };
+      node.style.width = `${EXPORT_WIDTH}px`;
+      node.style.minWidth = `${EXPORT_WIDTH}px`;
+      node.style.maxWidth = `${EXPORT_WIDTH}px`;
+      node.style.overflow = 'visible';
+      node.style.position = 'relative';
+
+      // Force a reflow so the browser recalculates layout at the new width
+      // before we measure scrollHeight for the capture dimensions.
+      void node.offsetHeight;
+      await new Promise((r) => setTimeout(r, 100));
+
+      // Turn off internal overflow scrollbars so they don't appear in the PNG
       const scrollables = Array.from(node.querySelectorAll('*')).filter((el) => {
         const cs = getComputedStyle(el);
         return cs.overflowX === 'auto' || cs.overflowX === 'scroll' ||
@@ -2573,12 +2597,11 @@ function PrintableView({ order, mode, onBack }) {
       const savedOverflow = scrollables.map((el) => ({ el, prev: el.style.overflow }));
       scrollables.forEach(({ }, i) => { savedOverflow[i].el.style.overflow = 'visible'; });
 
-      // Capture the FULL document using its real scroll size so nothing is clipped
-      const fullWidth = node.scrollWidth;
+      const fullWidth = EXPORT_WIDTH;
       const fullHeight = node.scrollHeight;
-      // Make sure every image (logo + QR, both base64) is fully decoded first.
-      // On mobile (esp. iOS Safari) the .complete check isn't enough — we also
-      // call .decode() which forces the browser to fully prepare the bitmap.
+
+      // Force full image decode before capture (logo + QR both base64).
+      // .decode() makes the browser fully prepare the bitmap — required on iOS.
       const imgs = Array.from(node.querySelectorAll('img'));
       await Promise.all(imgs.map(async (img) => {
         try {
@@ -2587,8 +2610,8 @@ function PrintableView({ order, mode, onBack }) {
         if (img.complete && img.naturalWidth > 0) return;
         await new Promise((res) => { img.onload = res; img.onerror = res; });
       }));
-      // Let fonts settle.
-      await new Promise((r) => setTimeout(r, 250));
+      // Let fonts settle at the new width
+      await new Promise((r) => setTimeout(r, 300));
 
       const opts = {
         quality: 1,
@@ -2596,22 +2619,26 @@ function PrintableView({ order, mode, onBack }) {
         backgroundColor: '#ffffff',
         width: fullWidth,
         height: fullHeight,
-        cacheBust: true,            // avoid stale cached image fetches on mobile
+        cacheBust: true,
         style: { margin: '0', transform: 'none' },
       };
 
-      // iOS Safari renders base64 images unreliably on the FIRST capture —
-      // the documented fix is to run the capture a few times and keep the
-      // last result, by which point all images are committed to the layer.
+      // iOS Safari renders base64 images unreliably on the FIRST capture.
+      // Triple-pass is the documented workaround — keep the final result.
       let dataUrl = await toPng(node, opts);
       dataUrl = await toPng(node, opts);
       dataUrl = await toPng(node, opts);
-      // Restore the original overflow styles on the on-screen view
+
+      // Restore all overridden styles so the on-screen view goes back to mobile layout
       savedOverflow.forEach(({ el, prev }) => { el.style.overflow = prev; });
-      const a = document.createElement('a');
-      // Filename: "ORD-042 - Mac Hermann" (keep spaces/caps for readability,
-      // strip only characters that are illegal in filenames).
+      node.style.width = prevStyles.width;
+      node.style.minWidth = prevStyles.minWidth;
+      node.style.maxWidth = prevStyles.maxWidth;
+      node.style.overflow = prevStyles.overflow;
+      node.style.position = prevStyles.position;
+
       const cleanName = (order.customer || 'Customer').replace(/[\\/:*?"<>|]+/g, '').trim();
+      const a = document.createElement('a');
       a.href = dataUrl;
       a.download = `${order.id} - ${cleanName}.png`;
       document.body.appendChild(a);
@@ -2768,8 +2795,10 @@ function PrintableView({ order, mode, onBack }) {
               style={{ background: THEME.brandBg, border: `1px solid ${THEME.line}` }}>
               <div className="flex items-center gap-3">
                 <div className="p-1.5 rounded-md"
-                  style={{ background: 'white', border: `1px solid ${THEME.line}`, boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-                  <img src={GCASH_QR} alt="GCash QR" style={{ width: 96, height: 96, display: 'block' }} />
+                  style={{ background: 'white', border: `1px solid ${THEME.line}`, boxShadow: '0 1px 3px rgba(0,0,0,0.05)', flexShrink: 0 }}>
+                  <img src={GCASH_QR} alt="GCash QR"
+                    width="96" height="96"
+                    style={{ width: 96, height: 96, display: 'block', flexShrink: 0 }} />
                 </div>
                 <div>
                   <div className="text-[9px] font-semibold uppercase mb-0.5"
