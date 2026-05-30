@@ -51,7 +51,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v6.9.2 · Invoice Export Fix';
+const APP_VERSION = 'v7.0 · Live Ticker';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -1177,6 +1177,47 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
           <Btn variant="primary" onClick={() => setView('new')}><PlusCircle size={16} className="inline mr-1.5 -mt-0.5" />New Order</Btn>
         </div>
       </div>
+
+      {/* ===== Live ticker tape ===== */}
+      {(() => {
+        const tick = [];
+        tick.push({ label: `${monthName} profit`, value: m(stats.monthProfit ?? stats.grossProfit), cls: 'green' });
+        tick.push({ label: 'Sales', value: m(stats.monthSales ?? stats.totalSales), cls: '' });
+        tick.push({ label: 'Orders', value: `${stats.monthOrderCount} this month`, cls: '' });
+        tick.push({ label: 'Collection', value: `${stats.collectionRate}%`, cls: stats.collectionRate >= 80 ? 'green' : 'amber' });
+        if (stats.unpaid > 0) tick.push({ label: 'Still owed', value: m(stats.unpaid), cls: 'red' });
+        if (stats.nextBatch) {
+          tick.push({ label: 'Next batch', value: batchLabel(stats.nextBatch.batch), cls: 'gold' });
+          tick.push({ label: 'Batch total', value: m(stats.nextBatch.total), cls: 'green' });
+        }
+        if (stats.b2bRevenue > 0) tick.push({ label: 'B2B', value: m(stats.b2bRevenue), cls: 'gold' });
+        if (stats.topProducts && stats.topProducts.length > 0) tick.push({ label: 'Top product', value: stats.topProducts[0].name, cls: '' });
+        if (stats.repeatRate > 0) tick.push({ label: 'Repeat rate', value: `${stats.repeatRate}%`, cls: 'green' });
+        if (stats.avgOrderValue > 0) tick.push({ label: 'Avg order', value: m(stats.avgOrderValue), cls: '' });
+
+        const clsColor = (c) => c === 'green' ? THEME.green : c === 'red' ? THEME.red : c === 'gold' ? THEME.accent : THEME.ink;
+        const doubled = [...tick, ...tick];
+        return (
+          <div className="mb-4 rounded-lg overflow-hidden flex items-stretch"
+            style={{ background: THEME.brandBg, border: `1px solid ${THEME.line}` }}>
+            <div className="flex items-center px-3 flex-shrink-0"
+              style={{ background: THEME.brand, color: '#fff', fontSize: 10, fontWeight: 600, letterSpacing: '0.12em' }}>
+              LIVE
+            </div>
+            <div className="overflow-hidden whitespace-nowrap flex items-center" style={{ flex: 1, height: 34 }}>
+              <div className="mn-ticker-track inline-flex items-center">
+                {doubled.map((it, i) => (
+                  <span key={i} className="inline-flex items-center" style={{ paddingRight: 24 }}>
+                    <span style={{ width: 4, height: 4, borderRadius: '50%', background: THEME.accent, marginRight: 7, flexShrink: 0 }} />
+                    <span style={{ fontSize: 11, color: THEME.inkSoft, marginRight: 5 }}>{it.label}</span>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: clsColor(it.cls) }}>{it.value}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ===== Currently collecting (for next production day) ===== */}
       <Card className="px-5 py-4 mb-4" style={{ background: stats.pendingOrders > 0 ? THEME.warnBg : THEME.card, border: `1px solid ${stats.pendingOrders > 0 ? THEME.amber : THEME.line}` }}>

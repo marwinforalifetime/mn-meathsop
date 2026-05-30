@@ -43,6 +43,20 @@ body {
   background-color: var(--danger-hover, #FBEAEA) !important;
 }
 
+/* Live ticker tape — pure CSS transform animation on the GPU compositor,
+   no JS per frame, so it has effectively zero performance cost. */
+.mn-ticker-track {
+  animation: mn-ticker-scroll 30s linear infinite;
+  will-change: transform;
+}
+.mn-ticker-track:hover {
+  animation-play-state: paused;
+}
+@keyframes mn-ticker-scroll {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
 @media print {
   .no-print {
     display: none !important;
