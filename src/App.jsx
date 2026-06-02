@@ -51,7 +51,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v7.4 · Live Cost on All Orders';
+const APP_VERSION = 'v7.5 · Editable Wholesale Price';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -764,7 +764,7 @@ function MainApp() {
           {view === 'salescheck' && <SalesCheck orders={orders} catalog={catalog} privacy={privacy} />}
           {view === 'expenses' && <Expenses expenses={expenses} setExpenses={setExpenses} />}
           {view === 'products' && <Products catalog={catalog} setCatalog={setCatalog} priceHistory={priceHistory} setPriceHistory={setPriceHistory} />}
-          {view === 'restaurantquote' && <RestaurantQuote catalog={catalog} qtys={quoteQtys} setQtys={setQuoteQtys} />}
+          {view === 'restaurantquote' && <RestaurantQuote catalog={catalog} setCatalog={setCatalog} qtys={quoteQtys} setQtys={setQuoteQtys} />}
           {view === 'profitcheck' && <QuoteProfitCheck catalog={catalog} privacy={privacy} qtys={quoteQtys} setQtys={setQuoteQtys} />}
           {view === 'supplierprices' && <SupplierPrices priceHistory={priceHistory} setPriceHistory={setPriceHistory} catalog={catalog} setCatalog={setCatalog} privacy={privacy} />}
           {view === 'supplierpayments' && <SupplierPayments payments={supplierPayments} setPayments={setSupplierPayments} privacy={privacy} />}
@@ -3466,9 +3466,28 @@ function rqPricing(p) {
 }
 
 // ---- Client-facing quote: safe to show the restaurant ----
-function RestaurantQuote({ catalog, qtys, setQtys }) {
+function RestaurantQuote({ catalog, setCatalog, qtys, setQtys }) {
   const sheetRef = useRef(null);
   const [savingSheet, setSavingSheet] = useState(false);
+  const [editingPrice, setEditingPrice] = useState(null); // product name being edited
+  const [priceDraft, setPriceDraft] = useState('');
+
+  // Save an edited wholesale price as a custom override on the product.
+  // Setting it to blank or 0 clears the override (back to formula pricing).
+  const saveWholesalePrice = (name) => {
+    const val = Number(priceDraft);
+    setCatalog(catalog.map(p => {
+      if (p.name !== name) return p;
+      if (!(val > 0)) { const { wholesalePrice, ...rest } = p; return rest; } // clear override
+      return { ...p, wholesalePrice: Math.round(val) };
+    }));
+    setEditingPrice(null);
+    setPriceDraft('');
+  };
+  const startEditPrice = (r) => {
+    setEditingPrice(r.name);
+    setPriceDraft(String(r.wholesale));
+  };
 
   const rows = useMemo(() => catalog.map((p) => {
     const pr = rqPricing(p);
@@ -3564,7 +3583,26 @@ function RestaurantQuote({ catalog, qtys, setQtys }) {
                         <tr key={r.name} style={{ borderTop: `1px solid ${THEME.line}` }}>
                           <td className="py-2">{r.name}</td>
                           <td className="py-2 text-right" style={{ color: THEME.inkSoft, textDecoration: r.discounted ? 'line-through' : 'none' }}>{peso(r.price)}</td>
-                          <td className="py-2 text-right font-medium">{peso(r.wholesale)}</td>
+                          <td className="py-2 text-right">
+                            {editingPrice === r.name ? (
+                              <span className="inline-flex items-center gap-1 justify-end">
+                                <input type="number" min="0" step="1" value={priceDraft} autoFocus
+                                  onChange={(e) => setPriceDraft(e.target.value)}
+                                  onKeyDown={(e) => { if (e.key === 'Enter') saveWholesalePrice(r.name); if (e.key === 'Escape') { setEditingPrice(null); setPriceDraft(''); } }}
+                                  className="w-20 px-2 py-1 rounded text-right outline-none"
+                                  style={{ background: THEME.card, border: `1px solid ${THEME.brand}`, color: THEME.ink }} />
+                                <button onClick={() => saveWholesalePrice(r.name)} className="p-1" style={{ color: THEME.green }} title="Save"><Save size={13} /></button>
+                              </span>
+                            ) : (
+                              <button onClick={() => startEditPrice(r)}
+                                className="inline-flex items-center gap-1 font-medium px-1.5 py-0.5 rounded row-hover"
+                                style={{ color: THEME.ink }} title="Tap to edit price">
+                                {peso(r.wholesale)}
+                                {r.custom && <span style={{ fontSize: 9, color: THEME.accent, fontWeight: 600 }}>•</span>}
+                                <Edit3 size={11} style={{ color: THEME.inkSoft, opacity: 0.6 }} />
+                              </button>
+                            )}
+                          </td>
                           <td className="py-2 text-right">
                             <input type="number" min="0" step="0.5" value={qtys[r.name] || ''}
                               onChange={(e) => setQty(r.name, e.target.value)}
@@ -3579,6 +3617,9 @@ function RestaurantQuote({ catalog, qtys, setQtys }) {
                   ))}
                 </tbody>
               </table>
+            </div>
+            <div className="text-xs mt-3 pt-3" style={{ color: THEME.inkSoft, borderTop: `1px solid ${THEME.line}` }}>
+              Tap any price in <strong>Our Price / kg</strong> to adjust what you charge restaurants. A gold dot (<span style={{ color: THEME.accent, fontWeight: 600 }}>•</span>) marks a custom price you've set. Clear the field and save to return to automatic pricing. Changes apply everywhere — wholesale orders, invoices, and the printed price sheet.
             </div>
           </Card>
         </div>
