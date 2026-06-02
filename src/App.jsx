@@ -51,7 +51,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v7.2 · Linked Costs + Live Profit';
+const APP_VERSION = 'v7.3 · Consistent Profit Everywhere';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -760,7 +760,7 @@ function MainApp() {
           {view === 'dashboard' && <Dashboard orders={orders} expenses={expenses} catalog={catalog} setView={setView} privacy={privacy} setPrivacy={setPrivacy} currentUser={currentUser} theme={theme} setTheme={setTheme} />}
           {view === 'new' && <NewOrder catalog={catalog} meta={meta} setMeta={setMeta} orders={orders} setOrders={setOrders} onSaved={() => setView('orders')} />}
           {view === 'orders' && <Orders orders={orders} setOrders={setOrders} productByName={productByName} catalog={catalog} />}
-          {view === 'pickup' && <Pickup orders={orders} />}
+          {view === 'pickup' && <Pickup orders={orders} catalog={catalog} />}
           {view === 'salescheck' && <SalesCheck orders={orders} catalog={catalog} privacy={privacy} />}
           {view === 'expenses' && <Expenses expenses={expenses} setExpenses={setExpenses} />}
           {view === 'products' && <Products catalog={catalog} setCatalog={setCatalog} priceHistory={priceHistory} setPriceHistory={setPriceHistory} />}
@@ -907,6 +907,7 @@ export default function App() {
 function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, currentUser, theme, setTheme }) {
   const ordersList = Object.values(orders);
   const [showWeekly, setShowWeekly] = useState(false);
+  const productByName = useMemo(() => Object.fromEntries((catalog || []).map(p => [p.name, p])), [catalog]);
 
   // Privacy-aware money formatter
   const m = (n) => privacy ? '₱•••••' : peso(n);
@@ -914,6 +915,16 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
   const now = new Date();
   const thisMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   const todayKey = now.toISOString().slice(0, 10);
+
+  // Pending orders cost = current supplier cost; delivered = frozen snapshot.
+  const effectiveCost = (order, it) => {
+    const isPending = (order.delivery_status || 'Pending') === 'Pending';
+    if (isPending) {
+      const p = productByName[it.product];
+      if (p && typeof p.cost === 'number') return p.cost;
+    }
+    return Number(it.cost) || 0;
+  };
 
   const stats = useMemo(() => {
     let totalSales = 0, totalCost = 0, unpaid = 0;
@@ -932,7 +943,7 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
     ordersList.forEach((o) => {
       if (o.delivery_status === 'Cancelled') return;
       const oSales = (o.items || []).reduce((s, i) => s + i.qty * i.price, 0);
-      const oCost = (o.items || []).reduce((s, i) => s + i.qty * i.cost, 0);
+      const oCost = (o.items || []).reduce((s, i) => s + i.qty * effectiveCost(o, i), 0);
       totalSales += oSales;
       totalCost += oCost;
       if (o.payment_status === 'Unpaid') unpaid += oSales;
@@ -1063,7 +1074,7 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
       collectionRate, monthUnpaid, repeatRate, repeatCustomers, monthCustomers,
       avgOrderValue, monthOrderCount, b2bRevenue, b2bOrders, nextBatch,
     };
-  }, [orders, expenses, thisMonthKey, todayKey]);
+  }, [orders, expenses, thisMonthKey, todayKey, productByName]);
 
   // ── Weekly summary (Mon–Sun of the current calendar week) ──
   const weekly = useMemo(() => {
@@ -1088,7 +1099,7 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
       const d = o.date || '';
       if (d < mIso || d > sIso) return;
       const oSales = (o.items || []).reduce((s, i) => s + i.qty * i.price, 0);
-      const oCost = (o.items || []).reduce((s, i) => s + i.qty * i.cost, 0);
+      const oCost = (o.items || []).reduce((s, i) => s + i.qty * effectiveCost(o, i), 0);
       sales += oSales; cost += oCost; orderCount += 1;
       if (o.customer) customers.add(o.customer.trim().toLowerCase());
       if (o.payment_status === 'Unpaid') owed += oSales;
@@ -1104,7 +1115,7 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
       byBatch: Object.entries(byBatch).map(([batch, v]) => ({ batch, sales: Math.round(v.sales), count: v.count }))
         .sort((a, b) => a.batch.localeCompare(b.batch)),
     };
-  }, [orders]);
+  }, [orders, productByName]);
 
   // Build the shareable text version of the weekly summary
   const weeklyText = useMemo(() => {
@@ -2186,8 +2197,17 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
   };
 
   const view = editing ? draft : order;
+  // Pending orders reflect current supplier cost; delivered keep snapshot.
+  const vIsPending = (view.delivery_status || 'Pending') === 'Pending';
+  const vCost = (it) => {
+    if (vIsPending) {
+      const p = productByName[it.product];
+      if (p && typeof p.cost === 'number') return p.cost;
+    }
+    return Number(it.cost) || 0;
+  };
   const total = (view.items || []).reduce((s, i) => s + (Number(i.qty) || 0) * (i.price || 0), 0);
-  const cost = (view.items || []).reduce((s, i) => s + (Number(i.qty) || 0) * (i.cost || 0), 0);
+  const cost = (view.items || []).reduce((s, i) => s + (Number(i.qty) || 0) * vCost(i), 0);
   const profit = total - cost;
 
   return (
@@ -2937,8 +2957,19 @@ function PrintableView({ order, mode, onBack }) {
    PICKUP CROSS-CHECK
    ============================================================ */
 
-function Pickup({ orders }) {
+function Pickup({ orders, catalog }) {
   const [selected, setSelected] = useState(new Set());
+  const productByName = useMemo(() => Object.fromEntries((catalog || []).map(p => [p.name, p])), [catalog]);
+  // Pending orders: use current supplier cost (what you'll pay at pickup today).
+  // Delivered orders: keep the snapshot cost recorded at the time.
+  const effectiveCost = (order, it) => {
+    const isPending = (order.delivery_status || 'Pending') === 'Pending';
+    if (isPending) {
+      const p = productByName[it.product];
+      if (p && typeof p.cost === 'number') return p.cost;
+    }
+    return Number(it.cost) || 0;
+  };
 
   const ordersList = useMemo(
     () => Object.values(orders)
@@ -2966,12 +2997,12 @@ function Pickup({ orders }) {
           byProduct[it.product] = { product: it.product, qty: 0, cost: 0, totalCost: 0, unit: it.unit };
         }
         byProduct[it.product].qty += it.qty;
-        byProduct[it.product].cost = it.cost;
-        byProduct[it.product].totalCost += it.qty * it.cost;
+        byProduct[it.product].cost = effectiveCost(order, it);
+        byProduct[it.product].totalCost += it.qty * effectiveCost(order, it);
       });
     });
     return Object.values(byProduct).sort((a, b) => a.product.localeCompare(b.product));
-  }, [selected, orders]);
+  }, [selected, orders, productByName]);
 
   const grandTotal = rollup.reduce((s, r) => s + r.totalCost, 0);
   // Total kilos across rollup (only items priced per kg, so the figure is meaningful).
