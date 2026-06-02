@@ -51,7 +51,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v7.3 · Consistent Profit Everywhere';
+const APP_VERSION = 'v7.4 · Live Cost on All Orders';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -916,13 +916,12 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
   const thisMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   const todayKey = now.toISOString().slice(0, 10);
 
-  // Pending orders cost = current supplier cost; delivered = frozen snapshot.
+  // Always use the CURRENT supplier cost from the catalog so profit reflects
+  // what you actually pay today. Falls back to the order's snapshot cost only
+  // if the product is no longer in the catalog.
   const effectiveCost = (order, it) => {
-    const isPending = (order.delivery_status || 'Pending') === 'Pending';
-    if (isPending) {
-      const p = productByName[it.product];
-      if (p && typeof p.cost === 'number') return p.cost;
-    }
+    const p = productByName[it.product];
+    if (p && typeof p.cost === 'number') return p.cost;
     return Number(it.cost) || 0;
   };
 
@@ -2197,13 +2196,10 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
   };
 
   const view = editing ? draft : order;
-  // Pending orders reflect current supplier cost; delivered keep snapshot.
-  const vIsPending = (view.delivery_status || 'Pending') === 'Pending';
+  // Always reflect the current supplier cost from the catalog.
   const vCost = (it) => {
-    if (vIsPending) {
-      const p = productByName[it.product];
-      if (p && typeof p.cost === 'number') return p.cost;
-    }
+    const p = productByName[it.product];
+    if (p && typeof p.cost === 'number') return p.cost;
     return Number(it.cost) || 0;
   };
   const total = (view.items || []).reduce((s, i) => s + (Number(i.qty) || 0) * (i.price || 0), 0);
@@ -2960,14 +2956,10 @@ function PrintableView({ order, mode, onBack }) {
 function Pickup({ orders, catalog }) {
   const [selected, setSelected] = useState(new Set());
   const productByName = useMemo(() => Object.fromEntries((catalog || []).map(p => [p.name, p])), [catalog]);
-  // Pending orders: use current supplier cost (what you'll pay at pickup today).
-  // Delivered orders: keep the snapshot cost recorded at the time.
+  // Always use the current supplier cost from the catalog (what you pay today).
   const effectiveCost = (order, it) => {
-    const isPending = (order.delivery_status || 'Pending') === 'Pending';
-    if (isPending) {
-      const p = productByName[it.product];
-      if (p && typeof p.cost === 'number') return p.cost;
-    }
+    const p = productByName[it.product];
+    if (p && typeof p.cost === 'number') return p.cost;
     return Number(it.cost) || 0;
   };
 
@@ -3100,15 +3092,12 @@ function Pickup({ orders, catalog }) {
 
 function SalesCheck({ orders, catalog, privacy }) {
   const productByName = useMemo(() => Object.fromEntries((catalog || []).map(p => [p.name, p])), [catalog]);
-  // For PENDING orders, profit should reflect the CURRENT supplier cost (you
-  // haven't bought the meat yet). For delivered orders, keep the snapshot cost
-  // that was true at the time — protects historical accuracy.
+  // Always use the current supplier cost from the catalog so profit reflects
+  // what you actually pay today. Falls back to the order snapshot only if the
+  // product was removed from the catalog.
   const effectiveCost = (order, it) => {
-    const isPending = (order.delivery_status || 'Pending') === 'Pending';
-    if (isPending) {
-      const p = productByName[it.product];
-      if (p && typeof p.cost === 'number') return p.cost;
-    }
+    const p = productByName[it.product];
+    if (p && typeof p.cost === 'number') return p.cost;
     return Number(it.cost) || 0;
   };
   const [selected, setSelected] = useState(new Set());
