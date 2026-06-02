@@ -51,7 +51,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v7.1 · Wholesale on Edit';
+const APP_VERSION = 'v7.2 · Linked Costs + Live Profit';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -761,12 +761,12 @@ function MainApp() {
           {view === 'new' && <NewOrder catalog={catalog} meta={meta} setMeta={setMeta} orders={orders} setOrders={setOrders} onSaved={() => setView('orders')} />}
           {view === 'orders' && <Orders orders={orders} setOrders={setOrders} productByName={productByName} catalog={catalog} />}
           {view === 'pickup' && <Pickup orders={orders} />}
-          {view === 'salescheck' && <SalesCheck orders={orders} privacy={privacy} />}
+          {view === 'salescheck' && <SalesCheck orders={orders} catalog={catalog} privacy={privacy} />}
           {view === 'expenses' && <Expenses expenses={expenses} setExpenses={setExpenses} />}
           {view === 'products' && <Products catalog={catalog} setCatalog={setCatalog} priceHistory={priceHistory} setPriceHistory={setPriceHistory} />}
           {view === 'restaurantquote' && <RestaurantQuote catalog={catalog} qtys={quoteQtys} setQtys={setQuoteQtys} />}
           {view === 'profitcheck' && <QuoteProfitCheck catalog={catalog} privacy={privacy} qtys={quoteQtys} setQtys={setQuoteQtys} />}
-          {view === 'supplierprices' && <SupplierPrices priceHistory={priceHistory} setPriceHistory={setPriceHistory} catalog={catalog} privacy={privacy} />}
+          {view === 'supplierprices' && <SupplierPrices priceHistory={priceHistory} setPriceHistory={setPriceHistory} catalog={catalog} setCatalog={setCatalog} privacy={privacy} />}
           {view === 'supplierpayments' && <SupplierPayments payments={supplierPayments} setPayments={setSupplierPayments} privacy={privacy} />}
         </main>
       </div>
@@ -3067,7 +3067,19 @@ function Pickup({ orders }) {
    SALES CROSS-CHECK (customer side — selling price)
    ============================================================ */
 
-function SalesCheck({ orders, privacy }) {
+function SalesCheck({ orders, catalog, privacy }) {
+  const productByName = useMemo(() => Object.fromEntries((catalog || []).map(p => [p.name, p])), [catalog]);
+  // For PENDING orders, profit should reflect the CURRENT supplier cost (you
+  // haven't bought the meat yet). For delivered orders, keep the snapshot cost
+  // that was true at the time — protects historical accuracy.
+  const effectiveCost = (order, it) => {
+    const isPending = (order.delivery_status || 'Pending') === 'Pending';
+    if (isPending) {
+      const p = productByName[it.product];
+      if (p && typeof p.cost === 'number') return p.cost;
+    }
+    return Number(it.cost) || 0;
+  };
   const [selected, setSelected] = useState(new Set());
   const m = (n) => privacy ? '₱•••••' : peso(n);
 
@@ -3099,11 +3111,11 @@ function SalesCheck({ orders, privacy }) {
         byProduct[it.product].qty += it.qty;
         byProduct[it.product].price = it.price;
         byProduct[it.product].totalPrice += it.qty * it.price;
-        byProduct[it.product].totalCost += it.qty * (Number(it.cost) || 0);
+        byProduct[it.product].totalCost += it.qty * effectiveCost(order, it);
       });
     });
     return Object.values(byProduct).sort((a, b) => a.product.localeCompare(b.product));
-  }, [selected, orders]);
+  }, [selected, orders, productByName]);
 
   const grandTotal = rollup.reduce((s, r) => s + r.totalPrice, 0);
   const grandCost = rollup.reduce((s, r) => s + r.totalCost, 0);
@@ -3876,17 +3888,20 @@ function QuoteProfitCheck({ catalog, privacy, qtys, setQtys }) {
 
 
 
-function SupplierPrices({ priceHistory, setPriceHistory, catalog, privacy }) {
+function SupplierPrices({ priceHistory, setPriceHistory, catalog, setCatalog, privacy }) {
   const m = (n) => privacy ? '₱•••••' : peso(n);
   const history = priceHistory || [];
   const [adding, setAdding] = useState(null); // null | {product, oldCost, newCost, date}
 
-  const startAdd = () => setAdding({
-    product: catalog[0]?.name || '',
-    oldCost: '',
-    newCost: '',
-    date: today(),
-  });
+  const startAdd = () => {
+    const first = catalog[0];
+    return setAdding({
+      product: first?.name || '',
+      oldCost: first ? String(first.cost) : '',   // pre-fill with current cost
+      newCost: '',
+      date: today(),
+    });
+  };
 
   const saveManual = () => {
     if (!adding) return;
@@ -3907,9 +3922,14 @@ function SupplierPrices({ priceHistory, setPriceHistory, catalog, privacy }) {
       delta: Math.round((newCost - oldCost) * 100) / 100,
       sellPrice,
       marginImpact: Math.round((oldCost - newCost) * 100) / 100,
-      manual: true, // truthfully marked: this was hand-entered, not auto-captured
+      manual: true,
     };
     setPriceHistory([entry, ...(priceHistory || [])]);
+    // LINKED: update the product's actual cost in the catalog so Price List,
+    // pending-order profit, and everything else reflect the new cost immediately.
+    if (setCatalog) {
+      setCatalog(catalog.map(p => p.name === adding.product ? { ...p, cost: entry.newCost } : p));
+    }
     setAdding(null);
   };
 
@@ -4060,7 +4080,10 @@ function SupplierPrices({ priceHistory, setPriceHistory, catalog, privacy }) {
             <div className="space-y-4">
               <div>
                 <Label>Product</Label>
-                <Select value={adding.product} onChange={(e) => setAdding({ ...adding, product: e.target.value })}
+                <Select value={adding.product} onChange={(e) => {
+                  const prod = catalog.find(p => p.name === e.target.value);
+                  setAdding({ ...adding, product: e.target.value, oldCost: prod ? String(prod.cost) : '' });
+                }}
                   options={catalog.map(p => p.name)} />
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -4194,9 +4217,9 @@ function SupplierPayments({ payments, setPayments, privacy }) {
       notes: (adding.notes || '').trim(),
     };
     if (editingId) {
-      setPayments(list.map(p => p.id === editingId ? entry : p));
+      setPayments((prev) => (prev || []).map(p => p.id === editingId ? entry : p));
     } else {
-      setPayments([entry, ...list]);
+      setPayments((prev) => [entry, ...(prev || [])]);
     }
     setAdding(null);
     setEditingId(null);
@@ -4207,7 +4230,7 @@ function SupplierPayments({ payments, setPayments, privacy }) {
   };
   const remove = (id) => {
     if (!confirm('Delete this payment entry?')) return;
-    setPayments(list.filter(p => p.id !== id));
+    setPayments((prev) => (prev || []).filter(p => p.id !== id));
   };
 
   return (
