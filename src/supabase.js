@@ -69,3 +69,33 @@ export function onAuthChange(cb) {
   const { data } = supabase.auth.onAuthStateChange((_event, session) => cb(session));
   return data ? data.subscription : null;
 }
+
+// ---- Online order requests (from the customer ordering app) ----
+
+// Fetch all order requests for this workspace, newest first.
+export async function fetchOrderRequests() {
+  const { data, error } = await supabase
+    .from('order_requests')
+    .select('*')
+    .eq('workspace_id', WORKSPACE_ID)
+    .order('created_at', { ascending: false });
+  if (error) { console.error('Fetch requests error:', error); throw error; }
+  return data || [];
+}
+
+// Update a request's status (accepted | declined | delivered).
+export async function updateOrderRequestStatus(id, status) {
+  const { error } = await supabase
+    .from('order_requests')
+    .update({ status, reviewed_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) { console.error('Update request error:', error); throw error; }
+  return true;
+}
+
+// Delete a request (e.g. after it's been turned into a real order).
+export async function deleteOrderRequest(id) {
+  const { error } = await supabase.from('order_requests').delete().eq('id', id);
+  if (error) { console.error('Delete request error:', error); throw error; }
+  return true;
+}

@@ -4,7 +4,7 @@ import {
   Printer, Trash2, Edit3, Search, X, Check, AlertCircle, TrendingUp,
   Receipt, FileText, ChevronRight, ChevronUp, ChevronDown, Save, Loader2, Plus,
   Eye, EyeOff, ArrowLeft, RefreshCw, Download, Upload, HardDrive, Image as ImageIcon,
-  Activity, Menu, Store, Moon, Sun, CheckCircle
+  Activity, Menu, Store, Moon, Sun, CheckCircle, Inbox
 } from 'lucide-react';
 import {
   BarChart, Bar, PieChart, Pie, Cell, ResponsiveContainer, XAxis, YAxis,
@@ -13,7 +13,7 @@ import {
 import { toPng } from 'html-to-image';
 import { LOGO_DATA_URL } from './logo.js';
 import { GCASH_QR, GCASH_NUMBER } from './gcash-qr.js';
-import { cloudLoad, cloudSave, getSession, signIn, signOut, onAuthChange } from './supabase.js';
+import { cloudLoad, cloudSave, getSession, signIn, signOut, onAuthChange, fetchOrderRequests, updateOrderRequestStatus, deleteOrderRequest } from './supabase.js';
 
 /* ============================================================
    SEED DATA (from your spreadsheet)
@@ -51,7 +51,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v7.5 · Editable Wholesale Price';
+const APP_VERSION = 'v7.6 · Online Orders';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -616,6 +616,7 @@ function MainApp() {
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'new', label: 'New Order', icon: PlusCircle },
+    { id: 'requests', label: 'Online Orders', icon: Inbox },
     { id: 'orders', label: 'Orders', icon: ListOrdered },
     { id: 'pickup', label: 'Pickup Check', icon: Truck },
     { id: 'salescheck', label: 'Sales Check', icon: Receipt },
@@ -759,6 +760,7 @@ function MainApp() {
           )}
           {view === 'dashboard' && <Dashboard orders={orders} expenses={expenses} catalog={catalog} setView={setView} privacy={privacy} setPrivacy={setPrivacy} currentUser={currentUser} theme={theme} setTheme={setTheme} />}
           {view === 'new' && <NewOrder catalog={catalog} meta={meta} setMeta={setMeta} orders={orders} setOrders={setOrders} onSaved={() => setView('orders')} />}
+          {view === 'requests' && <OrderRequests catalog={catalog} orders={orders} setOrders={setOrders} meta={meta} setMeta={setMeta} />}
           {view === 'orders' && <Orders orders={orders} setOrders={setOrders} productByName={productByName} catalog={catalog} />}
           {view === 'pickup' && <Pickup orders={orders} catalog={catalog} />}
           {view === 'salescheck' && <SalesCheck orders={orders} catalog={catalog} privacy={privacy} />}
@@ -1573,9 +1575,230 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
 }
 
 /* ============================================================
+   ONLINE ORDER REQUESTS (from the customer ordering app)
+   ============================================================ */
+function OrderRequests({ catalog, orders, setOrders, meta, setMeta }) {
+  const productByName = useMemo(() => Object.fromEntries(catalog.map(p => [p.name, p])), [catalog]);
+  const [requests, setRequests] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState('');
+  const [busyId, setBusyId] = useState(null);
+
+  const [notSetUp, setNotSetUp] = useState(false);
+
+  const load = async () => {
+    setLoading(true); setErr(''); setNotSetUp(false);
+    try {
+      const data = await fetchOrderRequests();
+      setRequests(data);
+    } catch (e) {
+      // If the order_requests table doesn't exist yet, Supabase returns a
+      // "relation does not exist" / not-found style error. Treat that as
+      // "online ordering isn't set up yet" rather than a scary failure.
+      const msg = (e && (e.message || e.details || e.hint || '')) + '' + (e && e.code ? ' ' + e.code : '');
+      const missing = /does not exist|not found|relation|PGRST(205|202|116)|404/i.test(msg);
+      if (missing) setNotSetUp(true);
+      else setErr('Could not load online orders. Check your connection and try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { load(); }, []);
+
+  const pending = requests.filter(r => r.status === 'pending');
+  const others = requests.filter(r => r.status !== 'pending');
+
+  // Accept: convert the request into a real order in the system, then mark
+  // the request accepted so it leaves the pending queue.
+  const accept = async (req) => {
+    setBusyId(req.id); setErr('');
+    try {
+      const newNum = (meta.lastOrderNum || 0) + 1;
+      const id = 'ORD-' + String(newNum).padStart(3, '0');
+      // Snapshot current catalog cost/price for each item.
+      const snapshotItems = (req.items || []).map((it) => {
+        const p = productByName[it.product];
+        return {
+          product: it.product,
+          qty: Number(it.qty),
+          price: p ? p.price : (Number(it.price) || 0),
+          cost: p ? p.cost : 0,
+          unit: p ? p.unit : (it.unit || 'kg'),
+          note: '',
+          wholesale: false,
+        };
+      });
+      const order = {
+        id, date: today(),
+        customer: req.customer_name,
+        phone: req.phone,
+        payment_status: 'Unpaid',
+        payment_method: 'GCash',
+        delivery_status: 'Pending',
+        delivery_batch: suggestedBatch(),
+        notes: `Online order. Address: ${req.address}${req.note ? ' · ' + req.note : ''}`,
+        items: snapshotItems,
+        created_at: new Date().toISOString(),
+        source: 'online',
+      };
+      setOrders({ ...orders, [id]: order });
+      setMeta({ ...meta, lastOrderNum: newNum });
+      await updateOrderRequestStatus(req.id, 'accepted');
+      setRequests((prev) => prev.map(r => r.id === req.id ? { ...r, status: 'accepted' } : r));
+    } catch (e) {
+      setErr('Could not accept this order. Please try again.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const decline = async (req) => {
+    if (!confirm(`Decline ${req.customer_name}'s order? They'll see it marked declined.`)) return;
+    setBusyId(req.id);
+    try {
+      await updateOrderRequestStatus(req.id, 'declined');
+      setRequests((prev) => prev.map(r => r.id === req.id ? { ...r, status: 'declined' } : r));
+    } catch (e) {
+      setErr('Could not decline. Please try again.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const removeReq = async (req) => {
+    if (!confirm('Remove this from the list? This only clears it here, the order in your Orders tab stays.')) return;
+    setBusyId(req.id);
+    try {
+      await deleteOrderRequest(req.id);
+      setRequests((prev) => prev.filter(r => r.id !== req.id));
+    } catch (e) {
+      setErr('Could not remove. Please try again.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <div>
+      <Header title="Online Orders" subtitle="Requests from your customer ordering app"
+        right={<Btn variant="secondary" size="sm" onClick={load}><RefreshCw size={13} className="inline -mt-0.5 mr-1" />Refresh</Btn>} />
+
+      {err && <div className="mb-4 px-4 py-3 rounded-lg text-sm" style={{ background: THEME.dangerBg || '#FCEBEB', color: THEME.red }}>{err}</div>}
+
+      {notSetUp ? (
+        <Card className="p-8 text-center">
+          <Inbox size={32} style={{ color: THEME.brand, margin: '0 auto 12px' }} />
+          <div className="font-display text-lg mb-2">Online ordering isn't set up yet</div>
+          <div className="text-sm mb-1" style={{ color: THEME.inkSoft, maxWidth: 420, margin: '0 auto' }}>
+            This is where customer orders from your online ordering app will appear. To turn it on, set up the customer app and its database table.
+          </div>
+          <div className="text-sm" style={{ color: THEME.inkSoft, maxWidth: 420, margin: '8px auto 0' }}>
+            Until then, everything else in your system works normally — this tab just waits quietly.
+          </div>
+        </Card>
+      ) : loading ? (
+        <div className="flex items-center gap-2 py-12 justify-center" style={{ color: THEME.inkSoft }}>
+          <Loader2 size={18} className="animate-spin" /> Loading…
+        </div>
+      ) : (
+        <>
+          {/* Pending requests need action */}
+          <div className="mb-2 flex items-center gap-2">
+            <span className="font-display text-lg">Needs your action</span>
+            {pending.length > 0 && <Badge color="amber">{pending.length}</Badge>}
+          </div>
+          {pending.length === 0 ? (
+            <Card className="p-8 text-center mb-6">
+              <Inbox size={28} style={{ color: THEME.inkSoft, margin: '0 auto 8px' }} />
+              <div className="text-sm" style={{ color: THEME.inkSoft }}>No new online orders right now.</div>
+            </Card>
+          ) : (
+            <div className="space-y-3 mb-6">
+              {pending.map((req) => (
+                <RequestCard key={req.id} req={req} busy={busyId === req.id}
+                  onAccept={() => accept(req)} onDecline={() => decline(req)} />
+              ))}
+            </div>
+          )}
+
+          {/* History */}
+          {others.length > 0 && (
+            <>
+              <div className="font-display text-lg mb-2">Reviewed</div>
+              <div className="space-y-3">
+                {others.map((req) => (
+                  <RequestCard key={req.id} req={req} reviewed busy={busyId === req.id}
+                    onRemove={() => removeReq(req)} />
+                ))}
+              </div>
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function RequestCard({ req, reviewed, busy, onAccept, onDecline, onRemove }) {
+  const statusColors = {
+    pending: { label: 'New', color: THEME.amber, bg: THEME.warnBg },
+    accepted: { label: 'Accepted', color: '#185FA5', bg: '#E6F1FB' },
+    declined: { label: 'Declined', color: THEME.red, bg: THEME.dangerBg || '#FCEBEB' },
+    delivered: { label: 'Delivered', color: THEME.green, bg: THEME.successBg },
+  };
+  const s = statusColors[req.status] || statusColors.pending;
+  const created = new Date(req.created_at);
+
+  return (
+    <Card className="p-4">
+      <div className="flex items-start justify-between mb-2">
+        <div>
+          <div className="font-medium">{req.customer_name}</div>
+          <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>
+            {req.phone} · {created.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })} {created.toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' })}
+          </div>
+        </div>
+        <Badge color={req.status === 'pending' ? 'amber' : req.status === 'declined' ? 'red' : 'blue'}>{s.label}</Badge>
+      </div>
+
+      <div className="flex items-start gap-1.5 text-sm mb-3" style={{ color: THEME.inkSoft }}>
+        <MapPin size={14} className="mt-0.5 flex-shrink-0" />
+        <span>{req.address}</span>
+      </div>
+
+      <div className="rounded-lg p-3 mb-3" style={{ background: THEME.bg }}>
+        {(req.items || []).map((it, i) => (
+          <div key={i} className="flex justify-between text-sm py-0.5">
+            <span>{it.product} <span style={{ color: THEME.inkSoft }}>× {it.qty} {it.unit || 'kg'}</span></span>
+            <span>{peso(it.qty * it.price)}</span>
+          </div>
+        ))}
+        {req.note && <div className="text-xs mt-2 pt-2" style={{ color: THEME.inkSoft, borderTop: `1px solid ${THEME.line}` }}>Note: {req.note}</div>}
+        <div className="flex justify-between items-center pt-2 mt-1" style={{ borderTop: `1px solid ${THEME.line}` }}>
+          <span className="text-sm font-medium">Total</span>
+          <span className="font-display" style={{ color: THEME.brand }}>{peso(req.total)}</span>
+        </div>
+      </div>
+
+      {!reviewed ? (
+        <div className="flex gap-2">
+          <Btn variant="primary" className="flex-1" onClick={onAccept} disabled={busy}>
+            {busy ? <Loader2 size={15} className="inline animate-spin" /> : <><Check size={15} className="inline -mt-0.5 mr-1" />Accept → create order</>}
+          </Btn>
+          <Btn variant="secondary" onClick={onDecline} disabled={busy}>Decline</Btn>
+        </div>
+      ) : (
+        <div className="flex justify-end">
+          <button onClick={onRemove} disabled={busy} className="text-xs" style={{ color: THEME.inkSoft }}>Remove from list</button>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/* ============================================================
    NEW ORDER
    ============================================================ */
-
 function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
   const [date, setDate] = useState(today());
   const [customer, setCustomer] = useState('');
