@@ -65,6 +65,33 @@ export async function signOut() {
   await supabase.auth.signOut();
 }
 
+// Publish the public-safe catalog (names + prices only) to the public_catalog
+// table that the customer ordering app reads. Called whenever the catalog
+// changes. Only product name, price, unit, and group are published — no cost,
+// no profit, nothing sensitive.
+export async function publishCatalog(catalog) {
+  try {
+    const rows = (catalog || []).map((p, i) => ({
+      workspace_id: WORKSPACE_ID,
+      name: p.name,
+      price: Number(p.price) || 0,
+      unit: p.unit || 'kg',
+      product_group: p.group || 'Pork',
+      sort_order: i,
+    }));
+    // Replace the whole public catalog for this workspace: delete then insert.
+    await supabase.from('public_catalog').delete().eq('workspace_id', WORKSPACE_ID);
+    if (rows.length > 0) {
+      const { error } = await supabase.from('public_catalog').insert(rows);
+      if (error) { console.error('publishCatalog insert error:', error); return false; }
+    }
+    return true;
+  } catch (e) {
+    console.error('publishCatalog error:', e);
+    return false;
+  }
+}
+
 export function onAuthChange(cb) {
   const { data } = supabase.auth.onAuthStateChange((_event, session) => cb(session));
   return data ? data.subscription : null;

@@ -13,7 +13,7 @@ import {
 import { toPng } from 'html-to-image';
 import { LOGO_DATA_URL } from './logo.js';
 import { GCASH_QR, GCASH_NUMBER } from './gcash-qr.js';
-import { cloudLoad, cloudSave, getSession, signIn, signOut, onAuthChange, fetchOrderRequests, updateOrderRequestStatus, deleteOrderRequest } from './supabase.js';
+import { cloudLoad, cloudSave, getSession, signIn, signOut, onAuthChange, fetchOrderRequests, updateOrderRequestStatus, deleteOrderRequest, publishCatalog } from './supabase.js';
 
 /* ============================================================
    SEED DATA (from your spreadsheet)
@@ -51,7 +51,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v7.6 · Online Orders';
+const APP_VERSION = 'v7.7 · Publishes Catalog';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -538,6 +538,16 @@ function MainApp() {
     }, 600);
     return () => { cancelled = true; clearTimeout(t); };
   }, [catalog, orders, expenses, inventory, priceHistory, supplierPayments, meta, loaded]);
+
+  // Publish the public-safe catalog (names + prices only) to the public_catalog
+  // table so the customer ordering app shows current prices. Debounced, and only
+  // runs when the catalog actually changes. Safe to fail quietly — if the
+  // public_catalog table doesn't exist yet, this just no-ops.
+  useEffect(() => {
+    if (!loaded) return; // app data loaded implies the owner is logged in
+    const t = setTimeout(() => { publishCatalog(catalog); }, 1000);
+    return () => clearTimeout(t);
+  }, [catalog, loaded]);
 
   // One-time import: push existing local data up to an empty cloud.
   const importLocalToCloud = async () => {
