@@ -51,7 +51,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v7.8 · Online Orders Fix';
+const APP_VERSION = 'v7.9 · Live Order Badge';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -379,6 +379,21 @@ function MainApp() {
   const [loaded, setLoaded] = useState(false);
   const [view, setView] = useState('dashboard');
   const [mobileNav, setMobileNav] = useState(false);
+  const [pendingOnline, setPendingOnline] = useState(0);
+
+  // Poll for new online orders every 30s so the menu shows a live badge.
+  useEffect(() => {
+    let active = true;
+    const check = async () => {
+      try {
+        const reqs = await fetchOrderRequests();
+        if (active) setPendingOnline((reqs || []).filter(r => r.status === 'pending').length);
+      } catch (e) { /* table may not exist yet — ignore */ }
+    };
+    check();
+    const iv = setInterval(check, 30000);
+    return () => { active = false; clearInterval(iv); };
+  }, [view]);
   // Shared quote quantities — kept at app level so they survive tab switches
   // and are shared between Restaurant Quote and Quote Profit Check. Only the
   // Clear button empties them.
@@ -696,7 +711,14 @@ function MainApp() {
                     borderLeft: active ? `3px solid ${THEME.brand}` : '3px solid transparent',
                     paddingLeft: active ? '21px' : '24px',
                   }}>
-                  <Icon size={17} />{item.label}
+                  <Icon size={17} />
+                  <span className="flex-1">{item.label}</span>
+                  {item.id === 'requests' && pendingOnline > 0 && (
+                    <span className="flex items-center justify-center text-xs font-semibold rounded-full"
+                      style={{ background: THEME.red, color: 'white', minWidth: 20, height: 20, padding: '0 6px' }}>
+                      {pendingOnline}
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -1634,7 +1656,7 @@ function OrderRequests({ catalog, orders, setOrders, meta, setMeta }) {
           price: p ? p.price : (Number(it.price) || 0),
           cost: p ? p.cost : 0,
           unit: p ? p.unit : (it.unit || 'kg'),
-          note: '',
+          note: (it.note || '').trim(),
           wholesale: false,
         };
       });
@@ -1778,9 +1800,12 @@ function RequestCard({ req, reviewed, busy, onAccept, onDecline, onRemove }) {
 
       <div className="rounded-lg p-3 mb-3" style={{ background: THEME.bg }}>
         {(req.items || []).map((it, i) => (
-          <div key={i} className="flex justify-between text-sm py-0.5">
-            <span>{it.product} <span style={{ color: THEME.inkSoft }}>× {it.qty} {it.unit || 'kg'}</span></span>
-            <span>{peso(it.qty * it.price)}</span>
+          <div key={i} className="py-0.5">
+            <div className="flex justify-between text-sm">
+              <span>{it.product} <span style={{ color: THEME.inkSoft }}>× {it.qty} {it.unit || 'kg'}</span></span>
+              <span>{peso(it.qty * it.price)}</span>
+            </div>
+            {it.note && <div className="text-xs" style={{ color: THEME.brand }}>↳ {it.note}</div>}
           </div>
         ))}
         {req.note && <div className="text-xs mt-2 pt-2" style={{ color: THEME.inkSoft, borderTop: `1px solid ${THEME.line}` }}>Note: {req.note}</div>}
