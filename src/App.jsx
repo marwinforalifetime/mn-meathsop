@@ -51,7 +51,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Prepared', 'Out for delivery', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v8.2 · Faster New Order';
+const APP_VERSION = 'v8.3 · Online Orders board';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -1618,14 +1618,67 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
 /* ============================================================
    ONLINE ORDER REQUESTS (from the customer ordering app)
    ============================================================ */
+/* ============================================================
+   ONLINE ORDERS (incoming requests from the customer app)
+   ============================================================
+   Card-based review board: compact summary cards by default, a full
+   receipt-style modal on "View Receipt". The customer app packs
+   delivery date / payment / preferred time into a single note string,
+   and the contact into `phone` (a number or "Messenger: <name>"), so
+   we parse those back out for labeled rows — without inventing any
+   value we can't find — and keep the raw note in the receipt. */
+
+// Pull the labeled bits back out of the packed note + phone field.
+function parseRequestMeta(req) {
+  const note = req.note || '';
+  const grab = (re) => { const m = note.match(re); return m ? m[1].trim() : ''; };
+  const deliveryDate = (req.delivery_date || grab(/Preferred delivery:\s*([^·]+)/i) || '').trim();
+  const payment = (req.payment_method || grab(/Payment:\s*([^·]+)/i) || '').trim();
+  const preferredTime = grab(/Preferred time:\s*([^·]+)/i);
+  const phone = (req.phone || '').trim();
+  const isMessenger = /messenger/i.test(phone);
+  const contactMethod = isMessenger ? 'Messenger' : (phone ? 'SMS / Call' : '');
+  const contactDetail = phone.replace(/^messenger:\s*/i, '').trim();
+  const freeNote = note
+    .split('·').map((s) => s.trim())
+    .filter((s) => s
+      && !/^Preferred delivery:/i.test(s)
+      && !/^Payment:/i.test(s)
+      && !/^Reach via/i.test(s)
+      && !/^Preferred time:/i.test(s))
+    .join(' · ').trim();
+  return { deliveryDate, payment, preferredTime, contactMethod, contactDetail, freeNote, rawNote: note };
+}
+
+const reqStatusInfo = (status) => {
+  if (status === 'pending') return { label: 'New', color: 'amber' };
+  if (status === 'accepted') return { label: 'Accepted', color: 'brand' };
+  if (status === 'delivered') return { label: 'Delivered', color: 'green' };
+  if (status === 'declined') return { label: 'Declined', color: 'red' };
+  return { label: status || 'New', color: 'gray' };
+};
+
+const reqRef = (req) => req.reference || req.order_ref || req.ref || '';
+const submittedAt = (req) => {
+  if (!req.created_at) return '';
+  const d = new Date(req.created_at);
+  return `${d.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })} · ${d.toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' })}`;
+};
+
 function OrderRequests({ catalog, orders, setOrders, meta, setMeta }) {
   const productByName = useMemo(() => Object.fromEntries(catalog.map(p => [p.name, p])), [catalog]);
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
   const [busyId, setBusyId] = useState(null);
-
   const [notSetUp, setNotSetUp] = useState(false);
+
+  const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState('new');     // new | accepted | declined
+  const [sort, setSort] = useState('newest');        // newest | delivery | total
+  const [viewing, setViewing] = useState(null);      // req shown in receipt modal
+  const [declineTarget, setDeclineTarget] = useState(null);
+  const [declineReason, setDeclineReason] = useState('');
 
   const load = async () => {
     setLoading(true); setErr(''); setNotSetUp(false);
@@ -1633,9 +1686,6 @@ function OrderRequests({ catalog, orders, setOrders, meta, setMeta }) {
       const data = await fetchOrderRequests();
       setRequests(data);
     } catch (e) {
-      // If the order_requests table doesn't exist yet, Supabase returns a
-      // "relation does not exist" / not-found style error. Treat that as
-      // "online ordering isn't set up yet" rather than a scary failure.
       const msg = (e && (e.message || e.details || e.hint || '')) + '' + (e && e.code ? ' ' + e.code : '');
       const missing = /does not exist|not found|relation|PGRST(205|202|116)|404/i.test(msg);
       if (missing) setNotSetUp(true);
@@ -1646,46 +1696,68 @@ function OrderRequests({ catalog, orders, setOrders, meta, setMeta }) {
   };
   useEffect(() => { load(); }, []);
 
-  const pending = requests.filter(r => r.status === 'pending');
-  const others = requests.filter(r => r.status !== 'pending');
+  const counts = useMemo(() => ({
+    new: requests.filter(r => r.status === 'pending').length,
+    accepted: requests.filter(r => r.status === 'accepted' || r.status === 'delivered').length,
+    declined: requests.filter(r => r.status === 'declined').length,
+  }), [requests]);
 
-  // Accept: convert the request into a real order in the system, then mark
-  // the request accepted so it leaves the pending queue.
+  const visible = useMemo(() => {
+    let list = requests.filter((r) => {
+      if (filter === 'new') return r.status === 'pending';
+      if (filter === 'accepted') return r.status === 'accepted' || r.status === 'delivered';
+      if (filter === 'declined') return r.status === 'declined';
+      return true;
+    });
+    const q = search.trim().toLowerCase();
+    if (q) {
+      list = list.filter((r) => {
+        const hay = [r.customer_name, r.phone, r.address, reqRef(r), (r.items || []).map(i => i.product).join(' ')]
+          .filter(Boolean).join(' ').toLowerCase();
+        return hay.includes(q);
+      });
+    }
+    const dkey = (r) => {
+      const meta = parseRequestMeta(r);
+      const t = Date.parse(r.delivery_date || meta.deliveryDate);
+      return isNaN(t) ? Infinity : t;
+    };
+    return [...list].sort((a, b) => {
+      if (sort === 'total') return (b.total || 0) - (a.total || 0);
+      if (sort === 'delivery') return dkey(a) - dkey(b);
+      return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+    });
+  }, [requests, filter, search, sort]);
+
   const accept = async (req) => {
+    if (busyId) return;                 // one at a time — protects the order numbering
     setBusyId(req.id); setErr('');
     try {
       const newNum = (meta.lastOrderNum || 0) + 1;
       const id = 'ORD-' + String(newNum).padStart(3, '0');
-      // Snapshot current catalog cost/price for each item.
       const snapshotItems = (req.items || []).map((it) => {
         const p = productByName[it.product];
         return {
-          product: it.product,
-          qty: Number(it.qty),
+          product: it.product, qty: Number(it.qty),
           price: p ? p.price : (Number(it.price) || 0),
           cost: p ? p.cost : 0,
           unit: p ? p.unit : (it.unit || 'kg'),
-          note: (it.note || '').trim(),
-          wholesale: false,
+          note: (it.note || '').trim(), wholesale: false,
         };
       });
       const order = {
         id, date: today(),
-        customer: req.customer_name,
-        phone: req.phone,
-        payment_status: 'Unpaid',
-        payment_method: 'GCash',
-        delivery_status: 'Pending',
-        delivery_batch: suggestedBatch(),
+        customer: req.customer_name, phone: req.phone,
+        payment_status: 'Unpaid', payment_method: 'GCash',
+        delivery_status: 'Pending', delivery_batch: suggestedBatch(),
         notes: `Online order. Address: ${req.address}${req.note ? ' · ' + req.note : ''}`,
-        items: snapshotItems,
-        created_at: new Date().toISOString(),
-        source: 'online',
+        items: snapshotItems, created_at: new Date().toISOString(), source: 'online',
       };
       setOrders({ ...orders, [id]: order });
       setMeta({ ...meta, lastOrderNum: newNum });
       await updateOrderRequestStatus(req.id, 'accepted');
       setRequests((prev) => prev.map(r => r.id === req.id ? { ...r, status: 'accepted' } : r));
+      setViewing(null);
     } catch (e) {
       setErr('Could not accept this order. Please try again.');
     } finally {
@@ -1693,12 +1765,14 @@ function OrderRequests({ catalog, orders, setOrders, meta, setMeta }) {
     }
   };
 
-  const decline = async (req) => {
-    if (!confirm(`Decline ${req.customer_name}'s order? They'll see it marked declined.`)) return;
-    setBusyId(req.id);
+  const confirmDecline = async () => {
+    const req = declineTarget;
+    if (!req) return;
+    setBusyId(req.id); setErr('');
     try {
       await updateOrderRequestStatus(req.id, 'declined');
-      setRequests((prev) => prev.map(r => r.id === req.id ? { ...r, status: 'declined' } : r));
+      setRequests((prev) => prev.map(r => r.id === req.id ? { ...r, status: 'declined', decline_reason: declineReason.trim() } : r));
+      setDeclineTarget(null); setDeclineReason(''); setViewing(null);
     } catch (e) {
       setErr('Could not decline. Please try again.');
     } finally {
@@ -1707,11 +1781,12 @@ function OrderRequests({ catalog, orders, setOrders, meta, setMeta }) {
   };
 
   const removeReq = async (req) => {
-    if (!confirm('Remove this from the list? This only clears it here, the order in your Orders tab stays.')) return;
+    if (!confirm('Remove this from the list? This only clears it here — the order in your Orders tab stays.')) return;
     setBusyId(req.id);
     try {
       await deleteOrderRequest(req.id);
       setRequests((prev) => prev.filter(r => r.id !== req.id));
+      setViewing(null);
     } catch (e) {
       setErr('Could not remove. Please try again.');
     } finally {
@@ -1719,12 +1794,19 @@ function OrderRequests({ catalog, orders, setOrders, meta, setMeta }) {
     }
   };
 
+  const openDecline = (req) => { setDeclineTarget(req); setDeclineReason(''); };
+
+  const filterChips = [
+    { id: 'new', label: 'New', n: counts.new },
+    { id: 'accepted', label: 'Accepted', n: counts.accepted },
+    { id: 'declined', label: 'Declined', n: counts.declined },
+  ];
+
   return (
     <div>
-      <Header title="Online Orders" subtitle="Requests from your customer ordering app"
-        right={<Btn variant="secondary" size="sm" onClick={load}><RefreshCw size={13} className="inline -mt-0.5 mr-1" />Refresh</Btn>} />
+      <Header title="Online Orders" subtitle="Requests from your customer ordering app — review and accept to create an order." />
 
-      {err && <div className="mb-4 px-4 py-3 rounded-lg text-sm" style={{ background: THEME.dangerBg || '#FCEBEB', color: THEME.red }}>{err}</div>}
+      {err && <div className="mb-4 px-4 py-3 rounded-lg text-sm" style={{ background: THEME.errorBg, color: THEME.red }}>{err}</div>}
 
       {notSetUp ? (
         <Card className="p-8 text-center">
@@ -1734,109 +1816,290 @@ function OrderRequests({ catalog, orders, setOrders, meta, setMeta }) {
             This is where customer orders from your online ordering app will appear. To turn it on, set up the customer app and its database table.
           </div>
           <div className="text-sm" style={{ color: THEME.inkSoft, maxWidth: 420, margin: '8px auto 0' }}>
-            Until then, everything else in your system works normally — this tab just waits quietly.
+            Until then, everything else works normally — this tab just waits quietly.
           </div>
         </Card>
-      ) : loading ? (
-        <div className="flex items-center gap-2 py-12 justify-center" style={{ color: THEME.inkSoft }}>
-          <Loader2 size={18} className="animate-spin" /> Loading…
-        </div>
       ) : (
         <>
-          {/* Pending requests need action */}
-          <div className="mb-2 flex items-center gap-2">
-            <span className="font-display text-lg">Needs your action</span>
-            {pending.length > 0 && <Badge color="amber">{pending.length}</Badge>}
+          {/* ===== Top controls ===== */}
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-5">
+            <div className="relative flex-1 min-w-0">
+              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: THEME.inkSoft }} />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name, contact, address, product…" className="pl-9" />
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-44">
+                <Select value={sort} onChange={(e) => setSort(e.target.value)}
+                  options={[{ value: 'newest', label: 'Newest first' }, { value: 'delivery', label: 'Delivery date' }, { value: 'total', label: 'Highest total' }]} />
+              </div>
+              <Btn variant="secondary" size="sm" onClick={load} disabled={loading}>
+                {loading ? <Loader2 size={14} className="inline animate-spin" /> : <><RefreshCw size={13} className="inline -mt-0.5 mr-1" />Refresh</>}
+              </Btn>
+            </div>
           </div>
-          {pending.length === 0 ? (
-            <Card className="p-8 text-center mb-6">
+
+          <div className="flex flex-wrap gap-2 mb-5">
+            {filterChips.map((c) => {
+              const on = filter === c.id;
+              return (
+                <button key={c.id} onClick={() => setFilter(c.id)}
+                  className="px-3.5 py-1.5 rounded-full text-sm font-medium transition-colors flex items-center gap-1.5"
+                  style={{ background: on ? THEME.brand : 'transparent', color: on ? 'white' : THEME.ink, border: `1px solid ${on ? THEME.brand : THEME.line}` }}>
+                  {c.label}
+                  <span className="text-xs px-1.5 rounded-full" style={{ background: on ? 'rgba(255,255,255,0.22)' : THEME.bg, color: on ? 'white' : THEME.inkSoft }}>{c.n}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* ===== Cards ===== */}
+          {loading ? (
+            <div className="flex items-center gap-2 py-12 justify-center" style={{ color: THEME.inkSoft }}>
+              <Loader2 size={18} className="animate-spin" /> Loading…
+            </div>
+          ) : visible.length === 0 ? (
+            <Card className="p-10 text-center">
               <Inbox size={28} style={{ color: THEME.inkSoft, margin: '0 auto 8px' }} />
-              <div className="text-sm" style={{ color: THEME.inkSoft }}>No new online orders right now.</div>
+              <div className="text-sm" style={{ color: THEME.inkSoft }}>
+                {search.trim() ? 'No requests match your search.'
+                  : filter === 'new' ? 'No new online orders right now.'
+                  : filter === 'accepted' ? 'No accepted requests yet.'
+                  : 'No declined requests.'}
+              </div>
             </Card>
           ) : (
-            <div className="space-y-3 mb-6">
-              {pending.map((req) => (
-                <RequestCard key={req.id} req={req} busy={busyId === req.id}
-                  onAccept={() => accept(req)} onDecline={() => decline(req)} />
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {visible.map((req) => (
+                <RequestSummaryCard key={req.id} req={req} busy={busyId === req.id}
+                  onView={() => setViewing(req)}
+                  onAccept={() => accept(req)}
+                  onDecline={() => openDecline(req)} />
               ))}
             </div>
           )}
-
-          {/* History */}
-          {others.length > 0 && (
-            <>
-              <div className="font-display text-lg mb-2">Reviewed</div>
-              <div className="space-y-3">
-                {others.map((req) => (
-                  <RequestCard key={req.id} req={req} reviewed busy={busyId === req.id}
-                    onRemove={() => removeReq(req)} />
-                ))}
-              </div>
-            </>
-          )}
         </>
       )}
+
+      {/* ===== Receipt modal ===== */}
+      <RequestReceiptModal req={viewing} busy={viewing && busyId === viewing.id}
+        onClose={() => setViewing(null)}
+        onAccept={() => viewing && accept(viewing)}
+        onDecline={() => viewing && openDecline(viewing)}
+        onRemove={() => viewing && removeReq(viewing)} />
+
+      {/* ===== Decline dialog ===== */}
+      <Modal open={!!declineTarget} onClose={() => setDeclineTarget(null)} maxWidth="max-w-sm">
+        <div className="p-6">
+          <div className="font-display text-lg mb-1">Decline this request?</div>
+          <div className="text-sm mb-4" style={{ color: THEME.inkSoft }}>
+            {declineTarget ? `${declineTarget.customer_name}'s order will move to your Declined list. It won't be deleted.` : ''}
+          </div>
+          <Label>Reason (optional)</Label>
+          <textarea value={declineReason} onChange={(e) => setDeclineReason(e.target.value)} rows={2}
+            className="w-full px-3 py-2 rounded-md outline-none text-sm mb-1"
+            style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink, fontFamily: 'DM Sans' }}
+            placeholder="e.g. out of stock, outside delivery area" />
+          <div className="text-xs mb-4" style={{ color: THEME.inkSoft }}>Saved for this session so you remember why.</div>
+          <div className="flex justify-end gap-2">
+            <Btn variant="secondary" onClick={() => setDeclineTarget(null)}>Cancel</Btn>
+            <Btn variant="danger" onClick={confirmDecline} disabled={declineTarget && busyId === declineTarget.id}>
+              {declineTarget && busyId === declineTarget.id ? <Loader2 size={14} className="inline animate-spin" /> : 'Decline Request'}
+            </Btn>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
 
-function RequestCard({ req, reviewed, busy, onAccept, onDecline, onRemove }) {
-  const statusColors = {
-    pending: { label: 'New', color: THEME.amber, bg: THEME.warnBg },
-    accepted: { label: 'Accepted', color: '#185FA5', bg: '#E6F1FB' },
-    declined: { label: 'Declined', color: THEME.red, bg: THEME.dangerBg || '#FCEBEB' },
-    delivered: { label: 'Delivered', color: THEME.green, bg: THEME.successBg },
-  };
-  const s = statusColors[req.status] || statusColors.pending;
-  const created = new Date(req.created_at);
+// Small labeled row used inside the summary cards.
+function MetaRow({ label, children }) {
+  return (
+    <div className="flex items-baseline gap-2 text-sm">
+      <span className="flex-shrink-0 text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft, letterSpacing: '0.05em', minWidth: 64 }}>{label}</span>
+      <span className="min-w-0" style={{ color: THEME.ink }}>{children}</span>
+    </div>
+  );
+}
+
+function RequestSummaryCard({ req, busy, onView, onAccept, onDecline }) {
+  const meta = parseRequestMeta(req);
+  const s = reqStatusInfo(req.status);
+  const isNew = req.status === 'pending';
+  const items = req.items || [];
+  const shown = items.slice(0, 2);
+  const moreCount = Math.max(0, items.length - shown.length);
+  const ref = reqRef(req);
 
   return (
-    <Card className="p-4">
-      <div className="flex items-start justify-between mb-2">
-        <div>
-          <div className="font-medium">{req.customer_name}</div>
-          <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>
-            {req.phone} · {created.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })} {created.toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' })}
-          </div>
+    <Card className="p-4 flex flex-col">
+      {/* Header */}
+      <div className="flex items-start justify-between gap-2 mb-3">
+        <div className="min-w-0">
+          <Badge color={s.color}>{s.label}</Badge>
+          {ref && <div className="font-medium mt-1.5 truncate">{ref}</div>}
         </div>
-        <Badge color={req.status === 'pending' ? 'amber' : req.status === 'declined' ? 'red' : 'blue'}>{s.label}</Badge>
+        <div className="text-xs text-right flex-shrink-0" style={{ color: THEME.inkSoft }}>{submittedAt(req)}</div>
       </div>
 
-      <div className="flex items-start gap-1.5 text-sm mb-3" style={{ color: THEME.inkSoft }}>
-        <MapPin size={14} className="mt-0.5 flex-shrink-0" />
-        <span>{req.address}</span>
+      {/* Customer */}
+      <div className="space-y-1.5 mb-3 pb-3" style={{ borderBottom: `1px solid ${THEME.line}` }}>
+        <div className="font-medium" style={{ color: THEME.ink }}>{req.customer_name}</div>
+        {meta.contactDetail && (
+          <MetaRow label={meta.contactMethod === 'Messenger' ? 'Messenger' : 'Contact'}>{meta.contactDetail}</MetaRow>
+        )}
+        {req.address && (
+          <div className="flex items-start gap-1.5 text-sm" style={{ color: THEME.inkSoft }}>
+            <MapPin size={14} className="mt-0.5 flex-shrink-0" /><span className="min-w-0">{req.address}</span>
+          </div>
+        )}
       </div>
 
-      <div className="rounded-lg p-3 mb-3" style={{ background: THEME.bg }}>
-        {(req.items || []).map((it, i) => (
-          <div key={i} className="py-0.5">
-            <div className="flex justify-between text-sm">
-              <span>{it.product} <span style={{ color: THEME.inkSoft }}>× {it.qty} {it.unit || 'kg'}</span></span>
-              <span>{peso(it.qty * it.price)}</span>
-            </div>
-            {it.note && <div className="text-xs" style={{ color: THEME.brand }}>↳ {it.note}</div>}
+      {/* Delivery */}
+      <div className="space-y-1.5 mb-3 pb-3" style={{ borderBottom: `1px solid ${THEME.line}` }}>
+        {meta.deliveryDate && <MetaRow label="Delivery">{meta.deliveryDate}</MetaRow>}
+        {meta.preferredTime && <MetaRow label="Time">{meta.preferredTime}</MetaRow>}
+        {meta.payment && <MetaRow label="Payment">{meta.payment}</MetaRow>}
+        {!meta.deliveryDate && !meta.payment && !meta.preferredTime && (
+          <div className="text-xs" style={{ color: THEME.inkSoft }}>Delivery details in receipt</div>
+        )}
+      </div>
+
+      {/* Items */}
+      <div className="space-y-1 mb-2">
+        {shown.map((it, i) => (
+          <div key={i} className="flex justify-between text-sm gap-2">
+            <span className="min-w-0 truncate">{it.product} <span style={{ color: THEME.inkSoft }}>× {it.qty} {it.unit || 'kg'}</span></span>
+            <span className="flex-shrink-0" style={{ color: THEME.inkSoft }}>{peso(it.qty * it.price)}</span>
           </div>
         ))}
-        {req.note && <div className="text-xs mt-2 pt-2" style={{ color: THEME.inkSoft, borderTop: `1px solid ${THEME.line}` }}>Note: {req.note}</div>}
-        <div className="flex justify-between items-center pt-2 mt-1" style={{ borderTop: `1px solid ${THEME.line}` }}>
-          <span className="text-sm font-medium">Total</span>
-          <span className="font-display" style={{ color: THEME.brand }}>{peso(req.total)}</span>
-        </div>
+        {moreCount > 0 && (
+          <button onClick={onView} className="text-xs font-medium" style={{ color: THEME.brand }}>+ {moreCount} more item{moreCount !== 1 ? 's' : ''}</button>
+        )}
       </div>
 
-      {!reviewed ? (
-        <div className="flex gap-2">
-          <Btn variant="primary" className="flex-1" onClick={onAccept} disabled={busy}>
-            {busy ? <Loader2 size={15} className="inline animate-spin" /> : <><Check size={15} className="inline -mt-0.5 mr-1" />Accept → create order</>}
-          </Btn>
-          <Btn variant="secondary" onClick={onDecline} disabled={busy}>Decline</Btn>
-        </div>
-      ) : (
-        <div className="flex justify-end">
-          <button onClick={onRemove} disabled={busy} className="text-xs" style={{ color: THEME.inkSoft }}>Remove from list</button>
+      {/* Notes preview */}
+      {meta.freeNote && (
+        <div className="text-xs mb-3 px-2.5 py-1.5 rounded" style={{ background: THEME.bg, color: THEME.inkSoft, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          Note: {meta.freeNote}
         </div>
       )}
+      {req.status === 'declined' && req.decline_reason && (
+        <div className="text-xs mb-3" style={{ color: THEME.red }}>Declined: {req.decline_reason}</div>
+      )}
+
+      {/* Total */}
+      <div className="flex items-center justify-between mt-auto pt-3" style={{ borderTop: `1px solid ${THEME.line}` }}>
+        <span className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft, letterSpacing: '0.06em' }}>Total</span>
+        <span className="font-display text-2xl" style={{ color: THEME.brand }}>{peso(req.total)}</span>
+      </div>
+
+      {/* Actions */}
+      <div className="flex gap-2 mt-3">
+        <Btn variant="secondary" size="sm" onClick={onView} className="flex-shrink-0">
+          <Receipt size={14} className="inline -mt-0.5 mr-1" />View Receipt
+        </Btn>
+        {isNew && (
+          <>
+            <Btn variant="danger" size="sm" onClick={onDecline} disabled={busy}>Decline</Btn>
+            <Btn variant="primary" size="sm" onClick={onAccept} disabled={busy} className="flex-1">
+              {busy ? <Loader2 size={14} className="inline animate-spin" /> : <><Check size={14} className="inline -mt-0.5 mr-1" />Accept &amp; Create</>}
+            </Btn>
+          </>
+        )}
+      </div>
     </Card>
+  );
+}
+
+function RequestReceiptModal({ req, busy, onClose, onAccept, onDecline, onRemove }) {
+  if (!req) return null;
+  const meta = parseRequestMeta(req);
+  const s = reqStatusInfo(req.status);
+  const isNew = req.status === 'pending';
+  const items = req.items || [];
+  const ref = reqRef(req);
+
+  const detail = (label, value) => value ? (
+    <div className="flex justify-between gap-3 py-1 text-sm">
+      <span style={{ color: THEME.inkSoft }}>{label}</span>
+      <span className="text-right" style={{ color: THEME.ink }}>{value}</span>
+    </div>
+  ) : null;
+
+  return (
+    <Modal open={!!req} onClose={onClose} maxWidth="max-w-md">
+      <div className="flex flex-col" style={{ maxHeight: '90vh' }}>
+        {/* Receipt body (scrolls) */}
+        <div className="overflow-y-auto p-6">
+          <div className="text-center mb-4">
+            <img src={LOGO_DATA_URL} alt="M&N Meatshop" style={{ height: 52, margin: '0 auto 8px' }} />
+            <div className="font-display text-lg leading-tight" style={{ color: THEME.brand }}>M&amp;N Meatshop</div>
+            <div className="mt-2 inline-flex"><Badge color={s.color}>Order Request · {s.label}</Badge></div>
+            {ref && <div className="text-sm mt-2 font-medium">{ref}</div>}
+            {submittedAt(req) && <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>Submitted {submittedAt(req)}</div>}
+          </div>
+
+          <div className="rounded-lg p-4 mb-3" style={{ background: THEME.bg }}>
+            <div className="text-xs uppercase tracking-wider mb-1.5 font-medium" style={{ color: THEME.inkSoft, letterSpacing: '0.06em' }}>Customer</div>
+            <div className="font-medium mb-1">{req.customer_name}</div>
+            {detail(meta.contactMethod || 'Contact', meta.contactDetail)}
+            {detail('Address', req.address)}
+          </div>
+
+          {(meta.deliveryDate || meta.preferredTime || meta.payment) && (
+            <div className="rounded-lg p-4 mb-3" style={{ background: THEME.bg }}>
+              <div className="text-xs uppercase tracking-wider mb-1.5 font-medium" style={{ color: THEME.inkSoft, letterSpacing: '0.06em' }}>Delivery</div>
+              {detail('Delivery date', meta.deliveryDate)}
+              {detail('Preferred time', meta.preferredTime)}
+              {detail('Payment', meta.payment)}
+            </div>
+          )}
+
+          <div className="mb-3">
+            <div className="text-xs uppercase tracking-wider mb-2 font-medium" style={{ color: THEME.inkSoft, letterSpacing: '0.06em' }}>Items</div>
+            {items.map((it, i) => (
+              <div key={i} className="py-1.5 flex justify-between gap-3 text-sm" style={{ borderTop: i ? `1px solid ${THEME.line}` : 'none' }}>
+                <div className="min-w-0">
+                  <div>{it.product} <span style={{ color: THEME.inkSoft }}>× {it.qty} {it.unit || 'kg'}</span></div>
+                  {it.note && <div className="text-xs mt-0.5" style={{ color: THEME.brand }}>{it.note}</div>}
+                </div>
+                <div className="flex-shrink-0 font-medium">{peso(it.qty * it.price)}</div>
+              </div>
+            ))}
+          </div>
+
+          {meta.freeNote && (
+            <div className="rounded-lg p-3 mb-3 text-sm" style={{ background: THEME.bg, color: THEME.ink }}>
+              <span style={{ color: THEME.inkSoft }}>Note: </span>{meta.freeNote}
+            </div>
+          )}
+          {req.status === 'declined' && req.decline_reason && (
+            <div className="text-sm mb-3" style={{ color: THEME.red }}>Declined reason: {req.decline_reason}</div>
+          )}
+
+          <div className="flex items-center justify-between pt-3 mt-1" style={{ borderTop: `2px solid ${THEME.brand}` }}>
+            <span className="text-sm font-medium">Total</span>
+            <span className="font-display text-2xl" style={{ color: THEME.brand }}>{peso(req.total)}</span>
+          </div>
+        </div>
+
+        {/* Sticky action bar */}
+        <div className="flex items-center justify-between gap-2 px-6 py-4" style={{ borderTop: `1px solid ${THEME.line}`, background: THEME.card }}>
+          <Btn variant="secondary" onClick={onClose}>Close</Btn>
+          {isNew ? (
+            <div className="flex gap-2">
+              <Btn variant="danger" onClick={onDecline} disabled={busy}>Decline</Btn>
+              <Btn variant="primary" onClick={onAccept} disabled={busy}>
+                {busy ? <Loader2 size={15} className="inline animate-spin" /> : <><Check size={15} className="inline -mt-0.5 mr-1" />Accept &amp; Create Order</>}
+              </Btn>
+            </div>
+          ) : (
+            <button onClick={onRemove} disabled={busy} className="text-xs" style={{ color: THEME.inkSoft }}>Remove from list</button>
+          )}
+        </div>
+      </div>
+    </Modal>
   );
 }
 
