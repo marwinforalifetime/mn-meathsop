@@ -49,9 +49,9 @@ const EXPENSE_CATEGORIES = [
 
 const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
-const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
+const DELIVERY_STATUSES = ['Pending', 'Prepared', 'Out for delivery', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v8.1 · Batch Money Check';
+const APP_VERSION = 'v8.2 · Faster New Order';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -314,7 +314,7 @@ function Badge({ children, color = 'brand' }) {
 function statusColor(status) {
   if (status === 'Paid' || status === 'Delivered') return 'green';
   if (status === 'Unpaid' || status === 'Cancelled') return 'red';
-  if (status === 'Partial' || status === 'Pending') return 'amber';
+  if (status === 'Partial' || status === 'Pending' || status === 'Prepared' || status === 'Out for delivery') return 'amber';
   return 'gray';
 }
 
@@ -1012,7 +1012,7 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
         if (isWholesale) { b2bRevenue += oSales; b2bOrders += 1; }
       }
       // Orders still pending delivery = the batch being collected for next production
-      if ((o.delivery_status || 'Pending') === 'Pending') {
+      if (!['Delivered', 'Cancelled'].includes(o.delivery_status || 'Pending')) {
         pendingOrders += 1;
         pendingValue += oSales;
       }
@@ -1091,7 +1091,7 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
     const upcomingByBatch = {};
     ordersList.forEach((o) => {
       if (o.delivery_status === 'Cancelled') return;
-      if ((o.delivery_status || 'Pending') !== 'Pending') return;
+      if (['Delivered', 'Cancelled'].includes(o.delivery_status || 'Pending')) return;
       const b = o.delivery_batch;
       if (!b || b < todayIso) return;
       if (!upcomingByBatch[b]) upcomingByBatch[b] = { batch: b, orders: [], total: 0 };
@@ -1850,6 +1850,8 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
   const [showSuggest, setShowSuggest] = useState(false);
   const [paymentStatus, setPaymentStatus] = useState('Paid');
   const [paymentMethod, setPaymentMethod] = useState('Cash');
+  const [amountPaid, setAmountPaid] = useState('');
+  const [justSaved, setJustSaved] = useState(null);
   const [deliveryStatus, setDeliveryStatus] = useState('Pending');
   const [deliveryBatch, setDeliveryBatch] = useState(suggestedBatch());
   const [notes, setNotes] = useState('');
@@ -1917,11 +1919,21 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
   const addItem = () => setItems([...items, { product: '', qty: 1, note: '', wholesale: wholesaleOrder }]);
   const removeItem = (idx) => setItems(items.filter((_, i) => i !== idx));
 
-  const save = () => {
+  const resetForm = () => {
+    setCustomer(''); setPhone(''); setNotes('');
+    setItems([{ product: '', qty: 1, note: '', wholesale: false }]);
+    setPaymentStatus('Paid'); setPaymentMethod('Cash'); setAmountPaid('');
+    setDeliveryStatus('Pending'); setWholesaleOrder(false);
+    setError(''); setShowSuggest(false);
+    // Order Date and Delivery Batch are kept on purpose — a run of manual
+    // entries is usually the same date and the same delivery batch.
+  };
+
+  const buildAndSaveOrder = () => {
     setError('');
-    if (!customer.trim()) { setError('Customer name is required'); return; }
+    if (!customer.trim()) { setError('Customer name is required'); return null; }
     const cleanItems = items.filter(it => it.product && Number(it.qty) > 0);
-    if (cleanItems.length === 0) { setError('Add at least one product with quantity > 0'); return; }
+    if (cleanItems.length === 0) { setError('Add at least one product with quantity > 0'); return null; }
     const newNum = (meta.lastOrderNum || 0) + 1;
     const id = nextOrderId(meta.lastOrderNum || 0);
     const snapshotItems = cleanItems.map((it) => {
@@ -1931,14 +1943,23 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
     });
     const order = {
       id, date, customer: customer.trim(), phone: phone.trim(),
-      payment_status: paymentStatus, payment_method: paymentMethod, delivery_status: deliveryStatus,
+      payment_status: paymentStatus,
+      // No payment method when nothing has been collected yet.
+      payment_method: paymentStatus === 'Unpaid' ? '' : paymentMethod,
+      // Partial orders remember how much was actually paid (used by Orders,
+      // the Dashboard "owed" total, and Batch Money Check's "collected").
+      amount_paid: paymentStatus === 'Partial' ? (Number(amountPaid) || 0) : '',
+      delivery_status: deliveryStatus,
       delivery_batch: deliveryBatch,
       notes: notes.trim(), items: snapshotItems, created_at: new Date().toISOString(),
     };
     setOrders({ ...orders, [id]: order });
     setMeta({ ...meta, lastOrderNum: newNum });
-    onSaved();
+    return id;
   };
+
+  const save = () => { const id = buildAndSaveOrder(); if (id) onSaved(); };
+  const saveAndNew = () => { const id = buildAndSaveOrder(); if (id) { setJustSaved(id); resetForm(); } };
 
   return (
     <div>
@@ -1960,15 +1981,15 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
         <div className="lg:col-span-2 space-y-5">
           <Card className="p-6">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div><Label>Date</Label><Input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></div>
+              <div><Label>Order Date</Label><Input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></div>
               <div className="relative">
                 <Label>Customer Name</Label>
                 <Input
                   value={customer}
-                  onChange={(e) => { setCustomer(e.target.value); setShowSuggest(true); }}
+                  onChange={(e) => { setCustomer(e.target.value); setShowSuggest(true); setJustSaved(null); }}
                   onFocus={() => setShowSuggest(true)}
                   onBlur={() => setTimeout(() => setShowSuggest(false), 150)}
-                  placeholder="Juan Dela Cruz"
+                  placeholder="Customer name"
                 />
                 {showSuggest && customerMatches.length > 0 && (
                   <div className="absolute z-20 left-0 right-0 mt-1 rounded-md overflow-hidden shadow-lg"
@@ -1988,7 +2009,7 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
                   </div>
                 )}
               </div>
-              <div><Label>Phone (optional)</Label><Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="0917 123 4567" /></div>
+              <div><Label>Phone (optional)</Label><Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="09XX XXX XXXX" /></div>
             </div>
 
             {/* Delivery batch — smart default, expandable to change */}
@@ -2013,7 +2034,7 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
                   Wholesale order (business client)
                 </span>
                 <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>
-                  Use wholesale pricing instead of retail. Per-line checkbox below can override individual items.
+                  Use wholesale pricing for this order. You can still change individual items below.
                 </div>
               </div>
             </label>
@@ -2041,11 +2062,11 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
                       <Input type="number" step="0.01" min="0" value={it.qty} onChange={(e) => updateItem(idx, { qty: e.target.value })} />
                     </div>
                     <div className="col-span-1 sm:col-span-3">
-                      <Label>Notes / Special Cut</Label>
-                      <Input value={it.note} onChange={(e) => updateItem(idx, { note: e.target.value })} placeholder="e.g. thin slice" />
+                      <Label>Cut / Preparation / Notes</Label>
+                      <Input value={it.note} onChange={(e) => updateItem(idx, { note: e.target.value })} placeholder="e.g. adobo cut, thin slice, whole" />
                     </div>
                     <div className="col-span-1 sm:col-span-2">
-                      <Label>Line</Label>
+                      <Label>Line Total</Label>
                       <div className="px-2 py-2 text-sm font-medium">
                         {lineTotal(it) > 0 ? m(lineTotal(it)) : '—'}
                         {p && it.wholesale && (
@@ -2100,7 +2121,35 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
                   ))}
                 </div>
               </div>
-              <div><Label>Payment Method</Label><Select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} options={PAYMENT_METHODS} /></div>
+
+              {/* Partial — record how much was actually paid, show the balance. */}
+              {paymentStatus === 'Partial' && (
+                <div>
+                  <Label>Amount Paid</Label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm pointer-events-none" style={{ color: THEME.inkSoft }}>₱</span>
+                    <Input type="number" step="0.01" min="0" inputMode="decimal" value={amountPaid}
+                      onChange={(e) => setAmountPaid(e.target.value)} placeholder="0.00" className="pl-7 tabular-nums" />
+                  </div>
+                  <div className="text-sm mt-2" style={{ color: THEME.inkSoft }}>
+                    Remaining balance: <span className="font-medium" style={{ color: THEME.red }}>{m(Math.max(0, orderTotal - (Number(amountPaid) || 0)))}</span>
+                    <span> of {m(orderTotal)}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Payment method only matters once money has been collected. */}
+              {paymentStatus === 'Unpaid' ? (
+                <div>
+                  <Label>Payment Method</Label>
+                  <div className="px-3 py-2 text-sm rounded-md" style={{ background: THEME.bg, color: THEME.inkSoft, border: `1px dashed ${THEME.line}` }}>
+                    Not collected yet.
+                  </div>
+                </div>
+              ) : (
+                <div><Label>Payment Method</Label><Select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} options={PAYMENT_METHODS} /></div>
+              )}
+
               <div><Label>Delivery Status</Label><Select value={deliveryStatus} onChange={(e) => setDeliveryStatus(e.target.value)} options={DELIVERY_STATUSES} /></div>
               <div>
                 <Label>Notes</Label>
@@ -2118,9 +2167,20 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
             </div>
           )}
 
-          <Btn variant="primary" size="lg" onClick={save} className="w-full">
-            <Save size={16} className="inline mr-2 -mt-0.5" /> Save Order
-          </Btn>
+          {justSaved && (
+            <div className="px-4 py-3 rounded-md flex items-start gap-2 text-sm" style={{ background: THEME.successBg, color: THEME.successInk }}>
+              <CheckCircle size={16} className="mt-0.5 flex-shrink-0" /> Saved {justSaved}. Form cleared for the next order — date and delivery batch kept.
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <Btn variant="primary" size="lg" onClick={save} className="w-full">
+              <Save size={16} className="inline mr-2 -mt-0.5" /> Save Order
+            </Btn>
+            <Btn variant="secondary" size="lg" onClick={saveAndNew} className="w-full">
+              <Plus size={16} className="inline mr-2 -mt-0.5" /> Save &amp; New Order
+            </Btn>
+          </div>
         </div>
       </div>
     </div>
