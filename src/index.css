@@ -65,3 +65,13 @@ body {
     background: white !important;
   }
 }
+
+/* Subtle pulse for the dashboard LIVE chip dot. */
+.mn-live-dot {
+  display: inline-block;
+  animation: mn-live-pulse 1.6s ease-in-out infinite;
+}
+@keyframes mn-live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}

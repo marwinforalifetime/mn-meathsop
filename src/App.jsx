@@ -51,7 +51,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Prepared', 'Out for delivery', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v8.3 · Online Orders board';
+const APP_VERSION = 'v8.4 · Dashboard clarity';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -798,7 +798,7 @@ function MainApp() {
               </div>
             </div>
           )}
-          {view === 'dashboard' && <Dashboard orders={orders} expenses={expenses} catalog={catalog} setView={setView} privacy={privacy} setPrivacy={setPrivacy} currentUser={currentUser} theme={theme} setTheme={setTheme} />}
+          {view === 'dashboard' && <Dashboard orders={orders} setOrders={setOrders} expenses={expenses} catalog={catalog} setView={setView} privacy={privacy} setPrivacy={setPrivacy} currentUser={currentUser} theme={theme} setTheme={setTheme} />}
           {view === 'new' && <NewOrder catalog={catalog} meta={meta} setMeta={setMeta} orders={orders} setOrders={setOrders} onSaved={() => setView('orders')} />}
           {view === 'requests' && <OrderRequests catalog={catalog} orders={orders} setOrders={setOrders} meta={meta} setMeta={setMeta} />}
           {view === 'orders' && <Orders orders={orders} setOrders={setOrders} productByName={productByName} catalog={catalog} />}
@@ -947,10 +947,37 @@ export default function App() {
    DASHBOARD
    ============================================================ */
 
-function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, currentUser, theme, setTheme }) {
+function Dashboard({ orders, setOrders, expenses, catalog, setView, privacy, setPrivacy, currentUser, theme, setTheme }) {
   const ordersList = Object.values(orders);
   const [showWeekly, setShowWeekly] = useState(false);
+  const [owedSort, setOwedSort] = useState('oldest');   // oldest | highest
+  const [showHealthMath, setShowHealthMath] = useState(false);
+  const moneyOwedRef = useRef(null);
   const productByName = useMemo(() => Object.fromEntries((catalog || []).map(p => [p.name, p])), [catalog]);
+
+  // Shorten a long product name for compact chart labels: drop anything after
+  // a "/" or "(", then keep at most the first two words. Full name stays in the
+  // tooltip. e.g. "Chicken Breast Fillet" -> "Chicken Breast".
+  const shortLabel = (name) => {
+    let s = (name || '').split('/')[0].split('(')[0].trim();
+    const words = s.split(/\s+/);
+    if (words.length > 2) s = words.slice(0, 2).join(' ');
+    return s;
+  };
+
+  // Mark an unpaid/partial order as fully paid, straight from the dashboard.
+  const markPaid = (id) => {
+    setOrders((prev) => prev[id] ? { ...prev, [id]: { ...prev[id], payment_status: 'Paid', amount_paid: '' } } : prev);
+  };
+
+  // tel:/sms: link only when the contact is an actual phone number (not a
+  // "Messenger: name" handle, which can't be linked reliably).
+  const phoneDigits = (phone) => {
+    const p = (phone || '').trim();
+    if (!p || /messenger/i.test(p)) return '';
+    const digits = p.replace(/[^\d+]/g, '');
+    return digits.length >= 7 ? digits : '';
+  };
 
   // Privacy-aware money formatter
   const m = (n) => privacy ? '₱•••••' : peso(n);
@@ -1070,7 +1097,7 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
       .sort((a, b) => b.avg - a.avg);
 
     const topProducts = Object.entries(productQty)
-      .map(([name, v]) => ({ name: name.length > 16 ? name.slice(0, 16) + '…' : name, value: Math.round(v) }))
+      .map(([name, v]) => ({ name, value: Math.round(v) }))
       .sort((a, b) => b.value - a.value).slice(0, 5);
 
     // ── New metrics ──
@@ -1096,7 +1123,10 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
       if (!b || b < todayIso) return;
       if (!upcomingByBatch[b]) upcomingByBatch[b] = { batch: b, orders: [], total: 0 };
       const oSales = (o.items || []).reduce((s, i) => s + i.qty * i.price, 0);
-      upcomingByBatch[b].orders.push({ customer: o.customer, total: Math.round(oSales), id: o.id });
+      const oOutstanding = o.payment_status === 'Unpaid' ? oSales
+        : o.payment_status === 'Partial' ? Math.max(0, oSales - (Number(o.amount_paid) || 0))
+        : 0;
+      upcomingByBatch[b].orders.push({ customer: o.customer, total: Math.round(oSales), id: o.id, status: o.payment_status || 'Unpaid', outstanding: Math.round(oOutstanding) });
       upcomingByBatch[b].total += oSales;
     });
     const nextBatch = Object.values(upcomingByBatch).sort((a, b) => a.batch.localeCompare(b.batch))[0] || null;
@@ -1177,13 +1207,20 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
     return t;
   }, [weekly]);
 
-  const unpaidOrders = useMemo(() =>
-    ordersList
+  const unpaidOrders = useMemo(() => {
+    const list = ordersList
       .filter(o => (o.payment_status === 'Unpaid' || o.payment_status === 'Partial') && o.delivery_status !== 'Cancelled')
-      .sort((a, b) => (b.id || '').localeCompare(a.id || ''))
-      .slice(0, 5),
-    [orders]
-  );
+      .map((o) => {
+        const total = (o.items || []).reduce((s, i) => s + i.qty * i.price, 0);
+        const outstanding = o.payment_status === 'Partial' ? Math.max(0, total - (Number(o.amount_paid) || 0)) : total;
+        return { ...o, _total: total, _outstanding: outstanding };
+      });
+    list.sort((a, b) => owedSort === 'highest'
+      ? b._outstanding - a._outstanding
+      : (a.date || '').localeCompare(b.date || '') || (a.id || '').localeCompare(b.id || '')); // oldest first
+    return list;
+  }, [orders, owedSort]);
+  const unpaidShown = unpaidOrders.slice(0, 6);
 
   const monthName = now.toLocaleString('en-PH', { month: 'long' });
 
@@ -1231,43 +1268,36 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
         </div>
       </div>
 
-      {/* ===== Live ticker tape ===== */}
+      {/* ===== Live metric chips ===== */}
       {(() => {
         const tick = [];
         tick.push({ label: `${monthName} profit`, value: m(stats.monthProfit ?? stats.grossProfit), cls: 'green' });
         tick.push({ label: 'Sales', value: m(stats.monthSales ?? stats.totalSales), cls: '' });
-        tick.push({ label: 'Orders', value: `${stats.monthOrderCount} this month`, cls: '' });
+        tick.push({ label: 'Orders', value: `${stats.monthOrderCount}`, cls: '' });
         tick.push({ label: 'Collection', value: `${stats.collectionRate}%`, cls: stats.collectionRate >= 80 ? 'green' : 'amber' });
-        if (stats.unpaid > 0) tick.push({ label: 'Still owed', value: m(stats.unpaid), cls: 'red' });
-        if (stats.nextBatch) {
-          tick.push({ label: 'Next batch', value: batchLabel(stats.nextBatch.batch), cls: 'gold' });
-          tick.push({ label: 'Batch total', value: m(stats.nextBatch.total), cls: 'green' });
-        }
+        if (stats.unpaid > 0) tick.push({ label: 'Still unpaid', value: m(stats.unpaid), cls: 'red' });
+        if (stats.nextBatch) tick.push({ label: 'Next batch', value: batchLabel(stats.nextBatch.batch), cls: 'gold' });
+        if (stats.topProducts && stats.topProducts.length > 0) tick.push({ label: 'Top product', value: shortLabel(stats.topProducts[0].name), cls: '' });
+        // Secondary metrics — kept after the priorities; wrapping handles overflow.
         if (stats.b2bRevenue > 0) tick.push({ label: 'B2B', value: m(stats.b2bRevenue), cls: 'gold' });
-        if (stats.topProducts && stats.topProducts.length > 0) tick.push({ label: 'Top product', value: stats.topProducts[0].name, cls: '' });
-        if (stats.repeatRate > 0) tick.push({ label: 'Repeat rate', value: `${stats.repeatRate}%`, cls: 'green' });
+        if (stats.repeatRate > 0) tick.push({ label: 'Repeat', value: `${stats.repeatRate}%`, cls: 'green' });
         if (stats.avgOrderValue > 0) tick.push({ label: 'Avg order', value: m(stats.avgOrderValue), cls: '' });
 
         const clsColor = (c) => c === 'green' ? THEME.green : c === 'red' ? THEME.red : c === 'gold' ? THEME.accent : THEME.ink;
-        const doubled = [...tick, ...tick];
         return (
-          <div className="mb-4 rounded-lg overflow-hidden flex items-stretch"
+          <div className="mb-4 rounded-lg p-2 flex items-center flex-wrap gap-2"
             style={{ background: THEME.brandBg, border: `1px solid ${THEME.line}` }}>
-            <div className="flex items-center px-3 flex-shrink-0"
-              style={{ background: THEME.brand, color: '#fff', fontSize: 10, fontWeight: 600, letterSpacing: '0.12em' }}>
-              LIVE
-            </div>
-            <div className="overflow-hidden whitespace-nowrap flex items-center" style={{ flex: 1, height: 34 }}>
-              <div className="mn-ticker-track inline-flex items-center">
-                {doubled.map((it, i) => (
-                  <span key={i} className="inline-flex items-center" style={{ paddingRight: 24 }}>
-                    <span style={{ width: 4, height: 4, borderRadius: '50%', background: THEME.accent, marginRight: 7, flexShrink: 0 }} />
-                    <span style={{ fontSize: 11, color: THEME.inkSoft, marginRight: 5 }}>{it.label}</span>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: clsColor(it.cls) }}>{it.value}</span>
-                  </span>
-                ))}
-              </div>
-            </div>
+            <span className="inline-flex items-center px-2 py-1 rounded-md flex-shrink-0"
+              style={{ background: THEME.brand, color: '#fff', fontSize: 10, fontWeight: 700, letterSpacing: '0.12em' }}>
+              <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#fff', marginRight: 5 }} className="mn-live-dot" />LIVE
+            </span>
+            {tick.map((it, i) => (
+              <span key={i} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full"
+                style={{ background: THEME.card, border: `1px solid ${THEME.line}` }}>
+                <span style={{ fontSize: 10.5, color: THEME.inkSoft }}>{it.label}</span>
+                <span style={{ fontSize: 12, fontWeight: 600, color: clsColor(it.cls) }}>{it.value}</span>
+              </span>
+            ))}
           </div>
         );
       })()}
@@ -1314,7 +1344,7 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
                 <div className="text-lg font-medium text-white">{m(stats.monthSales)}</div>
               </div>
               <div>
-                <div className="text-xs" style={{ color: 'rgba(255,255,255,0.7)' }}>Money owed to you</div>
+                <div className="text-xs" style={{ color: 'rgba(255,255,255,0.7)' }}>Still unpaid</div>
                 <div className="text-lg font-medium" style={{ color: stats.unpaid > 0 ? '#F0C674' : 'rgba(255,255,255,0.9)' }}>{m(stats.unpaid)}</div>
               </div>
             </div>
@@ -1330,11 +1360,17 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
             {stats.collectionRate}%
           </div>
           <div className="text-xs mt-1" style={{ color: THEME.inkSoft }}>
-            {stats.monthUnpaid > 0 ? `${m(stats.monthUnpaid)} still to collect this month` : 'Everything collected — nice'}
+            {stats.monthUnpaid > 0 ? `${m(stats.monthUnpaid)} still unpaid this month` : 'Everything collected — nice'}
           </div>
           <div className="mt-3 h-2 rounded-full overflow-hidden" style={{ background: THEME.line }}>
             <div className="h-full rounded-full" style={{ width: `${stats.collectionRate}%`, background: stats.collectionRate >= 80 ? THEME.green : stats.collectionRate >= 60 ? THEME.amber : THEME.red }} />
           </div>
+          {stats.unpaid > 0 && (
+            <button onClick={() => moneyOwedRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+              className="text-xs font-medium mt-3 inline-flex items-center gap-1" style={{ color: THEME.brand }}>
+              View unpaid orders <ChevronRight size={13} />
+            </button>
+          )}
           <div className="mt-4 pt-4" style={{ borderTop: `1px solid ${THEME.line}` }}>
             <div className="flex justify-between items-baseline">
               <span className="text-xs" style={{ color: THEME.inkSoft }}>All-time profit</span>
@@ -1388,9 +1424,12 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
           </div>
           <div className="space-y-1">
             {stats.nextBatch.orders.slice(0, 5).map((o) => (
-              <div key={o.id} className="flex items-center justify-between py-1.5 text-sm" style={{ borderTop: `1px solid ${THEME.line}` }}>
-                <span>{o.customer}</span>
-                <span style={{ color: THEME.inkSoft }}>{m(o.total)}</span>
+              <div key={o.id} className="flex items-center justify-between py-1.5 text-sm gap-2" style={{ borderTop: `1px solid ${THEME.line}` }}>
+                <span className="min-w-0 truncate">{o.customer}</span>
+                <span className="flex items-center gap-2 flex-shrink-0">
+                  <span style={{ color: THEME.inkSoft }}>{m(o.total)}</span>
+                  <Badge color={statusColor(o.status)}>{o.status}</Badge>
+                </span>
               </div>
             ))}
             {stats.nextBatch.orders.length > 5 && (
@@ -1409,7 +1448,7 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
       <div className="grid grid-cols-1 gap-4 mb-4">
         <Card className="p-5">
           <div className="flex items-center justify-between mb-1">
-            <div className="font-display text-lg">Production Run Performance</div>
+            <div className="font-display text-lg">Delivery Batch Performance</div>
             {stats.runChangePct !== null && (
               <div className="text-sm font-medium" style={{ color: stats.runChangePct >= 0 ? THEME.green : THEME.red }}>
                 {stats.runChangePct >= 0 ? '▲' : '▼'} {Math.abs(stats.runChangePct).toFixed(0)}% vs previous run
@@ -1446,39 +1485,70 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
 
       {/* ===== Two columns: Money owed (actionable) + Top products ===== */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+        <div ref={moneyOwedRef} className="min-w-0">
         <Card className="p-5">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center justify-between mb-3 gap-2">
             <div>
               <div className="font-display text-lg">Money Owed to You</div>
-              <div className="text-xs" style={{ color: THEME.inkSoft }}>Unpaid & partial orders</div>
+              <div className="text-xs" style={{ color: THEME.inkSoft }}>Unpaid &amp; partial orders</div>
             </div>
             {stats.unpaid > 0 && <Badge color="red">{m(stats.unpaid)}</Badge>}
           </div>
+          {unpaidOrders.length > 1 && (
+            <div className="flex gap-1.5 mb-3">
+              {[{ id: 'oldest', label: 'Oldest unpaid' }, { id: 'highest', label: 'Highest amount' }].map((opt) => {
+                const on = owedSort === opt.id;
+                return (
+                  <button key={opt.id} onClick={() => setOwedSort(opt.id)}
+                    className="text-xs px-2.5 py-1 rounded-full"
+                    style={{ background: on ? THEME.brand : 'transparent', color: on ? 'white' : THEME.inkSoft, border: `1px solid ${on ? THEME.brand : THEME.line}` }}>
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
           {unpaidOrders.length === 0 ? (
             <div className="py-8 text-center text-sm" style={{ color: THEME.green }}>
               <Check size={20} className="mx-auto mb-2" /> All orders are paid. Nice.
             </div>
           ) : (
-            <div className="space-y-1">
-              {unpaidOrders.map((o) => {
-                const t = (o.items || []).reduce((s, i) => s + i.qty * i.price, 0);
+            <div className="space-y-1.5">
+              {unpaidShown.map((o) => {
+                const tel = phoneDigits(o.phone);
                 return (
-                  <div key={o.id} className="flex items-center justify-between py-2 px-2 rounded row-hover cursor-pointer"
-                    onClick={() => setView('orders')}>
-                    <div>
-                      <div className="text-sm font-medium">{o.customer}</div>
-                      <div className="text-xs" style={{ color: THEME.inkSoft }}>{fmtDateShort(o.date)} · {o.id}</div>
+                  <div key={o.id} className="py-2 px-2 rounded" style={{ background: THEME.bg }}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium truncate">{o.customer}</div>
+                        <div className="text-xs" style={{ color: THEME.inkSoft }}>{fmtDateShort(o.date)} · {o.id}</div>
+                      </div>
+                      <div className="text-right flex-shrink-0">
+                        <div className="text-sm font-medium" style={{ color: THEME.red }}>{m(o._outstanding)}</div>
+                        <Badge color={statusColor(o.payment_status)}>{o.payment_status}</Badge>
+                      </div>
                     </div>
-                    <div className="text-right">
-                      <div className="text-sm font-medium" style={{ color: THEME.red }}>{m(t)}</div>
-                      <Badge color={statusColor(o.payment_status)}>{o.payment_status}</Badge>
+                    <div className="flex items-center gap-3 mt-1.5">
+                      <button onClick={() => markPaid(o.id)} className="text-xs font-medium inline-flex items-center gap-1" style={{ color: THEME.green }}>
+                        <Check size={13} /> Mark Paid
+                      </button>
+                      <button onClick={() => setView('orders')} className="text-xs" style={{ color: THEME.inkSoft }}>View Order</button>
+                      {tel && (
+                        <a href={`sms:${tel}`} className="text-xs" style={{ color: THEME.inkSoft }}>Message</a>
+                      )}
                     </div>
                   </div>
                 );
               })}
+              {unpaidOrders.length > unpaidShown.length && (
+                <button onClick={() => setView('orders')} className="text-xs font-medium pt-1" style={{ color: THEME.brand }}>
+                  + {unpaidOrders.length - unpaidShown.length} more unpaid → view in Orders
+                </button>
+              )}
             </div>
           )}
         </Card>
+        </div>
 
         <Card className="p-5">
           <div className="font-display text-lg mb-1">Top Products</div>
@@ -1491,7 +1561,10 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
                 <CartesianGrid strokeDasharray="2 4" stroke={THEME.line} horizontal={false} />
                 <XAxis type="number" tick={{ fill: THEME.inkSoft, fontSize: 11 }} axisLine={false} tickLine={false}
                   tickFormatter={(v) => privacy ? '•••' : (v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v)} />
-                <YAxis dataKey="name" type="category" width={110} tick={{ fill: THEME.ink, fontSize: 10.5 }} axisLine={false} tickLine={false} />
+                <YAxis dataKey="name" type="category" width={96} axisLine={false} tickLine={false}
+                  tick={({ x, y, payload }) => (
+                    <text x={x} y={y} dy={3} textAnchor="end" fill={THEME.ink} fontSize={11}>{shortLabel(payload.value)}</text>
+                  )} />
                 <Tooltip cursor={{ fill: THEME.brandBg }}
                   contentStyle={{ background: THEME.card, border: `1px solid ${THEME.line}`, borderRadius: 8 }}
                   formatter={(v) => [privacy ? '₱•••••' : peso(v), 'Sales']} />
@@ -1537,6 +1610,15 @@ function Dashboard({ orders, expenses, catalog, setView, privacy, setPrivacy, cu
             </div>
           </div>
         </div>
+        <button onClick={() => setShowHealthMath((s) => !s)}
+          className="flex items-center gap-1 text-xs font-medium mt-3" style={{ color: THEME.brand }}>
+          {showHealthMath ? <ChevronUp size={13} /> : <ChevronDown size={13} />} How this is calculated
+        </button>
+        {showHealthMath && (
+          <div className="text-xs mt-2 leading-relaxed" style={{ color: THEME.inkSoft }}>
+            Recovery = all-time profit ÷ all-time expenses ({m(stats.grossProfit)} ÷ {m(stats.totalExpenses)}). Net position = all-time profit − all-time expenses. You're self-sustaining once your profit has covered every expense you've logged — after that, the business funds itself.
+          </div>
+        )}
       </Card>
 
       {/* ===== Weekly Summary modal ===== */}
