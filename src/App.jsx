@@ -51,7 +51,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v8.0 · Day Close + Line Numbers';
+const APP_VERSION = 'v8.1 · Batch Money Check';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -652,7 +652,7 @@ function MainApp() {
     { id: 'orders', label: 'Orders', icon: ListOrdered },
     { id: 'pickup', label: 'Pickup Check', icon: Truck },
     { id: 'salescheck', label: 'Sales Check', icon: Receipt },
-    { id: 'dayclose', label: 'Day Close', icon: Activity },
+    { id: 'dayclose', label: 'Batch Money Check', icon: Activity },
     { id: 'expenses', label: 'Expenses', icon: Wallet },
     { id: 'products', label: 'Price List', icon: Tag },
     { id: 'restaurantquote', label: 'Restaurant Quote', icon: Store },
@@ -3364,21 +3364,22 @@ function Pickup({ orders, catalog }) {
 }
 
 /* ============================================================
-   DAY CLOSE (cash reconciliation — before vs after a batch)
+   BATCH MONEY CHECK (simple money reconciliation per batch)
    ============================================================
-   Marwin's pain point: they count cash + GCash BEFORE paying the
-   supplier, pay the supplier, deliver the batch, then count again
-   at the end of the day. The actual increase often doesn't match
-   what Sales Check predicted. This view puts the two sides next to
-   each other for ONE delivery batch:
-     - left  = what the orders say (sales, cost, profit, collected,
-               outstanding) — read-only, derived from the orders.
-     - right = what they physically count (start cash+gcash, supplier
-               paid, expenses, withdrawals, end cash+gcash) — saved
-               per batch in dayCloses, synced via the same cloud blob.
-   Then it reconciles: expected change vs actual change, names the
-   likely causes of any gap, and explains the Sales-Check mismatch
-   (usually unpaid orders). No locked logic is touched. */
+   Marwin's flow: count Cash + GCash BEFORE the supplier run, pay the
+   supplier, deliver the batch, then count Cash + GCash again at the
+   end of the day. This page compares the EXPECTED profit (from the
+   batch's orders, same basis as Sales Check) against how much the
+   money ACTUALLY grew, and — when they don't match — points at the
+   usual reasons (unpaid orders, real expenses, miscounts).
+
+   Money math (kept transparent for the owner):
+     actual money increase = (endCash + endGcash) - (startCash + startGcash)
+     actual profit after withdrawal = actual money increase + owner withdrawal
+     difference = actual profit after withdrawal - expected profit
+   Supplier payment / other expenses are already baked into the end
+   count, so they are recorded but not separate terms in the formula.
+   No locked logic (orders, pricing, basket, submission) is touched. */
 function DayClose({ orders, catalog, dayCloses, setDayCloses, privacy }) {
   const m = (n) => privacy ? '₱•••••' : peso(n);
   const productByName = useMemo(() => Object.fromEntries((catalog || []).map(p => [p.name, p])), [catalog]);
@@ -3400,8 +3401,6 @@ function DayClose({ orders, catalog, dayCloses, setDayCloses, privacy }) {
     return Array.from(set).sort().reverse();
   }, [orders]);
 
-  // Default to the batch closest to today (today or most recent past),
-  // otherwise the soonest upcoming one.
   const defaultBatch = useMemo(() => {
     const t = today();
     const pastOrToday = batches.filter((b) => b <= t); // desc → [0] is closest
@@ -3410,7 +3409,10 @@ function DayClose({ orders, catalog, dayCloses, setDayCloses, privacy }) {
   }, [batches]);
 
   const [batch, setBatch] = useState(defaultBatch);
+  const [showMath, setShowMath] = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
   useEffect(() => { if (!batches.includes(batch)) setBatch(defaultBatch); }, [batches]); // eslint-disable-line
+  useEffect(() => { setJustSaved(false); }, [batch]);
 
   const batchOrders = useMemo(
     () => Object.values(orders).filter((o) => o.delivery_batch === batch && o.delivery_status !== 'Cancelled'),
@@ -3433,206 +3435,253 @@ function DayClose({ orders, catalog, dayCloses, setDayCloses, privacy }) {
   // The counted side — persisted per batch.
   const rec = dayCloses[batch] || {};
   const num = (v) => Number(v) || 0;
-  const setField = (k, v) => setDayCloses((prev) => ({ ...prev, [batch]: { ...(prev[batch] || {}), [k]: v } }));
+  const round2 = (n) => Math.round(n * 100) / 100;
+  const setField = (k, v) => { setJustSaved(false); setDayCloses((prev) => ({ ...prev, [batch]: { ...(prev[batch] || {}), [k]: v } })); };
   const clearDay = () => {
-    if (!confirm('Clear the counted figures for this batch? The orders are not affected.')) return;
+    if (!confirm('Clear the money count for this batch? The orders are not affected.')) return;
+    setJustSaved(false);
     setDayCloses((prev) => { const next = { ...prev }; delete next[batch]; return next; });
   };
 
-  const startTotal = num(rec.startCash) + num(rec.startGcash);
-  const endTotal = num(rec.endCash) + num(rec.endGcash);
-  const supplier = num(rec.supplier);
-  const otherExp = num(rec.expenses);
+  // Supplier payment auto-fills from the batch's order cost until edited.
+  const supplierEntered = rec.supplier !== undefined && rec.supplier !== null && rec.supplier !== '';
+  const supplierAuto = book.cost > 0 ? round2(book.cost) : 0;
+  const supplierShown = supplierEntered ? rec.supplier : (book.cost > 0 ? String(supplierAuto) : '');
+
+  const startMoney = num(rec.startCash) + num(rec.startGcash);
+  const endMoney = num(rec.endCash) + num(rec.endGcash);
   const withdrawal = num(rec.withdrawal);
 
   const started = (rec.startCash ?? '') !== '' || (rec.startGcash ?? '') !== '';
   const ended = (rec.endCash ?? '') !== '' || (rec.endGcash ?? '') !== '';
   const canReconcile = started && ended;
 
-  const actualChange = endTotal - startTotal;             // what your money actually did
-  const expectedChange = book.collected - supplier - otherExp - withdrawal; // what it should have done
-  const variance = actualChange - expectedChange;
+  const actualIncrease = endMoney - startMoney;
+  const actualProfit = actualIncrease + withdrawal;       // add owner draw back
+  const difference = actualProfit - book.profit;          // vs expected profit
 
   const tol = 1;
-  let verdict = null;
+  let status = null;
   if (canReconcile) {
-    if (Math.abs(variance) <= tol) {
-      verdict = { tone: 'ok', text: 'Your count matches the orders for this batch. Clean reconciliation — nothing unaccounted for.' };
-    } else if (variance > 0) {
-      verdict = { tone: 'up', text: `You're holding ${m(variance)} MORE than the orders explain. Usual causes: a walk-in / cash sale that was never entered as an order, or an order still marked "Unpaid" that you actually collected.` };
-    } else {
-      verdict = { tone: 'down', text: `You're holding ${m(Math.abs(variance))} LESS than the orders explain. Usual causes: an expense or supplier add-on you didn't enter above, cash taken out (withdrawal) not logged, an order marked "Paid" that hasn't really been collected, or a counting slip.` };
-    }
+    if (Math.abs(difference) <= tol) status = { tone: 'ok', text: 'Money count matches the expected profit.' };
+    else if (difference < 0) status = { tone: 'short', text: `Short by ${m(Math.abs(difference))}` };
+    else status = { tone: 'over', text: `Over by ${m(difference)}` };
   }
-  const verdictStyle = verdict
-    ? (verdict.tone === 'ok'
-        ? { bg: THEME.successBg, fg: THEME.successInk, Icon: CheckCircle }
-        : { bg: THEME.warnBg, fg: THEME.warnInk, Icon: AlertCircle })
+
+  const saveCheck = () => {
+    setDayCloses((prev) => {
+      const cur = { ...(prev[batch] || {}) };
+      // Freeze the auto-filled supplier cost into the saved snapshot.
+      if (cur.supplier === undefined || cur.supplier === null || cur.supplier === '') {
+        if (book.cost > 0) cur.supplier = String(supplierAuto);
+      }
+      cur.savedAt = new Date().toISOString();
+      return { ...prev, [batch]: cur };
+    });
+    setJustSaved(true);
+  };
+
+  const savedTime = rec.savedAt
+    ? new Date(rec.savedAt).toLocaleString('en-PH', { hour: 'numeric', minute: '2-digit' })
     : null;
 
-  // Field helper — a function (NOT a child component) so inputs keep focus.
-  const moneyField = (label, k, hint, quick) => (
+  const reasons = [
+    'Some orders are still unpaid',
+    'A customer paid only partially',
+    'Supplier cost was higher than expected',
+    'Extra expenses were added (gas, ice, packaging…)',
+    'Owner withdrew cash',
+    'Wrong payment method recorded on an order',
+    'A GCash payment has not arrived yet',
+    'A product cost or selling price is wrong',
+    'Cash or GCash was counted / typed incorrectly',
+  ];
+
+  // Field helper — a plain function (NOT a child component) so inputs keep focus.
+  const money = (label, k, opts = {}) => (
     <div>
       <Label>{label}</Label>
       <div className="relative">
         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm pointer-events-none" style={{ color: THEME.inkSoft }}>₱</span>
         <Input type="number" step="0.01" min="0" inputMode="decimal"
-          value={rec[k] ?? ''} onChange={(e) => setField(k, e.target.value)}
+          value={opts.value !== undefined ? opts.value : (rec[k] ?? '')}
+          onChange={(e) => setField(k, e.target.value)}
           placeholder="0.00" className="pl-7 tabular-nums" />
       </div>
-      {hint && <div className="text-xs mt-1" style={{ color: THEME.inkSoft }}>{hint}</div>}
-      {quick}
+      {opts.hint && <div className="text-xs mt-1.5 leading-snug" style={{ color: THEME.inkSoft }}>{opts.hint}</div>}
     </div>
   );
 
-  const reconRow = (label, value, sign) => (
-    <div className="flex items-center justify-between py-1.5 text-sm">
-      <span style={{ color: THEME.inkSoft }}>{label}</span>
-      <span className="font-medium tabular-nums" style={{ color: sign === '-' ? THEME.red : THEME.ink }}>
-        {sign === '-' ? '− ' : sign === '+' ? '+ ' : ''}{m(value)}
-      </span>
+  const stepHead = (n, title) => (
+    <div className="flex items-center gap-2.5 mb-3">
+      <span className="flex items-center justify-center rounded-full text-xs font-semibold flex-shrink-0"
+        style={{ width: 22, height: 22, background: THEME.brand, color: 'white' }}>{n}</span>
+      <span className="font-medium text-sm">{title}</span>
+    </div>
+  );
+
+  const stat = (label, value, color) => (
+    <div>
+      <div className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft, letterSpacing: '0.06em' }}>{label}</div>
+      <div className="font-display text-lg sm:text-xl mt-0.5" style={{ color: color || THEME.ink }}>{value}</div>
     </div>
   );
 
   return (
-    <div>
+    <div className="max-w-3xl">
       <Header
-        title="Day Close"
-        subtitle="Count your money before & after a delivery day, and see if the increase matches the orders"
+        title="Batch Money Check"
+        subtitle="Compare your expected profit with your actual Cash + GCash after a delivery batch."
         right={
-          <div className="w-64 max-w-full">
+          <div className="w-full sm:w-60">
+            <Label>Select delivery batch</Label>
             <Select value={batch} onChange={(e) => setBatch(e.target.value)}
               options={batches.map((b) => ({ value: b, label: batchLabel(b) }))} />
           </div>
         }
       />
 
-      {/* Headline counters */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
-        <KpiCard label="Start of Day" value={started ? m(startTotal) : '—'} sub="Cash + GCash before supplier" accent={THEME.inkSoft} />
-        <KpiCard label="End of Day" value={ended ? m(endTotal) : '—'} sub="Cash + GCash after deliveries" accent={THEME.inkSoft} />
-        <KpiCard label="Money Change" value={canReconcile ? m(actualChange) : '—'} sub="How much your funds grew today"
-          accent={canReconcile ? (actualChange >= 0 ? THEME.green : THEME.red) : THEME.inkSoft} />
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* LEFT — from the orders */}
-        <Card className="p-5">
-          <div className="font-display text-lg mb-1">From your orders</div>
-          <div className="text-xs mb-4" style={{ color: THEME.inkSoft }}>
-            {book.count} order{book.count !== 1 ? 's' : ''} on {batchLabel(batch)} (cancelled excluded). This is what the books expect.
-          </div>
-          {book.count === 0 ? (
-            <EmptyHint>No orders on this delivery batch yet.</EmptyHint>
-          ) : (
-            <>
-              <div className="grid grid-cols-3 gap-3 mb-4">
-                <div><div className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft }}>Sales</div><div className="font-display text-lg" style={{ color: THEME.brand }}>{m(book.sales)}</div></div>
-                <div><div className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft }}>Cost</div><div className="font-display text-lg" style={{ color: THEME.inkSoft }}>{m(book.cost)}</div></div>
-                <div><div className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft }}>Expected Profit</div><div className="font-display text-lg" style={{ color: THEME.green }}>{m(book.profit)}</div></div>
+      {/* ===== Today's Batch ===== */}
+      <Card className="p-5 mb-5">
+        <div className="flex items-baseline justify-between mb-4">
+          <div className="font-display text-lg">Today's Batch</div>
+          <div className="text-xs" style={{ color: THEME.inkSoft }}>{book.count} order{book.count !== 1 ? 's' : ''} · {batchLabel(batch)}</div>
+        </div>
+        {book.count === 0 ? (
+          <EmptyHint>No orders on this delivery batch yet.</EmptyHint>
+        ) : (
+          <>
+            <div className="grid grid-cols-3 gap-3 mb-4">
+              {stat('Sales', m(book.sales), THEME.brand)}
+              {stat('Supplier Cost', m(book.cost), THEME.inkSoft)}
+              {stat('Expected Profit', m(book.profit), THEME.green)}
+            </div>
+            <div className="grid grid-cols-2 gap-3 pt-4" style={{ borderTop: `1px solid ${THEME.line}` }}>
+              {stat('Collected', m(book.collected), THEME.ink)}
+              {stat('Still Unpaid', m(book.outstanding), book.outstanding > tol ? THEME.amber : THEME.inkSoft)}
+            </div>
+            {book.outstanding > tol && (
+              <div className="text-xs mt-4 px-3 py-2.5 rounded-md leading-relaxed" style={{ background: THEME.warnBg, color: THEME.warnInk }}>
+                {m(book.outstanding)} is still unpaid, so today's cash may be lower until those payments are collected.
               </div>
-              <div className="pt-3" style={{ borderTop: `1px solid ${THEME.line}` }}>
-                {reconRow('Collected (Paid + partials)', book.collected)}
-                {reconRow('Still outstanding (unpaid)', book.outstanding)}
+            )}
+          </>
+        )}
+      </Card>
+
+      {/* ===== Money Count (3 guided steps) ===== */}
+      <Card className="p-5 mb-5">
+        <div className="flex items-center justify-between mb-5">
+          <div className="font-display text-lg">Money Count</div>
+          {(started || ended || withdrawal || supplierEntered || (rec.expenses ?? '') !== '') && (
+            <button onClick={clearDay} className="text-xs px-2 py-1 rounded" style={{ color: THEME.red, border: `1px solid ${THEME.line}` }}>Clear</button>
+          )}
+        </div>
+
+        <div className="mb-6">
+          {stepHead(1, 'Money before supplier')}
+          <div className="text-xs mb-3 -mt-1 leading-snug" style={{ color: THEME.inkSoft }}>Count your money before buying supply.</div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {money('Cash on hand', 'startCash')}
+            {money('GCash balance', 'startGcash')}
+          </div>
+        </div>
+
+        <div className="mb-6 pt-5" style={{ borderTop: `1px solid ${THEME.line}` }}>
+          {stepHead(2, 'Money out')}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {money('Supplier payment', 'supplier', {
+              value: supplierShown,
+              hint: 'Auto-filled from today\u2019s orders. Edit only if your actual payment is different.',
+            })}
+            {money('Other expenses', 'expenses', { hint: 'Gas, ice, packaging, transport, etc.' })}
+            {money('Owner withdrawal', 'withdrawal', { hint: 'Cash you took out for yourself, if any.' })}
+          </div>
+        </div>
+
+        <div className="pt-5" style={{ borderTop: `1px solid ${THEME.line}` }}>
+          {stepHead(3, 'Money after deliveries')}
+          <div className="text-xs mb-3 -mt-1 leading-snug" style={{ color: THEME.inkSoft }}>Count your money after deliveries and collections.</div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {money('Cash on hand', 'endCash')}
+            {money('GCash balance', 'endGcash')}
+          </div>
+        </div>
+
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mt-6 pt-5" style={{ borderTop: `1px solid ${THEME.line}` }}>
+          <div className="text-xs" style={{ color: THEME.inkSoft }}>
+            {justSaved
+              ? <span style={{ color: THEME.green }}>✓ Saved for {batchLabel(batch)}{savedTime ? ` · ${savedTime}` : ''}.</span>
+              : (rec.savedAt ? `Last saved ${batchLabel(batch)}${savedTime ? ` · ${savedTime}` : ''}.` : 'Auto-saves as you type. Tap to confirm this batch is done.')}
+          </div>
+          <Btn variant="primary" onClick={saveCheck}><Save size={14} className="inline -mt-0.5 mr-1" /> Save Batch Check</Btn>
+        </div>
+      </Card>
+
+      {/* ===== Result ===== */}
+      <Card className="p-5">
+        <div className="font-display text-lg mb-4">Result</div>
+        {!canReconcile ? (
+          <EmptyHint>Enter your before and after counts above to see the result.</EmptyHint>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
+              {stat('Expected Profit', m(book.profit), THEME.green)}
+              {stat('Actual Money Increase', m(actualIncrease), actualIncrease >= 0 ? THEME.ink : THEME.red)}
+              {stat('Difference', (difference >= 0 ? '+' : '−') + m(Math.abs(difference)).replace('₱', '₱'),
+                Math.abs(difference) <= tol ? THEME.green : (difference < 0 ? THEME.red : THEME.green))}
+            </div>
+            {withdrawal > tol && (
+              <div className="text-xs mb-4 -mt-1" style={{ color: THEME.inkSoft }}>
+                Includes {m(withdrawal)} owner withdrawal added back (it's money you earned, just taken out).
+              </div>
+            )}
+
+            <div className="rounded-lg p-4 mb-4" style={{ background: status.tone === 'short' ? THEME.warnBg : THEME.successBg }}>
+              <div className="flex items-center gap-2">
+                {status.tone === 'short'
+                  ? <AlertCircle size={18} style={{ color: THEME.warnInk }} />
+                  : <CheckCircle size={18} style={{ color: THEME.successInk }} />}
+                <span className="font-semibold text-sm tabular-nums" style={{ color: status.tone === 'short' ? THEME.warnInk : THEME.successInk }}>
+                  {status.tone === 'ok' ? '✅ ' : status.tone === 'over' ? '✅ ' : '⚠️ '}{status.text}
+                </span>
               </div>
               {book.outstanding > tol && (
-                <div className="text-xs mt-3 px-3 py-2 rounded-md" style={{ background: THEME.warnBg, color: THEME.warnInk }}>
-                  {m(book.outstanding)} of these orders isn't paid yet, so today's cash will run below the {m(book.profit)} expected profit until you collect it.
+                <div className="text-xs mt-2 leading-relaxed" style={{ color: status.tone === 'short' ? THEME.warnInk : THEME.successInk }}>
+                  Note: some orders are still unpaid ({m(book.outstanding)}), so actual cash may be lower until payment is collected.
                 </div>
               )}
-            </>
-          )}
-        </Card>
-
-        {/* RIGHT — what you counted */}
-        <Card className="p-5">
-          <div className="flex items-center justify-between mb-1">
-            <div className="font-display text-lg">What you counted</div>
-            {(started || ended || supplier || otherExp || withdrawal) && (
-              <button onClick={clearDay} className="text-xs px-2 py-1 rounded" style={{ color: THEME.red, border: `1px solid ${THEME.line}` }}>Clear</button>
-            )}
-          </div>
-          <div className="text-xs mb-4" style={{ color: THEME.inkSoft }}>Saves automatically and syncs across your devices.</div>
-
-          <div className="text-xs uppercase tracking-wider mb-2 font-medium" style={{ color: THEME.inkSoft, letterSpacing: '0.08em' }}>Before (start of day)</div>
-          <div className="grid grid-cols-2 gap-3 mb-5">
-            {moneyField('Cash on hand', 'startCash')}
-            {moneyField('GCash balance', 'startGcash')}
-          </div>
-
-          <div className="text-xs uppercase tracking-wider mb-2 font-medium" style={{ color: THEME.inkSoft, letterSpacing: '0.08em' }}>Out during the day</div>
-          <div className="grid grid-cols-1 gap-3 mb-5">
-            {moneyField('Paid to supplier', 'supplier',
-              book.cost > 0 ? `Order cost for this batch is ${m(book.cost)}` : null,
-              book.cost > 0 ? (
-                <button onClick={() => setField('supplier', String(Math.round(book.cost * 100) / 100))}
-                  className="text-xs mt-1.5 px-2 py-1 rounded" style={{ color: THEME.brand, border: `1px solid ${THEME.line}` }}>
-                  Use order cost ({m(book.cost)})
-                </button>
-              ) : null)}
-            {moneyField('Other expenses', 'expenses', 'Gas, packaging, ice, transport, etc.')}
-            {moneyField('Owner withdrawal', 'withdrawal', 'Cash you took out for yourself (optional)')}
-          </div>
-
-          <div className="text-xs uppercase tracking-wider mb-2 font-medium" style={{ color: THEME.inkSoft, letterSpacing: '0.08em' }}>After (end of day)</div>
-          <div className="grid grid-cols-2 gap-3 mb-4">
-            {moneyField('Cash on hand', 'endCash')}
-            {moneyField('GCash balance', 'endGcash')}
-          </div>
-
-          <Label>Notes</Label>
-          <textarea value={rec.notes ?? ''} onChange={(e) => setField('notes', e.target.value)} rows={2}
-            className="w-full px-3 py-2 rounded-md outline-none text-sm"
-            style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink, fontFamily: 'DM Sans' }}
-            placeholder="Anything unusual about this day (optional)" />
-        </Card>
-      </div>
-
-      {/* RECONCILIATION */}
-      <Card className="p-5 mt-6">
-        <div className="font-display text-lg mb-1">Reconciliation</div>
-        <div className="text-xs mb-4" style={{ color: THEME.inkSoft }}>Does the money you counted match what the orders say should have happened?</div>
-
-        {!canReconcile ? (
-          <EmptyHint>Enter your start-of-day and end-of-day counts above to reconcile this batch.</EmptyHint>
-        ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div>
-              <div className="text-xs uppercase tracking-wider mb-1 font-medium" style={{ color: THEME.inkSoft, letterSpacing: '0.08em' }}>What should have happened</div>
-              {reconRow('Collected from customers', book.collected, '+')}
-              {reconRow('Paid to supplier', supplier, '-')}
-              {reconRow('Other expenses', otherExp, '-')}
-              {reconRow('Owner withdrawal', withdrawal, '-')}
-              <div className="flex items-center justify-between py-2 mt-1" style={{ borderTop: `1px solid ${THEME.line}` }}>
-                <span className="text-sm font-medium">Expected money change</span>
-                <span className="font-display text-lg tabular-nums" style={{ color: expectedChange >= 0 ? THEME.green : THEME.red }}>{m(expectedChange)}</span>
-              </div>
-              <div className="flex items-center justify-between py-1 text-sm">
-                <span style={{ color: THEME.inkSoft }}>Actual money change (end − start)</span>
-                <span className="font-medium tabular-nums">{m(actualChange)}</span>
-              </div>
             </div>
 
-            <div>
-              <div className="rounded-lg p-4 mb-4" style={{ background: verdictStyle.bg }}>
-                <div className="flex items-center gap-2 mb-1">
-                  <verdictStyle.Icon size={16} style={{ color: verdictStyle.fg }} />
-                  <span className="text-sm font-semibold tabular-nums" style={{ color: verdictStyle.fg }}>
-                    {Math.abs(variance) <= tol ? 'Balanced' : `Off by ${m(Math.abs(variance))}`}
-                  </span>
+            {Math.abs(difference) > tol && (
+              <div className="rounded-lg p-4 mb-4" style={{ border: `1px solid ${THEME.line}` }}>
+                <div className="text-sm font-medium mb-2.5">Why it might not match</div>
+                <div className="space-y-1.5">
+                  {reasons.map((r, i) => (
+                    <div key={i} className="flex items-start gap-2 text-xs" style={{ color: THEME.inkSoft }}>
+                      <span className="mt-0.5 flex-shrink-0" style={{ color: THEME.brandSoft }}>•</span>
+                      <span className="leading-snug">{r}</span>
+                    </div>
+                  ))}
                 </div>
-                <div className="text-xs leading-relaxed" style={{ color: verdictStyle.fg }}>{verdict.text}</div>
               </div>
+            )}
 
-              <div className="text-xs uppercase tracking-wider mb-2 font-medium" style={{ color: THEME.inkSoft, letterSpacing: '0.08em' }}>Earnings this day</div>
-              {reconRow('Your money actually grew by', actualChange)}
-              {reconRow('Expected profit (Sales Check)', book.profit)}
-              {book.outstanding > tol && reconRow('Still to collect (unpaid)', book.outstanding)}
-              <div className="text-xs mt-2 leading-relaxed" style={{ color: THEME.inkSoft }}>
-                Once every order is paid and all expenses are entered, your money increase should land on the expected profit. The gap today is mostly the unpaid orders plus any expenses above.
+            <button onClick={() => setShowMath((s) => !s)}
+              className="flex items-center gap-1.5 text-xs font-medium" style={{ color: THEME.brand }}>
+              {showMath ? <ChevronUp size={14} /> : <ChevronDown size={14} />} How this is calculated
+            </button>
+            {showMath && (
+              <div className="text-xs mt-3 px-3 py-3 rounded-md leading-relaxed space-y-2" style={{ background: THEME.bg, color: THEME.inkSoft }}>
+                <div>Actual money increase = End Cash + End GCash − Start Cash − Start GCash</div>
+                <div>Actual profit after withdrawal = Actual money increase + Owner withdrawal</div>
+                <div>Difference = Actual profit after withdrawal − Expected profit</div>
+                <div className="pt-1" style={{ color: THEME.ink }}>
+                  {m(endMoney)} − {m(startMoney)} = {m(actualIncrease)} increase{withdrawal > tol ? `, + ${m(withdrawal)} withdrawal = ${m(actualProfit)}` : ''}; vs {m(book.profit)} expected → {(difference >= 0 ? '+' : '−')}{m(Math.abs(difference))}.
+                </div>
               </div>
-            </div>
-          </div>
+            )}
+          </>
         )}
       </Card>
     </div>
