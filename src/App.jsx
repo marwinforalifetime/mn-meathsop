@@ -51,7 +51,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v7.9 · Live Order Badge';
+const APP_VERSION = 'v8.0 · Day Close + Line Numbers';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -407,6 +407,7 @@ function MainApp() {
   const [inventory, setInventory] = useState({});
   const [priceHistory, setPriceHistory] = useState([]);
   const [supplierPayments, setSupplierPayments] = useState([]);
+  const [dayCloses, setDayCloses] = useState({});
   const [meta, setMeta] = useState({ lastOrderNum: 0 });
   const [saving, setSaving] = useState(false);
   // Cloud sync status: 'connecting' | 'cloud' | 'local-only' | 'error'
@@ -458,6 +459,7 @@ function MainApp() {
       const localInventory = storage.load('inventory', null);
       const localPriceHistory = storage.load('priceHistory', []);
       const localSupplierPayments = storage.load('supplierPayments', []);
+      const localDayCloses = storage.load('dayCloses', {});
       const localMeta = storage.load('meta', { lastOrderNum: 0 });
       const hasLocalData = (localOrders && Object.keys(localOrders).length > 0)
         || (localExpenses && localExpenses.length > 0);
@@ -478,6 +480,7 @@ function MainApp() {
           setInventory(cloud.inventory || Object.fromEntries(SEED_PRODUCTS.map(p => [p.name, { qty: 0, dateAdded: '', notes: '' }])));
           setPriceHistory(cloud.priceHistory || []);
           setSupplierPayments(cloud.supplierPayments || []);
+          setDayCloses(cloud.dayCloses || {});
           setMeta(cloud.meta || { lastOrderNum: 0 });
           usedCloud = true;
           setSyncStatus('cloud');
@@ -489,6 +492,7 @@ function MainApp() {
           setInventory(localInventory || Object.fromEntries(SEED_PRODUCTS.map(p => [p.name, { qty: 0, dateAdded: '', notes: '' }])));
           setPriceHistory(localPriceHistory || []);
           setSupplierPayments(localSupplierPayments || []);
+          setDayCloses(localDayCloses || {});
           setMeta(localMeta || { lastOrderNum: 0 });
           setSyncStatus('cloud');
           if (hasLocalData) setNeedsImport(true);
@@ -502,6 +506,7 @@ function MainApp() {
         setInventory(localInventory || Object.fromEntries(SEED_PRODUCTS.map(p => [p.name, { qty: 0, dateAdded: '', notes: '' }])));
         setPriceHistory(localPriceHistory || []);
         setSupplierPayments(localSupplierPayments || []);
+        setDayCloses(localDayCloses || {});
         setMeta(localMeta || { lastOrderNum: 0 });
         setSyncStatus('local-only');
       }
@@ -531,6 +536,7 @@ function MainApp() {
     storage.save('inventory', inventory);
     storage.save('priceHistory', priceHistory);
     storage.save('supplierPayments', supplierPayments);
+    storage.save('dayCloses', dayCloses);
     storage.save('meta', meta);
     lastSaveRef.current = Date.now();
 
@@ -538,7 +544,7 @@ function MainApp() {
     let cancelled = false;
     const t = setTimeout(async () => {
       try {
-        await cloudSave({ catalog, orders, expenses, inventory, priceHistory, supplierPayments, meta });
+        await cloudSave({ catalog, orders, expenses, inventory, priceHistory, supplierPayments, dayCloses, meta });
         if (!cancelled) {
           setSyncStatus('cloud');
           setSaving(false);
@@ -552,7 +558,7 @@ function MainApp() {
       }
     }, 600);
     return () => { cancelled = true; clearTimeout(t); };
-  }, [catalog, orders, expenses, inventory, priceHistory, supplierPayments, meta, loaded]);
+  }, [catalog, orders, expenses, inventory, priceHistory, supplierPayments, dayCloses, meta, loaded]);
 
   // Publish the public-safe catalog (names + prices only) to the public_catalog
   // table so the customer ordering app shows current prices. Debounced, and only
@@ -568,7 +574,7 @@ function MainApp() {
   const importLocalToCloud = async () => {
     setImporting(true);
     try {
-      await cloudSave({ catalog, orders, expenses, inventory, priceHistory, supplierPayments, meta });
+      await cloudSave({ catalog, orders, expenses, inventory, priceHistory, supplierPayments, dayCloses, meta });
       setNeedsImport(false);
       setSyncStatus('cloud');
       alert('Your existing data is now saved to the cloud and will sync across your devices.');
@@ -585,7 +591,7 @@ function MainApp() {
     const data = {
       version: 1,
       exported_at: new Date().toISOString(),
-      catalog, orders, expenses, inventory, priceHistory, supplierPayments, meta,
+      catalog, orders, expenses, inventory, priceHistory, supplierPayments, dayCloses, meta,
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -617,6 +623,7 @@ function MainApp() {
         setInventory(data.inventory || {});
         setPriceHistory(data.priceHistory || []);
         setSupplierPayments(data.supplierPayments || []);
+        setDayCloses(data.dayCloses || {});
         setMeta(data.meta || { lastOrderNum: 0 });
         setShowBackup(false);
         alert('Backup restored successfully!');
@@ -645,6 +652,7 @@ function MainApp() {
     { id: 'orders', label: 'Orders', icon: ListOrdered },
     { id: 'pickup', label: 'Pickup Check', icon: Truck },
     { id: 'salescheck', label: 'Sales Check', icon: Receipt },
+    { id: 'dayclose', label: 'Day Close', icon: Activity },
     { id: 'expenses', label: 'Expenses', icon: Wallet },
     { id: 'products', label: 'Price List', icon: Tag },
     { id: 'restaurantquote', label: 'Restaurant Quote', icon: Store },
@@ -796,6 +804,7 @@ function MainApp() {
           {view === 'orders' && <Orders orders={orders} setOrders={setOrders} productByName={productByName} catalog={catalog} />}
           {view === 'pickup' && <Pickup orders={orders} catalog={catalog} />}
           {view === 'salescheck' && <SalesCheck orders={orders} catalog={catalog} privacy={privacy} />}
+          {view === 'dayclose' && <DayClose orders={orders} catalog={catalog} dayCloses={dayCloses} setDayCloses={setDayCloses} privacy={privacy} />}
           {view === 'expenses' && <Expenses expenses={expenses} setExpenses={setExpenses} />}
           {view === 'products' && <Products catalog={catalog} setCatalog={setCatalog} priceHistory={priceHistory} setPriceHistory={setPriceHistory} />}
           {view === 'restaurantquote' && <RestaurantQuote catalog={catalog} setCatalog={setCatalog} qtys={quoteQtys} setQtys={setQuoteQtys} />}
@@ -2546,10 +2555,19 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
         )}
 
         {/* ===== Items ===== */}
+        {!editing && (
+          <div className="flex items-center justify-between mb-2">
+            <Label>Items</Label>
+            <span className="text-xs font-medium" style={{ color: THEME.inkSoft }}>
+              {(order.items || []).length} line{(order.items || []).length !== 1 ? 's' : ''}
+            </span>
+          </div>
+        )}
         {!editing ? (
           <table className="w-full text-sm mb-4">
             <thead>
               <tr style={{ color: THEME.inkSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                <th className="text-left pb-2 font-medium pr-2" style={{ width: 28 }}>#</th>
                 <th className="text-left pb-2 font-medium">Product</th>
                 <th className="text-right pb-2 font-medium">Qty</th>
                 <th className="text-left pb-2 font-medium pl-4">Notes / Special Cut</th>
@@ -2560,6 +2578,7 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
             <tbody>
               {(order.items || []).map((it, i) => (
                 <tr key={i} style={{ borderTop: `1px solid ${THEME.line}` }}>
+                  <td className="py-2.5 pr-2 tabular-nums" style={{ color: THEME.inkSoft }}>{i + 1}</td>
                   <td className="py-2.5">{it.product}</td>
                   <td className="py-2.5 text-right">{it.qty} {it.unit}</td>
                   <td className="py-2.5 pl-4" style={{ color: it.note ? THEME.ink : THEME.inkSoft }}>{it.note || '—'}</td>
@@ -3340,6 +3359,282 @@ function Pickup({ orders, catalog }) {
           </Card>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   DAY CLOSE (cash reconciliation — before vs after a batch)
+   ============================================================
+   Marwin's pain point: they count cash + GCash BEFORE paying the
+   supplier, pay the supplier, deliver the batch, then count again
+   at the end of the day. The actual increase often doesn't match
+   what Sales Check predicted. This view puts the two sides next to
+   each other for ONE delivery batch:
+     - left  = what the orders say (sales, cost, profit, collected,
+               outstanding) — read-only, derived from the orders.
+     - right = what they physically count (start cash+gcash, supplier
+               paid, expenses, withdrawals, end cash+gcash) — saved
+               per batch in dayCloses, synced via the same cloud blob.
+   Then it reconciles: expected change vs actual change, names the
+   likely causes of any gap, and explains the Sales-Check mismatch
+   (usually unpaid orders). No locked logic is touched. */
+function DayClose({ orders, catalog, dayCloses, setDayCloses, privacy }) {
+  const m = (n) => privacy ? '₱•••••' : peso(n);
+  const productByName = useMemo(() => Object.fromEntries((catalog || []).map(p => [p.name, p])), [catalog]);
+  // Same cost rule as Sales Check: current catalog cost, fall back to snapshot.
+  const effectiveCost = (it) => {
+    const p = productByName[it.product];
+    if (p && typeof p.cost === 'number') return p.cost;
+    return Number(it.cost) || 0;
+  };
+
+  // Every batch that has orders, plus the next Tue & Sat. Most recent first.
+  const batches = useMemo(() => {
+    const set = new Set();
+    Object.values(orders).forEach((o) => {
+      if (o.delivery_batch && o.delivery_status !== 'Cancelled') set.add(o.delivery_batch);
+    });
+    set.add(nextTuesday());
+    set.add(nextSaturday());
+    return Array.from(set).sort().reverse();
+  }, [orders]);
+
+  // Default to the batch closest to today (today or most recent past),
+  // otherwise the soonest upcoming one.
+  const defaultBatch = useMemo(() => {
+    const t = today();
+    const pastOrToday = batches.filter((b) => b <= t); // desc → [0] is closest
+    if (pastOrToday.length) return pastOrToday[0];
+    return batches.length ? batches[batches.length - 1] : t;
+  }, [batches]);
+
+  const [batch, setBatch] = useState(defaultBatch);
+  useEffect(() => { if (!batches.includes(batch)) setBatch(defaultBatch); }, [batches]); // eslint-disable-line
+
+  const batchOrders = useMemo(
+    () => Object.values(orders).filter((o) => o.delivery_batch === batch && o.delivery_status !== 'Cancelled'),
+    [orders, batch]
+  );
+
+  // The "books" side — what the orders predict.
+  const book = useMemo(() => {
+    let sales = 0, cost = 0, collected = 0;
+    batchOrders.forEach((o) => {
+      const t = (o.items || []).reduce((s, i) => s + (Number(i.qty) || 0) * (Number(i.price) || 0), 0);
+      const c = (o.items || []).reduce((s, i) => s + (Number(i.qty) || 0) * effectiveCost(i), 0);
+      sales += t; cost += c;
+      if (o.payment_status === 'Paid') collected += t;
+      else if (o.payment_status === 'Partial') collected += Number(o.amount_paid) || 0;
+    });
+    return { sales, cost, profit: sales - cost, collected, outstanding: Math.max(0, sales - collected), count: batchOrders.length };
+  }, [batchOrders, productByName]);
+
+  // The counted side — persisted per batch.
+  const rec = dayCloses[batch] || {};
+  const num = (v) => Number(v) || 0;
+  const setField = (k, v) => setDayCloses((prev) => ({ ...prev, [batch]: { ...(prev[batch] || {}), [k]: v } }));
+  const clearDay = () => {
+    if (!confirm('Clear the counted figures for this batch? The orders are not affected.')) return;
+    setDayCloses((prev) => { const next = { ...prev }; delete next[batch]; return next; });
+  };
+
+  const startTotal = num(rec.startCash) + num(rec.startGcash);
+  const endTotal = num(rec.endCash) + num(rec.endGcash);
+  const supplier = num(rec.supplier);
+  const otherExp = num(rec.expenses);
+  const withdrawal = num(rec.withdrawal);
+
+  const started = (rec.startCash ?? '') !== '' || (rec.startGcash ?? '') !== '';
+  const ended = (rec.endCash ?? '') !== '' || (rec.endGcash ?? '') !== '';
+  const canReconcile = started && ended;
+
+  const actualChange = endTotal - startTotal;             // what your money actually did
+  const expectedChange = book.collected - supplier - otherExp - withdrawal; // what it should have done
+  const variance = actualChange - expectedChange;
+
+  const tol = 1;
+  let verdict = null;
+  if (canReconcile) {
+    if (Math.abs(variance) <= tol) {
+      verdict = { tone: 'ok', text: 'Your count matches the orders for this batch. Clean reconciliation — nothing unaccounted for.' };
+    } else if (variance > 0) {
+      verdict = { tone: 'up', text: `You're holding ${m(variance)} MORE than the orders explain. Usual causes: a walk-in / cash sale that was never entered as an order, or an order still marked "Unpaid" that you actually collected.` };
+    } else {
+      verdict = { tone: 'down', text: `You're holding ${m(Math.abs(variance))} LESS than the orders explain. Usual causes: an expense or supplier add-on you didn't enter above, cash taken out (withdrawal) not logged, an order marked "Paid" that hasn't really been collected, or a counting slip.` };
+    }
+  }
+  const verdictStyle = verdict
+    ? (verdict.tone === 'ok'
+        ? { bg: THEME.successBg, fg: THEME.successInk, Icon: CheckCircle }
+        : { bg: THEME.warnBg, fg: THEME.warnInk, Icon: AlertCircle })
+    : null;
+
+  // Field helper — a function (NOT a child component) so inputs keep focus.
+  const moneyField = (label, k, hint, quick) => (
+    <div>
+      <Label>{label}</Label>
+      <div className="relative">
+        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm pointer-events-none" style={{ color: THEME.inkSoft }}>₱</span>
+        <Input type="number" step="0.01" min="0" inputMode="decimal"
+          value={rec[k] ?? ''} onChange={(e) => setField(k, e.target.value)}
+          placeholder="0.00" className="pl-7 tabular-nums" />
+      </div>
+      {hint && <div className="text-xs mt-1" style={{ color: THEME.inkSoft }}>{hint}</div>}
+      {quick}
+    </div>
+  );
+
+  const reconRow = (label, value, sign) => (
+    <div className="flex items-center justify-between py-1.5 text-sm">
+      <span style={{ color: THEME.inkSoft }}>{label}</span>
+      <span className="font-medium tabular-nums" style={{ color: sign === '-' ? THEME.red : THEME.ink }}>
+        {sign === '-' ? '− ' : sign === '+' ? '+ ' : ''}{m(value)}
+      </span>
+    </div>
+  );
+
+  return (
+    <div>
+      <Header
+        title="Day Close"
+        subtitle="Count your money before & after a delivery day, and see if the increase matches the orders"
+        right={
+          <div className="w-64 max-w-full">
+            <Select value={batch} onChange={(e) => setBatch(e.target.value)}
+              options={batches.map((b) => ({ value: b, label: batchLabel(b) }))} />
+          </div>
+        }
+      />
+
+      {/* Headline counters */}
+      <div className="grid grid-cols-3 gap-4 mb-6">
+        <KpiCard label="Start of Day" value={started ? m(startTotal) : '—'} sub="Cash + GCash before supplier" accent={THEME.inkSoft} />
+        <KpiCard label="End of Day" value={ended ? m(endTotal) : '—'} sub="Cash + GCash after deliveries" accent={THEME.inkSoft} />
+        <KpiCard label="Money Change" value={canReconcile ? m(actualChange) : '—'} sub="How much your funds grew today"
+          accent={canReconcile ? (actualChange >= 0 ? THEME.green : THEME.red) : THEME.inkSoft} />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* LEFT — from the orders */}
+        <Card className="p-5">
+          <div className="font-display text-lg mb-1">From your orders</div>
+          <div className="text-xs mb-4" style={{ color: THEME.inkSoft }}>
+            {book.count} order{book.count !== 1 ? 's' : ''} on {batchLabel(batch)} (cancelled excluded). This is what the books expect.
+          </div>
+          {book.count === 0 ? (
+            <EmptyHint>No orders on this delivery batch yet.</EmptyHint>
+          ) : (
+            <>
+              <div className="grid grid-cols-3 gap-3 mb-4">
+                <div><div className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft }}>Sales</div><div className="font-display text-lg" style={{ color: THEME.brand }}>{m(book.sales)}</div></div>
+                <div><div className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft }}>Cost</div><div className="font-display text-lg" style={{ color: THEME.inkSoft }}>{m(book.cost)}</div></div>
+                <div><div className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft }}>Expected Profit</div><div className="font-display text-lg" style={{ color: THEME.green }}>{m(book.profit)}</div></div>
+              </div>
+              <div className="pt-3" style={{ borderTop: `1px solid ${THEME.line}` }}>
+                {reconRow('Collected (Paid + partials)', book.collected)}
+                {reconRow('Still outstanding (unpaid)', book.outstanding)}
+              </div>
+              {book.outstanding > tol && (
+                <div className="text-xs mt-3 px-3 py-2 rounded-md" style={{ background: THEME.warnBg, color: THEME.warnInk }}>
+                  {m(book.outstanding)} of these orders isn't paid yet, so today's cash will run below the {m(book.profit)} expected profit until you collect it.
+                </div>
+              )}
+            </>
+          )}
+        </Card>
+
+        {/* RIGHT — what you counted */}
+        <Card className="p-5">
+          <div className="flex items-center justify-between mb-1">
+            <div className="font-display text-lg">What you counted</div>
+            {(started || ended || supplier || otherExp || withdrawal) && (
+              <button onClick={clearDay} className="text-xs px-2 py-1 rounded" style={{ color: THEME.red, border: `1px solid ${THEME.line}` }}>Clear</button>
+            )}
+          </div>
+          <div className="text-xs mb-4" style={{ color: THEME.inkSoft }}>Saves automatically and syncs across your devices.</div>
+
+          <div className="text-xs uppercase tracking-wider mb-2 font-medium" style={{ color: THEME.inkSoft, letterSpacing: '0.08em' }}>Before (start of day)</div>
+          <div className="grid grid-cols-2 gap-3 mb-5">
+            {moneyField('Cash on hand', 'startCash')}
+            {moneyField('GCash balance', 'startGcash')}
+          </div>
+
+          <div className="text-xs uppercase tracking-wider mb-2 font-medium" style={{ color: THEME.inkSoft, letterSpacing: '0.08em' }}>Out during the day</div>
+          <div className="grid grid-cols-1 gap-3 mb-5">
+            {moneyField('Paid to supplier', 'supplier',
+              book.cost > 0 ? `Order cost for this batch is ${m(book.cost)}` : null,
+              book.cost > 0 ? (
+                <button onClick={() => setField('supplier', String(Math.round(book.cost * 100) / 100))}
+                  className="text-xs mt-1.5 px-2 py-1 rounded" style={{ color: THEME.brand, border: `1px solid ${THEME.line}` }}>
+                  Use order cost ({m(book.cost)})
+                </button>
+              ) : null)}
+            {moneyField('Other expenses', 'expenses', 'Gas, packaging, ice, transport, etc.')}
+            {moneyField('Owner withdrawal', 'withdrawal', 'Cash you took out for yourself (optional)')}
+          </div>
+
+          <div className="text-xs uppercase tracking-wider mb-2 font-medium" style={{ color: THEME.inkSoft, letterSpacing: '0.08em' }}>After (end of day)</div>
+          <div className="grid grid-cols-2 gap-3 mb-4">
+            {moneyField('Cash on hand', 'endCash')}
+            {moneyField('GCash balance', 'endGcash')}
+          </div>
+
+          <Label>Notes</Label>
+          <textarea value={rec.notes ?? ''} onChange={(e) => setField('notes', e.target.value)} rows={2}
+            className="w-full px-3 py-2 rounded-md outline-none text-sm"
+            style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink, fontFamily: 'DM Sans' }}
+            placeholder="Anything unusual about this day (optional)" />
+        </Card>
+      </div>
+
+      {/* RECONCILIATION */}
+      <Card className="p-5 mt-6">
+        <div className="font-display text-lg mb-1">Reconciliation</div>
+        <div className="text-xs mb-4" style={{ color: THEME.inkSoft }}>Does the money you counted match what the orders say should have happened?</div>
+
+        {!canReconcile ? (
+          <EmptyHint>Enter your start-of-day and end-of-day counts above to reconcile this batch.</EmptyHint>
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div>
+              <div className="text-xs uppercase tracking-wider mb-1 font-medium" style={{ color: THEME.inkSoft, letterSpacing: '0.08em' }}>What should have happened</div>
+              {reconRow('Collected from customers', book.collected, '+')}
+              {reconRow('Paid to supplier', supplier, '-')}
+              {reconRow('Other expenses', otherExp, '-')}
+              {reconRow('Owner withdrawal', withdrawal, '-')}
+              <div className="flex items-center justify-between py-2 mt-1" style={{ borderTop: `1px solid ${THEME.line}` }}>
+                <span className="text-sm font-medium">Expected money change</span>
+                <span className="font-display text-lg tabular-nums" style={{ color: expectedChange >= 0 ? THEME.green : THEME.red }}>{m(expectedChange)}</span>
+              </div>
+              <div className="flex items-center justify-between py-1 text-sm">
+                <span style={{ color: THEME.inkSoft }}>Actual money change (end − start)</span>
+                <span className="font-medium tabular-nums">{m(actualChange)}</span>
+              </div>
+            </div>
+
+            <div>
+              <div className="rounded-lg p-4 mb-4" style={{ background: verdictStyle.bg }}>
+                <div className="flex items-center gap-2 mb-1">
+                  <verdictStyle.Icon size={16} style={{ color: verdictStyle.fg }} />
+                  <span className="text-sm font-semibold tabular-nums" style={{ color: verdictStyle.fg }}>
+                    {Math.abs(variance) <= tol ? 'Balanced' : `Off by ${m(Math.abs(variance))}`}
+                  </span>
+                </div>
+                <div className="text-xs leading-relaxed" style={{ color: verdictStyle.fg }}>{verdict.text}</div>
+              </div>
+
+              <div className="text-xs uppercase tracking-wider mb-2 font-medium" style={{ color: THEME.inkSoft, letterSpacing: '0.08em' }}>Earnings this day</div>
+              {reconRow('Your money actually grew by', actualChange)}
+              {reconRow('Expected profit (Sales Check)', book.profit)}
+              {book.outstanding > tol && reconRow('Still to collect (unpaid)', book.outstanding)}
+              <div className="text-xs mt-2 leading-relaxed" style={{ color: THEME.inkSoft }}>
+                Once every order is paid and all expenses are entered, your money increase should land on the expected profit. The gap today is mostly the unpaid orders plus any expenses above.
+              </div>
+            </div>
+          </div>
+        )}
+      </Card>
     </div>
   );
 }
