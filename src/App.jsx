@@ -4,7 +4,7 @@ import {
   Printer, Trash2, Edit3, Search, X, Check, AlertCircle, TrendingUp,
   Receipt, FileText, ChevronRight, ChevronUp, ChevronDown, Save, Loader2, Plus,
   Eye, EyeOff, ArrowLeft, RefreshCw, Download, Upload, HardDrive, Image as ImageIcon,
-  Activity, Menu, Store, Moon, Sun, CheckCircle, Inbox, MapPin
+  Activity, Menu, Store, Moon, Sun, CheckCircle, Inbox, MapPin, Users, MessageCircle
 } from 'lucide-react';
 import {
   BarChart, Bar, PieChart, Pie, Cell, ResponsiveContainer, XAxis, YAxis,
@@ -51,7 +51,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Prepared', 'Out for delivery', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v8.4 · Dashboard clarity';
+const APP_VERSION = 'v8.5 · Customer Directory';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -408,6 +408,7 @@ function MainApp() {
   const [priceHistory, setPriceHistory] = useState([]);
   const [supplierPayments, setSupplierPayments] = useState([]);
   const [dayCloses, setDayCloses] = useState({});
+  const [customers, setCustomers] = useState({});
   const [meta, setMeta] = useState({ lastOrderNum: 0 });
   const [saving, setSaving] = useState(false);
   // Cloud sync status: 'connecting' | 'cloud' | 'local-only' | 'error'
@@ -460,6 +461,7 @@ function MainApp() {
       const localPriceHistory = storage.load('priceHistory', []);
       const localSupplierPayments = storage.load('supplierPayments', []);
       const localDayCloses = storage.load('dayCloses', {});
+      const localCustomers = storage.load('customers', {});
       const localMeta = storage.load('meta', { lastOrderNum: 0 });
       const hasLocalData = (localOrders && Object.keys(localOrders).length > 0)
         || (localExpenses && localExpenses.length > 0);
@@ -481,6 +483,7 @@ function MainApp() {
           setPriceHistory(cloud.priceHistory || []);
           setSupplierPayments(cloud.supplierPayments || []);
           setDayCloses(cloud.dayCloses || {});
+          setCustomers(cloud.customers || {});
           setMeta(cloud.meta || { lastOrderNum: 0 });
           usedCloud = true;
           setSyncStatus('cloud');
@@ -493,6 +496,7 @@ function MainApp() {
           setPriceHistory(localPriceHistory || []);
           setSupplierPayments(localSupplierPayments || []);
           setDayCloses(localDayCloses || {});
+          setCustomers(localCustomers || {});
           setMeta(localMeta || { lastOrderNum: 0 });
           setSyncStatus('cloud');
           if (hasLocalData) setNeedsImport(true);
@@ -507,6 +511,7 @@ function MainApp() {
         setPriceHistory(localPriceHistory || []);
         setSupplierPayments(localSupplierPayments || []);
         setDayCloses(localDayCloses || {});
+        setCustomers(localCustomers || {});
         setMeta(localMeta || { lastOrderNum: 0 });
         setSyncStatus('local-only');
       }
@@ -537,6 +542,7 @@ function MainApp() {
     storage.save('priceHistory', priceHistory);
     storage.save('supplierPayments', supplierPayments);
     storage.save('dayCloses', dayCloses);
+    storage.save('customers', customers);
     storage.save('meta', meta);
     lastSaveRef.current = Date.now();
 
@@ -544,7 +550,7 @@ function MainApp() {
     let cancelled = false;
     const t = setTimeout(async () => {
       try {
-        await cloudSave({ catalog, orders, expenses, inventory, priceHistory, supplierPayments, dayCloses, meta });
+        await cloudSave({ catalog, orders, expenses, inventory, priceHistory, supplierPayments, dayCloses, customers, meta });
         if (!cancelled) {
           setSyncStatus('cloud');
           setSaving(false);
@@ -558,7 +564,7 @@ function MainApp() {
       }
     }, 600);
     return () => { cancelled = true; clearTimeout(t); };
-  }, [catalog, orders, expenses, inventory, priceHistory, supplierPayments, dayCloses, meta, loaded]);
+  }, [catalog, orders, expenses, inventory, priceHistory, supplierPayments, dayCloses, customers, meta, loaded]);
 
   // Publish the public-safe catalog (names + prices only) to the public_catalog
   // table so the customer ordering app shows current prices. Debounced, and only
@@ -574,7 +580,7 @@ function MainApp() {
   const importLocalToCloud = async () => {
     setImporting(true);
     try {
-      await cloudSave({ catalog, orders, expenses, inventory, priceHistory, supplierPayments, dayCloses, meta });
+      await cloudSave({ catalog, orders, expenses, inventory, priceHistory, supplierPayments, dayCloses, customers, meta });
       setNeedsImport(false);
       setSyncStatus('cloud');
       alert('Your existing data is now saved to the cloud and will sync across your devices.');
@@ -591,7 +597,7 @@ function MainApp() {
     const data = {
       version: 1,
       exported_at: new Date().toISOString(),
-      catalog, orders, expenses, inventory, priceHistory, supplierPayments, dayCloses, meta,
+      catalog, orders, expenses, inventory, priceHistory, supplierPayments, dayCloses, customers, meta,
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -624,6 +630,7 @@ function MainApp() {
         setPriceHistory(data.priceHistory || []);
         setSupplierPayments(data.supplierPayments || []);
         setDayCloses(data.dayCloses || {});
+        setCustomers(data.customers || {});
         setMeta(data.meta || { lastOrderNum: 0 });
         setShowBackup(false);
         alert('Backup restored successfully!');
@@ -650,6 +657,7 @@ function MainApp() {
     { id: 'new', label: 'New Order', icon: PlusCircle },
     { id: 'requests', label: 'Online Orders', icon: Inbox },
     { id: 'orders', label: 'Orders', icon: ListOrdered },
+    { id: 'customers', label: 'Customers', icon: Users },
     { id: 'pickup', label: 'Pickup Check', icon: Truck },
     { id: 'salescheck', label: 'Sales Check', icon: Receipt },
     { id: 'dayclose', label: 'Batch Money Check', icon: Activity },
@@ -799,8 +807,9 @@ function MainApp() {
             </div>
           )}
           {view === 'dashboard' && <Dashboard orders={orders} setOrders={setOrders} expenses={expenses} catalog={catalog} setView={setView} privacy={privacy} setPrivacy={setPrivacy} currentUser={currentUser} theme={theme} setTheme={setTheme} />}
-          {view === 'new' && <NewOrder catalog={catalog} meta={meta} setMeta={setMeta} orders={orders} setOrders={setOrders} onSaved={() => setView('orders')} />}
-          {view === 'requests' && <OrderRequests catalog={catalog} orders={orders} setOrders={setOrders} meta={meta} setMeta={setMeta} />}
+          {view === 'new' && <NewOrder catalog={catalog} meta={meta} setMeta={setMeta} orders={orders} setOrders={setOrders} customers={customers} setCustomers={setCustomers} onSaved={() => setView('orders')} />}
+          {view === 'requests' && <OrderRequests catalog={catalog} orders={orders} setOrders={setOrders} meta={meta} setMeta={setMeta} customers={customers} setCustomers={setCustomers} />}
+          {view === 'customers' && <Customers customers={customers} setCustomers={setCustomers} orders={orders} setView={setView} privacy={privacy} />}
           {view === 'orders' && <Orders orders={orders} setOrders={setOrders} productByName={productByName} catalog={catalog} />}
           {view === 'pickup' && <Pickup orders={orders} catalog={catalog} />}
           {view === 'salescheck' && <SalesCheck orders={orders} catalog={catalog} privacy={privacy} />}
@@ -941,6 +950,65 @@ export default function App() {
   }
 
   return <MainApp />;
+}
+
+/* ============================================================
+   CUSTOMER DIRECTORY HELPERS (internal/admin only)
+   ============================================================
+   Saved customers live in the same synced data blob as orders. We
+   match an order to a saved customer by phone first, then by exact
+   name, then by similar name — never by name alone silently, because
+   names get duplicated and mistyped. Internal notes here are admin-
+   only and are never written onto orders or customer-facing copies. */
+const cNormName = (s) => (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+const cDigits = (s) => (s || '').replace(/[^\d]/g, '');
+const makeCustomerId = () => 'cust_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+// Live last-order date + order count for a saved customer, read from orders.
+function customerStats(orders, c) {
+  const cd = cDigits(c.phone);
+  const cn = cNormName(c.name);
+  let count = 0, last = '';
+  Object.values(orders || {}).forEach((o) => {
+    if (o.delivery_status === 'Cancelled') return;
+    const match = (cd && cDigits(o.phone) === cd) || (cn && cNormName(o.customer) === cn);
+    if (match) { count += 1; if ((o.date || '') > last) last = o.date || ''; }
+  });
+  return { count, last };
+}
+
+// Best single match for an order's {name, phone}: phone → exact name → none.
+function findCustomerMatch(customers, name, phone) {
+  const list = Object.values(customers || {});
+  const d = cDigits(phone);
+  if (d) { const byPhone = list.find((c) => cDigits(c.phone) && cDigits(c.phone) === d); if (byPhone) return byPhone; }
+  const n = cNormName(name);
+  if (n) { const exact = list.find((c) => cNormName(c.name) === n); if (exact) return exact; }
+  return null;
+}
+
+// Ranked suggestions for a typed query (name text or phone digits).
+function searchSavedCustomers(customers, query) {
+  const q = (query || '').trim();
+  if (!q) return [];
+  const d = cDigits(q);
+  const n = cNormName(q);
+  return Object.values(customers || {})
+    .map((c) => {
+      let score = 0;
+      if (d && d.length >= 3 && cDigits(c.phone).includes(d)) score = 4;        // contact match
+      else if (n && cNormName(c.name) === n) score = 3;                          // exact name
+      else if (n && cNormName(c.name).includes(n)) score = 2;                    // similar (substring)
+      else if (n) {
+        const toks = n.split(' ').filter((t) => t.length >= 2);
+        if (toks.some((t) => cNormName(c.name).includes(t))) score = 1;          // token overlap
+      }
+      return { c, score };
+    })
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 5)
+    .map((x) => x.c);
 }
 
 /* ============================================================
@@ -1747,7 +1815,7 @@ const submittedAt = (req) => {
   return `${d.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })} · ${d.toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' })}`;
 };
 
-function OrderRequests({ catalog, orders, setOrders, meta, setMeta }) {
+function OrderRequests({ catalog, orders, setOrders, meta, setMeta, customers, setCustomers }) {
   const productByName = useMemo(() => Object.fromEntries(catalog.map(p => [p.name, p])), [catalog]);
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1837,6 +1905,24 @@ function OrderRequests({ catalog, orders, setOrders, meta, setMeta }) {
       };
       setOrders({ ...orders, [id]: order });
       setMeta({ ...meta, lastOrderNum: newNum });
+      // Save / refresh the internal customer record from this online order.
+      // Online orders carry a real address, so they're a good source — newest
+      // address wins, but we never overwrite existing internal notes.
+      if (setCustomers && req.customer_name) {
+        const match = findCustomerMatch(customers, req.customer_name, req.phone);
+        if (!match) {
+          const cid = makeCustomerId();
+          const isMsgr = /messenger/i.test(req.phone || '');
+          setCustomers((prev) => ({ ...prev, [cid]: {
+            id: cid, name: req.customer_name,
+            phone: isMsgr ? '' : (req.phone || ''),
+            messenger: isMsgr ? (req.phone || '').replace(/^messenger:\s*/i, '') : '',
+            address: req.address || '', payment: '', notes: '',
+          } }));
+        } else if (req.address && req.address !== (match.address || '')) {
+          setCustomers((prev) => ({ ...prev, [match.id]: { ...prev[match.id], address: req.address } }));
+        }
+      }
       await updateOrderRequestStatus(req.id, 'accepted');
       setRequests((prev) => prev.map(r => r.id === req.id ? { ...r, status: 'accepted' } : r));
       setViewing(null);
@@ -2186,12 +2272,151 @@ function RequestReceiptModal({ req, busy, onClose, onAccept, onDecline, onRemove
 }
 
 /* ============================================================
+   CUSTOMERS (internal directory — admin only)
+   ============================================================
+   Simple saved-customer list: search, view, edit, add, remove.
+   Last-order date and order count are computed live from orders so
+   they never go stale. Internal notes live here ONLY — they are never
+   copied onto orders, receipts, prints, or anything customer-facing. */
+function Customers({ customers, setCustomers, orders, setView, privacy }) {
+  const [search, setSearch] = useState('');
+  const [editing, setEditing] = useState(null);   // customer object being edited, or {} for new
+
+  const list = useMemo(() => {
+    const all = Object.values(customers || {}).map((c) => ({ ...c, _stats: customerStats(orders, c) }));
+    const q = search.trim().toLowerCase();
+    const filtered = q
+      ? all.filter((c) => [c.name, c.phone, c.messenger, c.address, c.notes].filter(Boolean).join(' ').toLowerCase().includes(q))
+      : all;
+    // Most recent customers first; never-ordered ones last, alphabetical.
+    return filtered.sort((a, b) => (b._stats.last || '').localeCompare(a._stats.last || '') || (a.name || '').localeCompare(b.name || ''));
+  }, [customers, orders, search]);
+
+  const startNew = () => setEditing({ id: '', name: '', phone: '', messenger: '', address: '', payment: '', notes: '' });
+  const saveEdit = () => {
+    const e = editing;
+    if (!e || !(e.name || '').trim()) return;
+    const id = e.id || makeCustomerId();
+    setCustomers((prev) => ({ ...prev, [id]: { ...e, id, name: e.name.trim() } }));
+    setEditing(null);
+  };
+  const removeCustomer = (c) => {
+    if (!confirm(`Remove ${c.name} from saved customers? Their past orders are not affected.`)) return;
+    setCustomers((prev) => { const next = { ...prev }; delete next[c.id]; return next; });
+    setEditing(null);
+  };
+  const field = (label, key, placeholder) => (
+    <div>
+      <Label>{label}</Label>
+      <Input value={editing?.[key] || ''} onChange={(ev) => setEditing((p) => ({ ...p, [key]: ev.target.value }))} placeholder={placeholder} />
+    </div>
+  );
+
+  return (
+    <div>
+      <Header title="Customers" subtitle="Saved customer details for faster order logging. Internal only — never shown to customers."
+        right={<Btn variant="primary" onClick={startNew}><Plus size={15} className="inline -mt-0.5 mr-1" />Add Customer</Btn>} />
+
+      <div className="relative mb-5 max-w-md">
+        <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: THEME.inkSoft }} />
+        <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name, contact, address, notes…" className="pl-9" />
+      </div>
+
+      {list.length === 0 ? (
+        <Card className="p-10 text-center">
+          <Users size={28} style={{ color: THEME.inkSoft, margin: '0 auto 8px' }} />
+          <div className="text-sm" style={{ color: THEME.inkSoft }}>
+            {search.trim() ? 'No saved customers match your search.'
+              : 'No saved customers yet. They\u2019re saved automatically when you log orders or accept online orders — or add one now.'}
+          </div>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {list.map((c) => (
+            <Card key={c.id} className="p-4">
+              <div className="flex items-start justify-between gap-2 mb-2">
+                <div className="min-w-0">
+                  <div className="font-medium truncate">{c.name}</div>
+                  <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>
+                    {c._stats.count > 0
+                      ? `${c._stats.count} order${c._stats.count !== 1 ? 's' : ''}${c._stats.last ? ` · last ${fmtDateShort(c._stats.last)}` : ''}`
+                      : 'No orders yet'}
+                  </div>
+                </div>
+                <button onClick={() => setEditing({ ...c })} className="text-xs font-medium flex-shrink-0 px-2 py-1 rounded"
+                  style={{ color: THEME.brand, border: `1px solid ${THEME.line}` }}>Edit</button>
+              </div>
+              <div className="space-y-1 text-sm">
+                {c.phone && <div className="flex items-baseline gap-2"><span className="text-xs uppercase tracking-wider flex-shrink-0" style={{ color: THEME.inkSoft, minWidth: 72 }}>Phone</span><span>{c.phone}</span></div>}
+                {c.messenger && <div className="flex items-baseline gap-2"><span className="text-xs uppercase tracking-wider flex-shrink-0" style={{ color: THEME.inkSoft, minWidth: 72 }}>Messenger</span><span>{c.messenger}</span></div>}
+                {c.address && <div className="flex items-baseline gap-2"><span className="text-xs uppercase tracking-wider flex-shrink-0" style={{ color: THEME.inkSoft, minWidth: 72 }}>Address</span><span>{c.address}</span></div>}
+                {c.payment && <div className="flex items-baseline gap-2"><span className="text-xs uppercase tracking-wider flex-shrink-0" style={{ color: THEME.inkSoft, minWidth: 72 }}>Payment</span><span>{c.payment}</span></div>}
+                {c.notes && (
+                  <div className="flex items-start gap-2 mt-1.5 px-2.5 py-1.5 rounded text-xs" style={{ background: THEME.bg, color: THEME.inkSoft }}>
+                    <EyeOff size={12} className="mt-0.5 flex-shrink-0" /><span>{c.notes}</span>
+                  </div>
+                )}
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {/* Edit / add modal */}
+      <Modal open={!!editing} onClose={() => setEditing(null)} maxWidth="max-w-md">
+        {editing && (
+          <div className="p-6">
+            <div className="font-display text-lg mb-4">{editing.id ? `Edit ${editing.name || 'customer'}` : 'Add Customer'}</div>
+            <div className="space-y-3">
+              {field('Customer Name', 'name', 'Customer name')}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {field('Phone', 'phone', '09XX XXX XXXX')}
+                {field('Messenger', 'messenger', 'Messenger name')}
+              </div>
+              {field('Default Delivery Address', 'address', 'House / street / subdivision, barangay')}
+              <div>
+                <Label>Preferred Payment</Label>
+                <Select value={editing.payment || ''} onChange={(ev) => setEditing((p) => ({ ...p, payment: ev.target.value }))}
+                  options={[{ value: '', label: '— None —' }, ...PAYMENT_METHODS.map((pm) => ({ value: pm, label: pm }))]} />
+              </div>
+              <div>
+                <Label>Internal Delivery Notes</Label>
+                <textarea value={editing.notes || ''} onChange={(ev) => setEditing((p) => ({ ...p, notes: ev.target.value }))} rows={2}
+                  className="w-full px-3 py-2 rounded-md outline-none text-sm"
+                  style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink, fontFamily: 'DM Sans' }}
+                  placeholder="e.g. blue gate near sari-sari store · message before delivery" />
+                <div className="text-xs mt-1 flex items-center gap-1" style={{ color: THEME.inkSoft }}>
+                  <EyeOff size={12} /> Admin only — never shown on receipts or to the customer.
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center justify-between mt-5">
+              {editing.id
+                ? <button onClick={() => removeCustomer(editing)} className="text-xs" style={{ color: THEME.red }}>Remove customer</button>
+                : <span />}
+              <div className="flex gap-2">
+                <Btn variant="secondary" onClick={() => setEditing(null)}>Cancel</Btn>
+                <Btn variant="primary" onClick={saveEdit} disabled={!(editing.name || '').trim()}>Save</Btn>
+              </div>
+            </div>
+          </div>
+        )}
+      </Modal>
+    </div>
+  );
+}
+
+/* ============================================================
    NEW ORDER
    ============================================================ */
-function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
+function NewOrder({ catalog, meta, setMeta, orders, setOrders, customers, setCustomers, onSaved }) {
   const [date, setDate] = useState(today());
   const [customer, setCustomer] = useState('');
   const [phone, setPhone] = useState('');
+  const [address, setAddress] = useState('');
+  const [internalNotes, setInternalNotes] = useState('');
+  const [pickedFromSaved, setPickedFromSaved] = useState(false);
+  const [pendingConflict, setPendingConflict] = useState(null);
   const [showSuggest, setShowSuggest] = useState(false);
   const [paymentStatus, setPaymentStatus] = useState('Paid');
   const [paymentMethod, setPaymentMethod] = useState('Cash');
@@ -2223,15 +2448,39 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
     return Array.from(map.values()).sort((a, b) => b.count - a.count);
   }, [orders]);
 
-  const customerMatches = useMemo(() => {
-    const q = customer.trim().toLowerCase();
+  // Suggestions: saved customers first (rich — have address/notes), then any
+  // past-order names not already saved. Matching priority lives in
+  // searchSavedCustomers (phone → exact name → similar).
+  const suggestions = useMemo(() => {
+    const q = customer.trim();
     if (!q) return [];
-    return pastCustomers
-      .filter(c => c.name.toLowerCase().includes(q) && c.name.toLowerCase() !== q)
-      .slice(0, 6);
-  }, [customer, pastCustomers]);
+    const saved = searchSavedCustomers(customers, q).map((c) => ({ ...c, _saved: true }));
+    const savedKeys = new Set(saved.map((c) => cNormName(c.name)));
+    const past = pastCustomers
+      .filter((c) => c.name.toLowerCase().includes(q.toLowerCase())
+        && !savedKeys.has(cNormName(c.name)) && cNormName(c.name) !== cNormName(q))
+      .map((c) => ({ ...c, _saved: false }));
+    return [...saved, ...past].slice(0, 6);
+  }, [customer, customers, pastCustomers]);
 
-  const pickCustomer = (c) => {
+  // Exact saved match for the phone currently typed (phone-first lookup).
+  const phoneMatch = useMemo(() => {
+    const d = cDigits(phone);
+    if (d.length < 7) return null;
+    return Object.values(customers).find((c) => cDigits(c.phone) === d) || null;
+  }, [phone, customers]);
+
+  const applySavedCustomer = (c) => {
+    setCustomer(c.name || '');
+    if (c.phone) setPhone(c.phone);
+    if (c.address) setAddress(c.address);
+    if (c.payment && PAYMENT_METHODS.includes(c.payment)) setPaymentMethod(c.payment);
+    setInternalNotes(c.notes || '');
+    setPickedFromSaved(true);
+    setShowSuggest(false);
+  };
+  const pickSuggestion = (c) => {
+    if (c._saved) { applySavedCustomer(c); return; }
     setCustomer(c.name);
     if (c.phone) setPhone(c.phone);
     setShowSuggest(false);
@@ -2265,13 +2514,62 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
   const removeItem = (idx) => setItems(items.filter((_, i) => i !== idx));
 
   const resetForm = () => {
-    setCustomer(''); setPhone(''); setNotes('');
+    setCustomer(''); setPhone(''); setNotes(''); setAddress(''); setInternalNotes(''); setPickedFromSaved(false);
     setItems([{ product: '', qty: 1, note: '', wholesale: false }]);
     setPaymentStatus('Paid'); setPaymentMethod('Cash'); setAmountPaid('');
     setDeliveryStatus('Pending'); setWholesaleOrder(false);
     setError(''); setShowSuggest(false);
     // Order Date and Delivery Batch are kept on purpose — a run of manual
     // entries is usually the same date and the same delivery batch.
+  };
+
+  // Save / update the internal customer record from the form. Returns a
+  // conflict object when an existing customer's saved details differ, so the
+  // caller can ask the admin what to do; otherwise creates/leaves silently.
+  const upsertCustomer = () => {
+    const name = customer.trim();
+    if (!name) return null;
+    const fields = {
+      name, phone: phone.trim(), messenger: '', address: address.trim(),
+      payment: paymentStatus !== 'Unpaid' ? paymentMethod : '', notes: internalNotes.trim(),
+    };
+    const match = findCustomerMatch(customers, name, fields.phone);
+    if (!match) {
+      const id = makeCustomerId();
+      setCustomers((prev) => ({ ...prev, [id]: { id, ...fields } }));
+      return null;
+    }
+    const changed =
+      (fields.address && fields.address !== (match.address || '')) ||
+      (fields.phone && fields.phone !== (match.phone || '')) ||
+      (fields.notes && fields.notes !== (match.notes || '')) ||
+      (fields.payment && fields.payment !== (match.payment || ''));
+    return changed ? { matchId: match.id, matchName: match.name, fields } : null;
+  };
+
+  const resolveConflict = (action) => {
+    const pc = pendingConflict;
+    if (!pc) return;
+    if (action === 'update') {
+      setCustomers((prev) => {
+        const ex = prev[pc.matchId] || {};
+        return { ...prev, [pc.matchId]: {
+          ...ex,
+          name: pc.fields.name || ex.name,
+          phone: pc.fields.phone || ex.phone,
+          address: pc.fields.address || ex.address,
+          payment: pc.fields.payment || ex.payment,
+          notes: pc.fields.notes || ex.notes,
+        } };
+      });
+    } else if (action === 'new') {
+      const id = makeCustomerId();
+      setCustomers((prev) => ({ ...prev, [id]: { id, ...pc.fields } }));
+    }
+    // 'keep' → leave saved record untouched
+    const then = pc.then;
+    setPendingConflict(null);
+    if (then) then();
   };
 
   const buildAndSaveOrder = () => {
@@ -2296,15 +2594,33 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
       amount_paid: paymentStatus === 'Partial' ? (Number(amountPaid) || 0) : '',
       delivery_status: deliveryStatus,
       delivery_batch: deliveryBatch,
-      notes: notes.trim(), items: snapshotItems, created_at: new Date().toISOString(),
+      // Address folds into the order note (same convention as accepted online
+      // orders) so OrderDetail and printed copies show it with zero changes.
+      // Internal delivery notes deliberately do NOT go here — they stay on the
+      // customer record only, so they can never reach a receipt.
+      notes: [address.trim() ? `Address: ${address.trim()}` : '', notes.trim()].filter(Boolean).join(' · '),
+      items: snapshotItems, created_at: new Date().toISOString(),
     };
     setOrders({ ...orders, [id]: order });
     setMeta({ ...meta, lastOrderNum: newNum });
     return id;
   };
 
-  const save = () => { const id = buildAndSaveOrder(); if (id) onSaved(); };
-  const saveAndNew = () => { const id = buildAndSaveOrder(); if (id) { setJustSaved(id); resetForm(); } };
+  const save = () => {
+    const id = buildAndSaveOrder();
+    if (!id) return;
+    const conflict = upsertCustomer();
+    if (conflict) setPendingConflict({ ...conflict, then: () => onSaved() });
+    else onSaved();
+  };
+  const saveAndNew = () => {
+    const id = buildAndSaveOrder();
+    if (!id) return;
+    const conflict = upsertCustomer();
+    setJustSaved(id);
+    resetForm();
+    if (conflict) setPendingConflict({ ...conflict, then: null });
+  };
 
   return (
     <div>
@@ -2331,35 +2647,84 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
                 <Label>Customer Name</Label>
                 <Input
                   value={customer}
-                  onChange={(e) => { setCustomer(e.target.value); setShowSuggest(true); setJustSaved(null); }}
+                  onChange={(e) => { setCustomer(e.target.value); setShowSuggest(true); setJustSaved(null); setPickedFromSaved(false); }}
                   onFocus={() => setShowSuggest(true)}
-                  onBlur={() => setTimeout(() => setShowSuggest(false), 150)}
+                  onBlur={() => setTimeout(() => setShowSuggest(false), 180)}
                   placeholder="Customer name"
                 />
-                {showSuggest && customerMatches.length > 0 && (
+                {showSuggest && suggestions.length > 0 && (
                   <div className="absolute z-20 left-0 right-0 mt-1 rounded-md overflow-hidden shadow-lg"
                     style={{ background: THEME.card, border: `1px solid ${THEME.line}` }}>
-                    {customerMatches.map((c) => (
-                      <button
-                        key={c.name}
-                        type="button"
-                        onMouseDown={(e) => { e.preventDefault(); pickCustomer(c); }}
-                        className="w-full text-left px-3 py-2 text-sm row-hover flex items-center justify-between"
-                        style={{ color: THEME.ink }}
-                      >
-                        <span>{c.name}{c.phone ? <span style={{ color: THEME.inkSoft }}> · {c.phone}</span> : ''}</span>
-                        <span className="text-xs" style={{ color: THEME.inkSoft }}>{c.count}x</span>
-                      </button>
-                    ))}
+                    {suggestions.map((c, i) => {
+                      const st = c._saved ? customerStats(orders, c) : null;
+                      return (
+                        <button
+                          key={c.id || c.name || i}
+                          type="button"
+                          onMouseDown={(e) => { e.preventDefault(); pickSuggestion(c); }}
+                          className="w-full text-left px-3 py-2 text-sm row-hover block"
+                          style={{ color: THEME.ink, borderTop: i ? `1px solid ${THEME.line}` : 'none' }}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-medium truncate">{c.name}</span>
+                            {c._saved
+                              ? <span className="text-xs px-1.5 py-0.5 rounded-full flex-shrink-0" style={{ background: THEME.brandBg, color: THEME.brand }}>Saved · Use details</span>
+                              : <span className="text-xs flex-shrink-0" style={{ color: THEME.inkSoft }}>{c.count}x</span>}
+                          </div>
+                          {c._saved && (
+                            <div className="text-xs mt-0.5 truncate" style={{ color: THEME.inkSoft }}>
+                              {st && st.last ? `Last order ${fmtDateShort(st.last)}` : 'No orders yet'}{c.address ? ` · ${c.address}` : ''}
+                            </div>
+                          )}
+                          {!c._saved && c.phone && (
+                            <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>{c.phone}</div>
+                          )}
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </div>
-              <div><Label>Phone (optional)</Label><Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="09XX XXX XXXX" /></div>
+              <div><Label>Phone (optional)</Label><Input value={phone} onChange={(e) => { setPhone(e.target.value); setPickedFromSaved(false); }} placeholder="09XX XXX XXXX" /></div>
+            </div>
+
+            {/* Phone-first match — surfaced when the typed number is on file */}
+            {phoneMatch && cNormName(phoneMatch.name) !== cNormName(customer) && (
+              <button type="button" onClick={() => applySavedCustomer(phoneMatch)}
+                className="mt-3 w-full text-left px-3 py-2 rounded-md text-sm flex items-center justify-between gap-2"
+                style={{ background: THEME.brandBg, border: `1px solid ${THEME.line}`, color: THEME.ink }}>
+                <span>This number is saved for <span className="font-medium">{phoneMatch.name}</span>{phoneMatch.address ? ` · ${phoneMatch.address}` : ''}</span>
+                <span className="text-xs font-medium flex-shrink-0" style={{ color: THEME.brand }}>Use saved details</span>
+              </button>
+            )}
+
+            {/* Delivery address + admin-only notes (never shown to the customer) */}
+            <div className="grid grid-cols-1 gap-4 mt-4">
+              <div>
+                <Label>Delivery Address</Label>
+                <Input value={address} onChange={(e) => { setAddress(e.target.value); setPickedFromSaved(false); }} placeholder="House / street / subdivision, barangay" />
+                {pickedFromSaved && (
+                  <div className="text-xs mt-1.5 flex items-center gap-1" style={{ color: THEME.green }}>
+                    <Check size={12} /> Saved from a previous order. You can still edit this address.
+                  </div>
+                )}
+              </div>
+              <div>
+                <Label>Internal Delivery Notes</Label>
+                <textarea value={internalNotes} onChange={(e) => setInternalNotes(e.target.value)} rows={2}
+                  className="w-full px-3 py-2 rounded-md outline-none text-sm"
+                  style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink, fontFamily: 'DM Sans' }}
+                  placeholder="e.g. blue gate near sari-sari store · message before delivery" />
+                <div className="text-xs mt-1.5 flex items-center gap-1" style={{ color: THEME.inkSoft }}>
+                  <EyeOff size={12} /> Admin only — saved to this customer, never shown on receipts or to the customer.
+                </div>
+              </div>
             </div>
 
             {/* Delivery batch — smart default, expandable to change */}
             <DeliveryBatchPicker value={deliveryBatch} onChange={setDeliveryBatch} />
           </Card>
+
 
           <Card className="p-6">
             <div className="flex items-center justify-between mb-4">
@@ -2528,6 +2893,28 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, onSaved }) {
           </div>
         </div>
       </div>
+
+      {/* Saved-customer conflict prompt — only when an existing record differs */}
+      <Modal open={!!pendingConflict} onClose={() => resolveConflict('keep')} maxWidth="max-w-sm">
+        {pendingConflict && (
+          <div className="p-6">
+            <div className="font-display text-lg mb-1">{pendingConflict.matchName} may already be saved</div>
+            <div className="text-sm mb-4" style={{ color: THEME.inkSoft }}>
+              This order's details differ from what's saved. Update the saved customer?
+            </div>
+            <div className="rounded-md p-3 mb-4 text-sm space-y-1" style={{ background: THEME.bg }}>
+              {pendingConflict.fields.address && <div><span style={{ color: THEME.inkSoft }}>New address: </span>{pendingConflict.fields.address}</div>}
+              {pendingConflict.fields.phone && <div><span style={{ color: THEME.inkSoft }}>Contact: </span>{pendingConflict.fields.phone}</div>}
+              {pendingConflict.fields.notes && <div><span style={{ color: THEME.inkSoft }}>Notes: </span>{pendingConflict.fields.notes}</div>}
+            </div>
+            <div className="flex flex-col gap-2">
+              <Btn variant="primary" onClick={() => resolveConflict('update')} className="w-full">Update saved customer</Btn>
+              <Btn variant="secondary" onClick={() => resolveConflict('keep')} className="w-full">Keep old saved details</Btn>
+              <Btn variant="secondary" onClick={() => resolveConflict('new')} className="w-full">Save as new customer</Btn>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
