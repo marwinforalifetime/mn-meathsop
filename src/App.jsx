@@ -51,7 +51,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Prepared', 'Out for delivery', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v8.6 · Structured order fields';
+const APP_VERSION = 'v8.7 · Mobile fit + live ticker';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -323,7 +323,7 @@ function Modal({ open, onClose, children, maxWidth = 'max-w-2xl' }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 no-print"
       style={{ background: 'rgba(42,38,36,0.55)' }} onClick={onClose}>
-      <div className={`w-full ${maxWidth} max-h-[90vh] overflow-auto rounded-lg`} style={{ background: THEME.card }} onClick={(e) => e.stopPropagation()}>
+      <div className={`w-full ${maxWidth} max-h-[90vh] overflow-y-auto overflow-x-hidden rounded-lg`} style={{ background: THEME.card }} onClick={(e) => e.stopPropagation()}>
         {children}
       </div>
     </div>
@@ -1403,19 +1403,23 @@ function Dashboard({ orders, setOrders, expenses, catalog, setView, privacy, set
 
         const clsColor = (c) => c === 'green' ? THEME.green : c === 'red' ? THEME.red : c === 'gold' ? THEME.accent : THEME.ink;
         return (
-          <div className="mb-4 rounded-lg p-2 flex items-center flex-wrap gap-2"
+          <div className="mb-4 rounded-lg overflow-hidden flex items-stretch"
             style={{ background: THEME.brandBg, border: `1px solid ${THEME.line}` }}>
-            <span className="inline-flex items-center px-2 py-1 rounded-md flex-shrink-0"
-              style={{ background: THEME.brand, color: '#fff', fontSize: 10, fontWeight: 700, letterSpacing: '0.12em' }}>
-              <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#fff', marginRight: 5 }} className="mn-live-dot" />LIVE
-            </span>
-            {tick.map((it, i) => (
-              <span key={i} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full"
-                style={{ background: THEME.card, border: `1px solid ${THEME.line}` }}>
-                <span style={{ fontSize: 10.5, color: THEME.inkSoft }}>{it.label}</span>
-                <span style={{ fontSize: 12, fontWeight: 600, color: clsColor(it.cls) }}>{it.value}</span>
-              </span>
-            ))}
+            <div className="flex items-center px-2.5 flex-shrink-0" style={{ background: THEME.brand, color: '#fff' }}>
+              <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#fff', marginRight: 5 }} className="mn-live-dot" />
+              <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em' }}>LIVE</span>
+            </div>
+            <div className="overflow-hidden flex items-center" style={{ flex: 1, minWidth: 0 }}>
+              <div className="mn-ticker-track inline-flex items-center gap-2 py-2 pl-2">
+                {[...tick, ...tick].map((it, i) => (
+                  <span key={i} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full flex-shrink-0"
+                    style={{ background: THEME.card, border: `1px solid ${THEME.line}` }}>
+                    <span style={{ fontSize: 10.5, color: THEME.inkSoft, whiteSpace: 'nowrap' }}>{it.label}</span>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: clsColor(it.cls), whiteSpace: 'nowrap' }}>{it.value}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
           </div>
         );
       })()}
@@ -3433,30 +3437,32 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
           </div>
         )}
         {!editing ? (
-          <table className="w-full text-sm mb-4">
+          <div className="overflow-x-auto -mx-1 mb-4">
+          <table className="w-full text-sm" style={{ minWidth: 380 }}>
             <thead>
               <tr style={{ color: THEME.inkSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                <th className="text-left pb-2 font-medium pr-2" style={{ width: 28 }}>#</th>
+                <th className="text-left pb-2 font-medium pr-2 pl-1" style={{ width: 28 }}>#</th>
                 <th className="text-left pb-2 font-medium">Product</th>
-                <th className="text-right pb-2 font-medium">Qty</th>
-                <th className="text-left pb-2 font-medium pl-4">Notes / Special Cut</th>
-                <th className="text-right pb-2 font-medium">Unit Price</th>
-                <th className="text-right pb-2 font-medium">Total</th>
+                <th className="text-right pb-2 font-medium px-2">Qty</th>
+                <th className="text-left pb-2 font-medium pl-3">Notes / Cut</th>
+                <th className="text-right pb-2 font-medium px-2 whitespace-nowrap">Unit Price</th>
+                <th className="text-right pb-2 font-medium pr-1">Total</th>
               </tr>
             </thead>
             <tbody>
               {(order.items || []).map((it, i) => (
                 <tr key={i} style={{ borderTop: `1px solid ${THEME.line}` }}>
-                  <td className="py-2.5 pr-2 tabular-nums" style={{ color: THEME.inkSoft }}>{i + 1}</td>
+                  <td className="py-2.5 pr-2 pl-1 tabular-nums" style={{ color: THEME.inkSoft }}>{i + 1}</td>
                   <td className="py-2.5">{it.product}</td>
-                  <td className="py-2.5 text-right">{it.qty} {it.unit}</td>
-                  <td className="py-2.5 pl-4" style={{ color: it.note ? THEME.ink : THEME.inkSoft }}>{it.note || '—'}</td>
-                  <td className="py-2.5 text-right">{peso(it.price)}</td>
-                  <td className="py-2.5 text-right font-medium">{peso(it.qty * it.price)}</td>
+                  <td className="py-2.5 text-right px-2 whitespace-nowrap">{it.qty} {it.unit}</td>
+                  <td className="py-2.5 pl-3" style={{ color: it.note ? THEME.ink : THEME.inkSoft }}>{it.note || '—'}</td>
+                  <td className="py-2.5 text-right px-2 whitespace-nowrap">{peso(it.price)}</td>
+                  <td className="py-2.5 text-right pr-1 font-medium whitespace-nowrap">{peso(it.qty * it.price)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
+          </div>
         ) : (
           <div className="mb-4">
             <div className="flex items-center justify-between mb-3">
@@ -3668,8 +3674,8 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
             <Btn variant="primary" onClick={saveEdit}><Save size={14} className="inline -mt-0.5 mr-1" /> Save Changes</Btn>
           </div>
         ) : (
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex gap-2">
+          <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-2">
+            <div className="flex flex-wrap gap-2">
               <Btn variant="danger" size="sm" onClick={onDelete}><Trash2 size={14} className="inline -mt-0.5 mr-1" /> Delete</Btn>
               {order.delivery_status === 'Cancelled' ? (
                 <Btn variant="secondary" size="sm" onClick={() => onUpdate({ delivery_status: 'Pending', cancel_reason: '' })}>
@@ -3685,10 +3691,10 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
                 </Btn>
               )}
             </div>
-            <div className="flex gap-2">
-              <Btn variant="secondary" onClick={() => onPrint('supplier')}><FileText size={14} className="inline -mt-0.5 mr-1" /> Supplier Copy</Btn>
-              <Btn variant="secondary" onClick={() => { onClose(); }}><Save size={14} className="inline -mt-0.5 mr-1" /> Save</Btn>
-              <Btn variant="primary" onClick={() => onPrint('invoice')}><Receipt size={14} className="inline -mt-0.5 mr-1" /> Invoice</Btn>
+            <div className="flex flex-wrap gap-2">
+              <Btn variant="secondary" size="sm" onClick={() => onPrint('supplier')}><FileText size={14} className="inline -mt-0.5 mr-1" /> Supplier Copy</Btn>
+              <Btn variant="secondary" size="sm" onClick={() => { onClose(); }}><Save size={14} className="inline -mt-0.5 mr-1" /> Save</Btn>
+              <Btn variant="primary" size="sm" onClick={() => onPrint('invoice')}><Receipt size={14} className="inline -mt-0.5 mr-1" /> Invoice</Btn>
             </div>
           </div>
         )}
