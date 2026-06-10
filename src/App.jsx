@@ -51,7 +51,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Prepared', 'Out for delivery', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v8.5 · Customer Directory';
+const APP_VERSION = 'v8.6 · Structured order fields';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -1012,6 +1012,56 @@ function searchSavedCustomers(customers, query) {
 }
 
 /* ============================================================
+   ORDER DETAILS NORMALIZER (audience-aware display)
+   ============================================================
+   New orders carry structured fields (source, online_ref, address,
+   preferred_date/time, customer_note, internal_notes). Older orders
+   only have one combined `notes` string, so we parse those back out
+   here. This single source of truth decides what each surface shows:
+   admin sees everything, supplier sees prep only, the customer sees a
+   clean delivery block — without ever changing totals/cost/profit. */
+function orderDetails(o) {
+  const note = o.notes || '';
+  const grab = (re) => { const m = note.match(re); return m ? m[1].trim() : ''; };
+  const isOnline = o.source === 'online' || /^\s*online order/i.test(note);
+  const phone = (o.phone || '').trim();
+  const address = o.delivery_address || grab(/Address:\s*([^·]+)/i);
+  const preferredDate = o.preferred_date || grab(/Preferred delivery:\s*([^·]+)/i);
+  const preferredTime = o.preferred_time || grab(/Preferred time:\s*([^·]+)/i);
+  const paymentMethod = o.payment_method || grab(/Payment:\s*([^·]+)/i);
+  const onlineRef = o.online_ref || grab(/Ref:\s*([^·]+)/i);
+  const contactMethod = o.contact_method || (/messenger/i.test(phone) ? 'Messenger' : (phone ? 'SMS / Call' : ''));
+
+  // Customer note: explicit field wins. Legacy fallback only treats the free
+  // leftover of an ONLINE note as a customer note; legacy manual notes are
+  // kept internal so they can never leak onto the invoice.
+  let customerNote;
+  if (o.customer_note !== undefined && o.customer_note !== null) {
+    customerNote = (o.customer_note || '').trim();
+  } else if (isOnline) {
+    customerNote = note
+      .replace(/^\s*online order\.?\s*/i, '')
+      .split('·').map(s => s.trim())
+      .filter(s => s && !/^Address:/i.test(s) && !/^Preferred delivery:/i.test(s)
+        && !/^Payment:/i.test(s) && !/^Reach via/i.test(s) && !/^Preferred time:/i.test(s) && !/^Ref:/i.test(s))
+      .join(' · ').trim();
+  } else {
+    customerNote = '';
+  }
+
+  // Internal notes: explicit field, else (legacy manual only) the freeform note.
+  let internalNotes = (o.internal_notes || '').trim();
+  if (!internalNotes && !isOnline && o.customer_note === undefined) {
+    internalNotes = note.replace(/^Address:\s*[^·]+·?\s*/i, '').trim();
+  }
+
+  return {
+    isOnline, source: isOnline ? 'Online Order' : (o.source === 'manual' ? 'Manual' : ''),
+    address, preferredDate, preferredTime, paymentMethod, onlineRef, contactMethod, customerNote, internalNotes,
+  };
+}
+
+/* ============================================================
    DASHBOARD
    ============================================================ */
 
@@ -1895,13 +1945,28 @@ function OrderRequests({ catalog, orders, setOrders, meta, setMeta, customers, s
           note: (it.note || '').trim(), wholesale: false,
         };
       });
+      const pm = parseRequestMeta(req);
+      const isMsgr = /messenger/i.test(req.phone || '');
+      const payMethod = pm.payment
+        ? (/gcash/i.test(pm.payment) ? 'Gcash' : /cash/i.test(pm.payment) ? 'Cash' : 'Gcash')
+        : 'Gcash';
       const order = {
         id, date: today(),
         customer: req.customer_name, phone: req.phone,
-        payment_status: 'Unpaid', payment_method: 'GCash',
+        payment_status: 'Unpaid', payment_method: payMethod,
+        amount_paid: '',
         delivery_status: 'Pending', delivery_batch: suggestedBatch(),
-        notes: `Online order. Address: ${req.address}${req.note ? ' · ' + req.note : ''}`,
-        items: snapshotItems, created_at: new Date().toISOString(), source: 'online',
+        // Structured fields — each surface picks what it needs (see orderDetails).
+        source: 'online',
+        online_ref: reqRef(req) || '',
+        contact_method: isMsgr ? 'Messenger' : 'SMS / Call',
+        delivery_address: req.address || '',
+        preferred_date: pm.deliveryDate || '',
+        preferred_time: pm.preferredTime || '',
+        customer_note: pm.freeNote || '',
+        internal_notes: '',
+        notes: '',
+        items: snapshotItems, created_at: new Date().toISOString(),
       };
       setOrders({ ...orders, [id]: order });
       setMeta({ ...meta, lastOrderNum: newNum });
@@ -2594,11 +2659,15 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, customers, setCus
       amount_paid: paymentStatus === 'Partial' ? (Number(amountPaid) || 0) : '',
       delivery_status: deliveryStatus,
       delivery_batch: deliveryBatch,
-      // Address folds into the order note (same convention as accepted online
-      // orders) so OrderDetail and printed copies show it with zero changes.
-      // Internal delivery notes deliberately do NOT go here — they stay on the
-      // customer record only, so they can never reach a receipt.
-      notes: [address.trim() ? `Address: ${address.trim()}` : '', notes.trim()].filter(Boolean).join(' · '),
+      // Structured fields. customer_note shows on the invoice; internal_notes is
+      // admin-only and never reaches a receipt. Address stays admin-only too.
+      source: 'manual',
+      delivery_address: address.trim(),
+      contact_method: /messenger/i.test(phone) ? 'Messenger' : (phone.trim() ? 'SMS / Call' : ''),
+      online_ref: '', preferred_date: '', preferred_time: '',
+      customer_note: notes.trim(),
+      internal_notes: internalNotes.trim(),
+      notes: '',
       items: snapshotItems, created_at: new Date().toISOString(),
     };
     setOrders({ ...orders, [id]: order });
@@ -2862,11 +2931,12 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, customers, setCus
 
               <div><Label>Delivery Status</Label><Select value={deliveryStatus} onChange={(e) => setDeliveryStatus(e.target.value)} options={DELIVERY_STATUSES} /></div>
               <div>
-                <Label>Notes</Label>
+                <Label>Customer Note</Label>
                 <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3}
                   className="w-full px-3 py-2 rounded-md outline-none text-sm"
                   style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink, fontFamily: 'DM Sans' }}
-                  placeholder="Optional" />
+                  placeholder="Optional — shows on the customer's order summary" />
+                <div className="text-xs mt-1.5" style={{ color: THEME.inkSoft }}>Customer-facing. For private notes use Internal Delivery Notes above.</div>
               </div>
             </div>
           </Card>
@@ -3160,6 +3230,7 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
   const [err, setErr] = useState('');
 
   const startEdit = () => {
+    const d = orderDetails(order);
     setDraft({
       date: order.date || today(),
       customer: order.customer || '',
@@ -3168,7 +3239,9 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
       payment_method: order.payment_method || 'Cash',
       delivery_status: order.delivery_status || 'Pending',
       delivery_batch: order.delivery_batch || '',
-      notes: order.notes || '',
+      delivery_address: d.address || '',
+      customer_note: d.customerNote || '',
+      internal_notes: d.internalNotes || '',
       amount_paid: order.amount_paid ?? '',
       items: (order.items || []).map((it) => ({ ...it })),
     });
@@ -3241,10 +3314,14 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
       customer: draft.customer.trim(),
       phone: draft.phone.trim(),
       payment_status: draft.payment_status,
-      payment_method: draft.payment_method,
+      payment_method: draft.payment_status === 'Unpaid' ? '' : draft.payment_method,
       delivery_status: draft.delivery_status,
       delivery_batch: draft.delivery_batch || '',
-      notes: draft.notes.trim(),
+      delivery_address: (draft.delivery_address || '').trim(),
+      customer_note: (draft.customer_note || '').trim(),
+      internal_notes: (draft.internal_notes || '').trim(),
+      // Legacy combined note retired now that fields are structured.
+      notes: '',
       amount_paid: draft.payment_status === 'Partial' ? (draft.amount_paid === '' ? '' : Number(draft.amount_paid) || 0) : '',
       items: cleanItems,
       edited_at: new Date().toISOString(),
@@ -3524,18 +3601,59 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
           </div>
         )}
         {editing ? (
-          <div className="mb-5">
-            <Label>Order Notes</Label>
-            <textarea value={draft.notes} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} rows={2}
-              className="w-full px-3 py-2 rounded-md outline-none text-sm"
-              style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink, fontFamily: 'DM Sans' }}
-              placeholder="Optional" />
+          <div className="mb-5 space-y-3">
+            <div>
+              <Label>Delivery Address</Label>
+              <Input value={draft.delivery_address} onChange={(e) => setDraft({ ...draft, delivery_address: e.target.value })} placeholder="House / street / subdivision, barangay" />
+            </div>
+            <div>
+              <Label>Customer Note</Label>
+              <textarea value={draft.customer_note} onChange={(e) => setDraft({ ...draft, customer_note: e.target.value })} rows={2}
+                className="w-full px-3 py-2 rounded-md outline-none text-sm"
+                style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink, fontFamily: 'DM Sans' }}
+                placeholder="Shows on the customer's order summary" />
+            </div>
+            <div>
+              <Label>Internal Notes</Label>
+              <textarea value={draft.internal_notes} onChange={(e) => setDraft({ ...draft, internal_notes: e.target.value })} rows={2}
+                className="w-full px-3 py-2 rounded-md outline-none text-sm"
+                style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink, fontFamily: 'DM Sans' }}
+                placeholder="Admin only — never shown to the customer or supplier" />
+            </div>
           </div>
-        ) : (
-          order.notes && (
-            <div className="mb-5"><Label>Notes</Label><div className="text-sm" style={{ color: THEME.ink }}>{order.notes}</div></div>
-          )
-        )}
+        ) : (() => {
+          const d = orderDetails(order);
+          const rows = [
+            d.source && ['Source', d.source],
+            d.onlineRef && ['Online Ref', d.onlineRef],
+            d.contactMethod && ['Contact Method', d.contactMethod],
+            d.address && ['Delivery Address', d.address],
+            d.preferredDate && ['Preferred Date', d.preferredDate],
+            d.preferredTime && ['Preferred Time', d.preferredTime],
+            d.paymentMethod && ['Payment Method', d.paymentMethod],
+            d.customerNote && ['Customer Note', d.customerNote],
+          ].filter(Boolean);
+          if (rows.length === 0 && !d.internalNotes) return null;
+          return (
+            <div className="mb-5">
+              <Label>Order Details</Label>
+              <div className="rounded-lg p-3 text-sm space-y-1.5" style={{ background: THEME.bg }}>
+                {rows.map(([k, v]) => (
+                  <div key={k} className="flex items-baseline gap-3">
+                    <span className="text-xs uppercase tracking-wider flex-shrink-0" style={{ color: THEME.inkSoft, minWidth: 116, letterSpacing: '0.04em' }}>{k}</span>
+                    <span className="min-w-0" style={{ color: THEME.ink }}>{v}</span>
+                  </div>
+                ))}
+                {d.internalNotes && (
+                  <div className="flex items-start gap-3 pt-1.5 mt-1.5" style={{ borderTop: `1px solid ${THEME.line}` }}>
+                    <span className="text-xs uppercase tracking-wider flex-shrink-0 flex items-center gap-1" style={{ color: THEME.inkSoft, minWidth: 116, letterSpacing: '0.04em' }}><EyeOff size={11} />Internal Notes</span>
+                    <span className="min-w-0" style={{ color: THEME.ink }}>{d.internalNotes}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
 
         {err && (
           <div className="px-4 py-3 rounded-md flex items-start gap-2 text-sm mb-4" style={{ background: '#F5DDE0', color: THEME.red }}>
@@ -3888,7 +4006,7 @@ function PrintableView({ order, mode, onBack }) {
             <div className="min-w-0">
               <div className="text-xs uppercase tracking-wider mb-1" style={{ color: THEME.inkSoft }}>Customer</div>
               <div className="font-display text-xl sm:text-2xl" style={{ color: THEME.brand }}>{order.customer}</div>
-              {order.phone && <div className="text-sm mt-0.5" style={{ color: THEME.inkSoft }}>{order.phone}</div>}
+              {isInvoice && order.phone && <div className="text-sm mt-0.5" style={{ color: THEME.inkSoft }}>{order.phone}</div>}
             </div>
             <div className="text-right flex-shrink-0">
               <div className="text-xs uppercase tracking-wider mb-1" style={{ color: THEME.inkSoft }}>Date</div>
@@ -3970,11 +4088,36 @@ function PrintableView({ order, mode, onBack }) {
           </div>
         )}
 
-        {order.notes && (
-          <div className="mt-6 pt-4 text-sm" style={{ borderTop: `1px solid ${THEME.line}`, color: THEME.inkSoft }}>
-            <span className="font-medium">Order Notes: </span>{order.notes}
-          </div>
-        )}
+        {isInvoice && (() => {
+          const d = orderDetails(order);
+          const deliveryWhen = order.delivery_batch ? batchLabel(order.delivery_batch) : (d.preferredDate || '');
+          const rows = [
+            deliveryWhen && ['Delivery', deliveryWhen],
+            d.preferredTime && ['Preferred Time', d.preferredTime],
+            (order.payment_method || d.paymentMethod) && ['Payment', order.payment_method || d.paymentMethod],
+            d.onlineRef && ['Order Ref', d.onlineRef],
+          ].filter(Boolean);
+          if (rows.length === 0 && !d.customerNote) return null;
+          return (
+            <div className="mt-6 pt-4" style={{ borderTop: `1px solid ${THEME.line}` }}>
+              <div className="text-xs uppercase tracking-wider mb-2 font-medium" style={{ color: THEME.inkSoft, letterSpacing: '0.06em' }}>Delivery Details</div>
+              <div className="text-sm space-y-1">
+                {rows.map(([k, v]) => (
+                  <div key={k} className="flex gap-2">
+                    <span className="flex-shrink-0" style={{ color: THEME.inkSoft, minWidth: 110 }}>{k}:</span>
+                    <span style={{ color: THEME.ink }}>{v}</span>
+                  </div>
+                ))}
+                {d.customerNote && (
+                  <div className="flex gap-2 pt-1">
+                    <span className="flex-shrink-0" style={{ color: THEME.inkSoft, minWidth: 110 }}>Customer Note:</span>
+                    <span style={{ color: THEME.ink }}>{d.customerNote}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
 
           {/* GCash payment strip — invoice only, Layout C full-width style.
               Lives between the total and the Thank You so the customer sees
