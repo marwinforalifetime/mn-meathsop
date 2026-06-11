@@ -51,7 +51,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Prepared', 'Out for delivery', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v8.7 · Mobile fit + live ticker';
+const APP_VERSION = 'v8.8 · Safer modal + premium invoice';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -3043,7 +3043,7 @@ function Orders({ orders, setOrders, productByName, catalog }) {
   }, [orders]);
 
   const deleteOrder = (id) => {
-    if (!confirm(`Delete order ${id}? This cannot be undone.`)) return;
+    if (!confirm('Are you sure you want to delete this order? This action cannot be undone.')) return;
     const next = { ...orders };
     delete next[id];
     setOrders(next);
@@ -3232,6 +3232,7 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(null);
   const [err, setErr] = useState('');
+  const [showMore, setShowMore] = useState(false);
 
   const startEdit = () => {
     const d = orderDetails(order);
@@ -3437,32 +3438,50 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
           </div>
         )}
         {!editing ? (
-          <div className="overflow-x-auto -mx-1 mb-4">
-          <table className="w-full text-sm" style={{ minWidth: 380 }}>
+          <>
+          {/* Desktop / tablet: table */}
+          <table className="w-full text-sm mb-4 hidden sm:table">
             <thead>
               <tr style={{ color: THEME.inkSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                <th className="text-left pb-2 font-medium pr-2 pl-1" style={{ width: 28 }}>#</th>
+                <th className="text-left pb-2 font-medium pr-2" style={{ width: 28 }}>#</th>
                 <th className="text-left pb-2 font-medium">Product</th>
-                <th className="text-right pb-2 font-medium px-2">Qty</th>
-                <th className="text-left pb-2 font-medium pl-3">Notes / Cut</th>
-                <th className="text-right pb-2 font-medium px-2 whitespace-nowrap">Unit Price</th>
-                <th className="text-right pb-2 font-medium pr-1">Total</th>
+                <th className="text-right pb-2 font-medium">Qty</th>
+                <th className="text-left pb-2 font-medium pl-4">Notes / Cut</th>
+                <th className="text-right pb-2 font-medium">Unit Price</th>
+                <th className="text-right pb-2 font-medium">Total</th>
               </tr>
             </thead>
             <tbody>
               {(order.items || []).map((it, i) => (
                 <tr key={i} style={{ borderTop: `1px solid ${THEME.line}` }}>
-                  <td className="py-2.5 pr-2 pl-1 tabular-nums" style={{ color: THEME.inkSoft }}>{i + 1}</td>
+                  <td className="py-2.5 pr-2 tabular-nums" style={{ color: THEME.inkSoft }}>{i + 1}</td>
                   <td className="py-2.5">{it.product}</td>
-                  <td className="py-2.5 text-right px-2 whitespace-nowrap">{it.qty} {it.unit}</td>
-                  <td className="py-2.5 pl-3" style={{ color: it.note ? THEME.ink : THEME.inkSoft }}>{it.note || '—'}</td>
-                  <td className="py-2.5 text-right px-2 whitespace-nowrap">{peso(it.price)}</td>
-                  <td className="py-2.5 text-right pr-1 font-medium whitespace-nowrap">{peso(it.qty * it.price)}</td>
+                  <td className="py-2.5 text-right whitespace-nowrap">{it.qty} {it.unit}</td>
+                  <td className="py-2.5 pl-4" style={{ color: it.note ? THEME.ink : THEME.inkSoft }}>{it.note || '—'}</td>
+                  <td className="py-2.5 text-right whitespace-nowrap">{peso(it.price)}</td>
+                  <td className="py-2.5 text-right font-medium whitespace-nowrap">{peso(it.qty * it.price)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
+          {/* Mobile: stacked item cards */}
+          <div className="sm:hidden space-y-2 mb-4">
+            {(order.items || []).map((it, i) => (
+              <div key={i} className="rounded-lg p-3" style={{ background: THEME.bg }}>
+                <div className="flex justify-between gap-2">
+                  <div className="font-medium min-w-0" style={{ color: THEME.ink }}>
+                    <span style={{ color: THEME.inkSoft }}>{i + 1}. </span>{it.product}
+                  </div>
+                  <div className="font-medium whitespace-nowrap flex-shrink-0">{peso(it.qty * it.price)}</div>
+                </div>
+                <div className="text-sm mt-1" style={{ color: THEME.inkSoft }}>
+                  {it.qty} {it.unit} × {peso(it.price)}
+                </div>
+                {it.note && <div className="text-sm mt-0.5" style={{ color: THEME.brand }}>Cut: {it.note}</div>}
+              </div>
+            ))}
           </div>
+          </>
         ) : (
           <div className="mb-4">
             <div className="flex items-center justify-between mb-3">
@@ -3674,28 +3693,39 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
             <Btn variant="primary" onClick={saveEdit}><Save size={14} className="inline -mt-0.5 mr-1" /> Save Changes</Btn>
           </div>
         ) : (
-          <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-2">
-            <div className="flex flex-wrap gap-2">
-              <Btn variant="danger" size="sm" onClick={onDelete}><Trash2 size={14} className="inline -mt-0.5 mr-1" /> Delete</Btn>
-              {order.delivery_status === 'Cancelled' ? (
-                <Btn variant="secondary" size="sm" onClick={() => onUpdate({ delivery_status: 'Pending', cancel_reason: '' })}>
-                  <RefreshCw size={14} className="inline -mt-0.5 mr-1" /> Restore Order
-                </Btn>
-              ) : (
-                <Btn variant="secondary" size="sm" onClick={() => {
-                  const reason = prompt('Cancel this order? Optionally type a reason (e.g. "customer changed mind"):', '');
-                  if (reason === null) return; // user pressed Cancel on the prompt
-                  onUpdate({ delivery_status: 'Cancelled', cancel_reason: (reason || '').trim() });
-                }}>
-                  <X size={14} className="inline -mt-0.5 mr-1" /> Cancel Order
-                </Btn>
-              )}
+          <div>
+            {/* Primary actions — easy to tap, no destructive button among them */}
+            <div className="grid grid-cols-2 gap-2">
+              <Btn variant="secondary" size="lg" onClick={() => { onClose(); }}><Save size={15} className="inline -mt-0.5 mr-1" /> Save</Btn>
+              <Btn variant="primary" size="lg" onClick={() => onPrint('invoice')}><Receipt size={15} className="inline -mt-0.5 mr-1" /> Invoice</Btn>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <Btn variant="secondary" size="sm" onClick={() => onPrint('supplier')}><FileText size={14} className="inline -mt-0.5 mr-1" /> Supplier Copy</Btn>
-              <Btn variant="secondary" size="sm" onClick={() => { onClose(); }}><Save size={14} className="inline -mt-0.5 mr-1" /> Save</Btn>
-              <Btn variant="primary" size="sm" onClick={() => onPrint('invoice')}><Receipt size={14} className="inline -mt-0.5 mr-1" /> Invoice</Btn>
-            </div>
+            <Btn variant="secondary" size="lg" onClick={() => onPrint('supplier')} className="w-full mt-2">
+              <FileText size={15} className="inline -mt-0.5 mr-1" /> Supplier Copy
+            </Btn>
+
+            {/* Destructive actions tucked away so they can't be tapped by accident */}
+            <button onClick={() => setShowMore((s) => !s)}
+              className="flex items-center gap-1 text-xs font-medium mt-4 mx-auto" style={{ color: THEME.inkSoft }}>
+              {showMore ? <ChevronUp size={13} /> : <ChevronDown size={13} />} More actions
+            </button>
+            {showMore && (
+              <div className="mt-2 pt-3 flex flex-wrap gap-2 justify-center" style={{ borderTop: `1px solid ${THEME.line}` }}>
+                {order.delivery_status === 'Cancelled' ? (
+                  <Btn variant="secondary" size="sm" onClick={() => onUpdate({ delivery_status: 'Pending', cancel_reason: '' })}>
+                    <RefreshCw size={14} className="inline -mt-0.5 mr-1" /> Restore Order
+                  </Btn>
+                ) : (
+                  <Btn variant="secondary" size="sm" onClick={() => {
+                    if (!confirm('Are you sure you want to cancel this order?')) return;
+                    const reason = prompt('Optional — type a reason (e.g. "customer changed mind"):', '');
+                    onUpdate({ delivery_status: 'Cancelled', cancel_reason: (reason || '').trim() });
+                  }}>
+                    <X size={14} className="inline -mt-0.5 mr-1" /> Cancel Order
+                  </Btn>
+                )}
+                <Btn variant="danger" size="sm" onClick={onDelete}><Trash2 size={14} className="inline -mt-0.5 mr-1" /> Delete Order</Btn>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -3868,10 +3898,15 @@ function PrintableView({ order, mode, onBack }) {
   const isInvoice = mode === 'invoice';
   const docRef = useRef(null);
   const [savingImg, setSavingImg] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const saveAsImage = async () => {
     if (!docRef.current) return;
     setSavingImg(true);
+    // Force the desktop table layout (not the mobile stacked cards) into the
+    // captured image so the saved invoice looks the same on every device.
+    setExporting(true);
+    await new Promise((r) => setTimeout(r, 60));
     try {
       const node = docRef.current;
 
@@ -3962,6 +3997,7 @@ function PrintableView({ order, mode, onBack }) {
       console.error(e);
     } finally {
       setSavingImg(false);
+      setExporting(false);
     }
   };
 
@@ -3977,7 +4013,7 @@ function PrintableView({ order, mode, onBack }) {
               ? <><Loader2 size={15} className="inline -mt-0.5 mr-1.5 animate-spin" /> Saving…</>
               : <><ImageIcon size={15} className="inline -mt-0.5 mr-1.5" /> <span className="hidden sm:inline">{isInvoice ? 'Save Order Summary' : 'Save Supplier Copy'}</span><span className="sm:hidden">Save</span></>}
           </Btn>
-          <Btn variant="primary" onClick={() => window.print()}>
+          <Btn variant="primary" onClick={() => { setExporting(true); setTimeout(() => { window.print(); setExporting(false); }, 80); }}>
             <Printer size={15} className="inline -mt-0.5 sm:mr-1.5" /> <span className="hidden sm:inline">Print</span>
           </Btn>
         </div>
@@ -4022,7 +4058,8 @@ function PrintableView({ order, mode, onBack }) {
 
         {isInvoice ? (
           /* ===== INVOICE / ORDER SUMMARY ===== */
-          <div className="mb-6 overflow-x-auto">
+          <>
+          <div className={`mb-6 overflow-x-auto ${exporting ? 'block' : 'hidden sm:block'}`}>
             <table className="w-full text-xs sm:text-sm" style={{ minWidth: 340 }}>
               <thead>
                 <tr style={{ background: THEME.brandBg }}>
@@ -4048,9 +4085,24 @@ function PrintableView({ order, mode, onBack }) {
               </tbody>
             </table>
           </div>
+          {/* Mobile: stacked invoice rows (premium receipt style) */}
+          <div className={`mb-6 ${exporting ? 'hidden' : 'block sm:hidden'}`}>
+            {(order.items || []).map((it, i) => (
+              <div key={i} className="py-3" style={{ borderBottom: `1px solid ${THEME.line}` }}>
+                <div className="flex justify-between gap-2">
+                  <div className="font-medium min-w-0">{it.product}</div>
+                  <div className="font-medium whitespace-nowrap flex-shrink-0">{peso(it.qty * it.price)}</div>
+                </div>
+                {it.note && <div className="text-xs mt-0.5" style={{ color: THEME.brand }}>Cut: {it.note}</div>}
+                <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>{it.qty} {it.unit} × {peso(it.price)}</div>
+              </div>
+            ))}
+          </div>
+          </>
         ) : (
           /* ===== SUPPLIER COPY: no costs ===== */
-          <div className="mb-6 overflow-x-auto">
+          <>
+          <div className={`mb-6 overflow-x-auto ${exporting ? 'block' : 'hidden sm:block'}`}>
             <table className="w-full text-xs sm:text-sm" style={{ minWidth: 300 }}>
               <thead>
                 <tr style={{ background: THEME.brandBg }}>
@@ -4072,6 +4124,19 @@ function PrintableView({ order, mode, onBack }) {
               </tbody>
             </table>
           </div>
+          {/* Mobile: stacked prep rows */}
+          <div className={`mb-6 ${exporting ? 'hidden' : 'block sm:hidden'}`}>
+            {(order.items || []).map((it, i) => (
+              <div key={i} className="py-3 flex justify-between gap-3" style={{ borderBottom: `1px solid ${THEME.line}` }}>
+                <div className="min-w-0">
+                  <div className="font-medium">{it.product}</div>
+                  {it.note && <div className="text-xs mt-0.5" style={{ color: THEME.brand }}>Cut: {it.note}</div>}
+                </div>
+                <div className="font-medium whitespace-nowrap flex-shrink-0">{it.qty} {it.unit}</div>
+              </div>
+            ))}
+          </div>
+          </>
         )}
 
         {isInvoice ? (
@@ -4097,50 +4162,39 @@ function PrintableView({ order, mode, onBack }) {
         {isInvoice && (() => {
           const d = orderDetails(order);
           const deliveryWhen = order.delivery_batch ? batchLabel(order.delivery_batch) : (d.preferredDate || '');
-          const rows = [
-            deliveryWhen && ['Delivery', deliveryWhen],
-            d.preferredTime && ['Preferred Time', d.preferredTime],
-            (order.payment_method || d.paymentMethod) && ['Payment', order.payment_method || d.paymentMethod],
-            d.onlineRef && ['Order Ref', d.onlineRef],
-          ].filter(Boolean);
-          if (rows.length === 0 && !d.customerNote) return null;
+          const payment = order.payment_method || d.paymentMethod;
+          if (!deliveryWhen && !payment && !d.customerNote) return null;
           return (
-            <div className="mt-6 pt-4" style={{ borderTop: `1px solid ${THEME.line}` }}>
-              <div className="text-xs uppercase tracking-wider mb-2 font-medium" style={{ color: THEME.inkSoft, letterSpacing: '0.06em' }}>Delivery Details</div>
-              <div className="text-sm space-y-1">
-                {rows.map(([k, v]) => (
-                  <div key={k} className="flex gap-2">
-                    <span className="flex-shrink-0" style={{ color: THEME.inkSoft, minWidth: 110 }}>{k}:</span>
-                    <span style={{ color: THEME.ink }}>{v}</span>
-                  </div>
-                ))}
-                {d.customerNote && (
-                  <div className="flex gap-2 pt-1">
-                    <span className="flex-shrink-0" style={{ color: THEME.inkSoft, minWidth: 110 }}>Customer Note:</span>
-                    <span style={{ color: THEME.ink }}>{d.customerNote}</span>
-                  </div>
-                )}
-              </div>
+            <div className="mt-6 pt-4 text-sm space-y-1" style={{ borderTop: `1px solid ${THEME.line}` }}>
+              {deliveryWhen && (
+                <div>
+                  <span style={{ color: THEME.inkSoft }}>Delivery: </span>
+                  <span style={{ color: THEME.ink }}>{deliveryWhen}{d.preferredTime ? ` · ${d.preferredTime}` : ''}</span>
+                </div>
+              )}
+              {payment && (
+                <div><span style={{ color: THEME.inkSoft }}>Payment: </span><span style={{ color: THEME.ink }}>{payment}</span></div>
+              )}
+              {d.customerNote && (
+                <div><span style={{ color: THEME.inkSoft }}>Customer Note: </span><span style={{ color: THEME.ink }}>{d.customerNote}</span></div>
+              )}
             </div>
           );
         })()}
 
-          {/* GCash payment strip — invoice only, Layout C full-width style.
-              Lives between the total and the Thank You so the customer sees
-              payment options at the natural eye-flow point after the total. */}
-          {isInvoice && (
-            <div className="mt-8 flex items-center justify-between gap-4 px-4 py-4 rounded-md"
+          {/* GCash payment strip — only when the order is actually paid via GCash.
+              Stacks cleanly on a phone; stays side-by-side in the saved image. */}
+          {isInvoice && /gcash/i.test(order.payment_method || orderDetails(order).paymentMethod || '') && (
+            <div className={`mt-8 px-4 py-4 rounded-md flex gap-4 ${exporting ? 'flex-row items-center' : 'flex-col sm:flex-row sm:items-center'}`}
               style={{ background: THEME.brandBg, border: `1px solid ${THEME.line}` }}>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 flex-shrink-0">
                 <div className="p-1.5 rounded-md"
                   style={{ background: 'white', border: `1px solid ${THEME.line}`, boxShadow: '0 1px 3px rgba(0,0,0,0.05)', flexShrink: 0 }}>
-                  <img src={GCASH_QR} alt="GCash QR"
-                    width="96" height="96"
-                    style={{ width: 96, height: 96, display: 'block', flexShrink: 0 }} />
+                  <img src={GCASH_QR} alt="GCash QR" width="88" height="88"
+                    style={{ width: 88, height: 88, display: 'block', flexShrink: 0 }} />
                 </div>
                 <div>
-                  <div className="text-[9px] font-semibold uppercase mb-0.5"
-                    style={{ color: THEME.brand, letterSpacing: '0.14em' }}>
+                  <div className="text-[9px] font-semibold uppercase mb-0.5" style={{ color: THEME.brand, letterSpacing: '0.14em' }}>
                     Pay via GCash / InstaPay
                   </div>
                   <div className="text-lg font-bold leading-tight" style={{ color: '#0066CC', letterSpacing: '0.02em' }}>
@@ -4148,12 +4202,8 @@ function PrintableView({ order, mode, onBack }) {
                   </div>
                 </div>
               </div>
-              <div className="text-right text-[10.5px] italic leading-relaxed" style={{ color: THEME.inkSoft }}>
-                Scan QR or send to number above<br />
-                Cash also accepted<br />
-                <span className="text-[10px]" style={{ color: THEME.inkSoft, opacity: 0.75 }}>
-                  Please send screenshot as confirmation
-                </span>
+              <div className={`text-xs leading-relaxed ${exporting ? 'text-right ml-auto' : 'sm:text-right sm:ml-auto'}`} style={{ color: THEME.inkSoft }}>
+                Please send a screenshot after payment.
               </div>
             </div>
           )}
