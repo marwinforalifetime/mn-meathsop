@@ -51,7 +51,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Prepared', 'Out for delivery', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v9.0 · Modern UI refresh';
+const APP_VERSION = 'v9.1 · Focused nav + tab modernization';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -652,21 +652,27 @@ function MainApp() {
     );
   }
 
-  const navItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'new', label: 'New Order', icon: PlusCircle },
-    { id: 'requests', label: 'Online Orders', icon: Inbox },
-    { id: 'orders', label: 'Orders', icon: ListOrdered },
-    { id: 'customers', label: 'Customers', icon: Users },
-    { id: 'pickup', label: 'Pickup Check', icon: Truck },
-    { id: 'salescheck', label: 'Sales Check', icon: Receipt },
-    { id: 'dayclose', label: 'Batch Money Check', icon: Activity },
-    { id: 'expenses', label: 'Expenses', icon: Wallet },
-    { id: 'products', label: 'Price List', icon: Tag },
-    { id: 'restaurantquote', label: 'Restaurant Quote', icon: Store },
-    { id: 'profitcheck', label: 'Quote Profit Check', icon: EyeOff },
-    { id: 'supplierprices', label: 'Supplier Prices', icon: TrendingUp },
-    { id: 'supplierpayments', label: 'Supplier Payments', icon: Wallet },
+  const navGroups = [
+    { label: null, items: [
+      { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    ]},
+    { label: 'Orders', items: [
+      { id: 'new', label: 'New Order', icon: PlusCircle },
+      { id: 'requests', label: 'Online Orders', icon: Inbox },
+      { id: 'orders', label: 'Orders', icon: ListOrdered },
+      { id: 'pickup', label: 'Pickup Check', icon: Truck },
+    ]},
+    { label: 'Money', items: [
+      { id: 'salescheck', label: 'Sales Check', icon: Receipt },
+      { id: 'expenses', label: 'Expenses', icon: Wallet },
+      { id: 'supplierpayments', label: 'Supplier Payments', icon: Wallet },
+    ]},
+    { label: 'Pricing', items: [
+      { id: 'products', label: 'Price List', icon: Tag },
+      { id: 'restaurantquote', label: 'Restaurant Quote', icon: Store },
+      { id: 'profitcheck', label: 'Quote Profit Check', icon: EyeOff },
+      { id: 'supplierprices', label: 'Supplier Prices', icon: TrendingUp },
+    ]},
   ];
 
   return (
@@ -714,34 +720,43 @@ function MainApp() {
             <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>Your daily meat choice</div>
           </div>
           <nav className="flex-1 py-4 px-3 overflow-y-auto">
-            {navItems.map((item) => {
-              const Icon = item.icon;
-              const active = view === item.id;
-              return (
-                <button key={item.id} onClick={() => { setView(item.id); setMobileNav(false); }}
-                  className="w-full flex items-center gap-3 px-3.5 py-3 lg:py-2.5 text-sm text-left rounded-xl mb-0.5 transition-colors"
-                  style={{
-                    background: active ? THEME.brand : 'transparent',
-                    color: active ? 'white' : THEME.ink,
-                    fontWeight: active ? 600 : 400,
-                  }}
-                  onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = THEME.brandBg; }}
-                  onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = 'transparent'; }}>
-                  <Icon size={17} style={{ opacity: active ? 1 : 0.75, flexShrink: 0 }} />
-                  <span className="flex-1">{item.label}</span>
-                  {item.id === 'requests' && pendingOnline > 0 && (
-                    <span className="flex items-center justify-center text-xs font-semibold rounded-full"
+            {navGroups.map((group, gi) => (
+              <div key={gi} className={gi > 0 ? 'mt-4' : ''}>
+                {group.label && (
+                  <div className="px-3.5 mb-1.5 text-xs font-semibold uppercase" style={{ color: THEME.inkSoft, letterSpacing: '0.1em', opacity: 0.8 }}>
+                    {group.label}
+                  </div>
+                )}
+                {group.items.map((item) => {
+                  const Icon = item.icon;
+                  const active = view === item.id;
+                  return (
+                    <button key={item.id} onClick={() => { setView(item.id); setMobileNav(false); }}
+                      className="w-full flex items-center gap-3 px-3.5 py-3 lg:py-2.5 text-sm text-left rounded-xl mb-0.5 transition-colors"
                       style={{
-                        background: active ? 'white' : THEME.red,
-                        color: active ? THEME.brand : 'white',
-                        minWidth: 20, height: 20, padding: '0 6px',
-                      }}>
-                      {pendingOnline}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
+                        background: active ? THEME.brand : 'transparent',
+                        color: active ? 'white' : THEME.ink,
+                        fontWeight: active ? 600 : 400,
+                      }}
+                      onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = THEME.brandBg; }}
+                      onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = 'transparent'; }}>
+                      <Icon size={17} style={{ opacity: active ? 1 : 0.75, flexShrink: 0 }} />
+                      <span className="flex-1">{item.label}</span>
+                      {item.id === 'requests' && pendingOnline > 0 && (
+                        <span className="flex items-center justify-center text-xs font-semibold rounded-full"
+                          style={{
+                            background: active ? 'white' : THEME.red,
+                            color: active ? THEME.brand : 'white',
+                            minWidth: 20, height: 20, padding: '0 6px',
+                          }}>
+                          {pendingOnline}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
           </nav>
           <div className="px-6 py-4 border-t" style={{ borderColor: THEME.line }}>
             <button onClick={() => { setShowBackup(true); setMobileNav(false); }} className="flex items-center gap-2 text-xs mb-2 hover:opacity-70" style={{ color: THEME.inkSoft }}>
@@ -813,11 +828,9 @@ function MainApp() {
           {view === 'dashboard' && <Dashboard orders={orders} setOrders={setOrders} expenses={expenses} catalog={catalog} setView={setView} privacy={privacy} setPrivacy={setPrivacy} currentUser={currentUser} theme={theme} setTheme={setTheme} />}
           {view === 'new' && <NewOrder catalog={catalog} meta={meta} setMeta={setMeta} orders={orders} setOrders={setOrders} customers={customers} setCustomers={setCustomers} onSaved={() => setView('orders')} />}
           {view === 'requests' && <OrderRequests catalog={catalog} orders={orders} setOrders={setOrders} meta={meta} setMeta={setMeta} customers={customers} setCustomers={setCustomers} />}
-          {view === 'customers' && <Customers customers={customers} setCustomers={setCustomers} orders={orders} setView={setView} privacy={privacy} />}
           {view === 'orders' && <Orders orders={orders} setOrders={setOrders} productByName={productByName} catalog={catalog} />}
           {view === 'pickup' && <Pickup orders={orders} catalog={catalog} />}
           {view === 'salescheck' && <SalesCheck orders={orders} catalog={catalog} privacy={privacy} />}
-          {view === 'dayclose' && <DayClose orders={orders} catalog={catalog} dayCloses={dayCloses} setDayCloses={setDayCloses} privacy={privacy} />}
           {view === 'expenses' && <Expenses expenses={expenses} setExpenses={setExpenses} />}
           {view === 'products' && <Products catalog={catalog} setCatalog={setCatalog} priceHistory={priceHistory} setPriceHistory={setPriceHistory} />}
           {view === 'restaurantquote' && <RestaurantQuote catalog={catalog} setCatalog={setCatalog} qtys={quoteQtys} setQtys={setQuoteQtys} />}
@@ -2377,141 +2390,6 @@ function RequestReceiptModal({ req, busy, onClose, onAccept, onDecline, onRemove
 }
 
 /* ============================================================
-   CUSTOMERS (internal directory — admin only)
-   ============================================================
-   Simple saved-customer list: search, view, edit, add, remove.
-   Last-order date and order count are computed live from orders so
-   they never go stale. Internal notes live here ONLY — they are never
-   copied onto orders, receipts, prints, or anything customer-facing. */
-function Customers({ customers, setCustomers, orders, setView, privacy }) {
-  const [search, setSearch] = useState('');
-  const [editing, setEditing] = useState(null);   // customer object being edited, or {} for new
-
-  const list = useMemo(() => {
-    const all = Object.values(customers || {}).map((c) => ({ ...c, _stats: customerStats(orders, c) }));
-    const q = search.trim().toLowerCase();
-    const filtered = q
-      ? all.filter((c) => [c.name, c.phone, c.messenger, c.address, c.notes].filter(Boolean).join(' ').toLowerCase().includes(q))
-      : all;
-    // Most recent customers first; never-ordered ones last, alphabetical.
-    return filtered.sort((a, b) => (b._stats.last || '').localeCompare(a._stats.last || '') || (a.name || '').localeCompare(b.name || ''));
-  }, [customers, orders, search]);
-
-  const startNew = () => setEditing({ id: '', name: '', phone: '', messenger: '', address: '', payment: '', notes: '' });
-  const saveEdit = () => {
-    const e = editing;
-    if (!e || !(e.name || '').trim()) return;
-    const id = e.id || makeCustomerId();
-    setCustomers((prev) => ({ ...prev, [id]: { ...e, id, name: e.name.trim() } }));
-    setEditing(null);
-  };
-  const removeCustomer = (c) => {
-    if (!confirm(`Remove ${c.name} from saved customers? Their past orders are not affected.`)) return;
-    setCustomers((prev) => { const next = { ...prev }; delete next[c.id]; return next; });
-    setEditing(null);
-  };
-  const field = (label, key, placeholder) => (
-    <div>
-      <Label>{label}</Label>
-      <Input value={editing?.[key] || ''} onChange={(ev) => setEditing((p) => ({ ...p, [key]: ev.target.value }))} placeholder={placeholder} />
-    </div>
-  );
-
-  return (
-    <div>
-      <Header title="Customers" subtitle="Saved customer details for faster order logging. Internal only — never shown to customers."
-        right={<Btn variant="primary" onClick={startNew}><Plus size={15} className="inline -mt-0.5 mr-1" />Add Customer</Btn>} />
-
-      <div className="relative mb-5 max-w-md">
-        <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: THEME.inkSoft }} />
-        <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name, contact, address, notes…" className="pl-9" />
-      </div>
-
-      {list.length === 0 ? (
-        <Card className="p-10 text-center">
-          <Users size={28} style={{ color: THEME.inkSoft, margin: '0 auto 8px' }} />
-          <div className="text-sm" style={{ color: THEME.inkSoft }}>
-            {search.trim() ? 'No saved customers match your search.'
-              : 'No saved customers yet. They\u2019re saved automatically when you log orders or accept online orders — or add one now.'}
-          </div>
-        </Card>
-      ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {list.map((c) => (
-            <Card key={c.id} className="p-4">
-              <div className="flex items-start justify-between gap-2 mb-2">
-                <div className="min-w-0">
-                  <div className="font-medium truncate">{c.name}</div>
-                  <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>
-                    {c._stats.count > 0
-                      ? `${c._stats.count} order${c._stats.count !== 1 ? 's' : ''}${c._stats.last ? ` · last ${fmtDateShort(c._stats.last)}` : ''}`
-                      : 'No orders yet'}
-                  </div>
-                </div>
-                <button onClick={() => setEditing({ ...c })} className="text-xs font-medium flex-shrink-0 px-2 py-1 rounded"
-                  style={{ color: THEME.brand, border: `1px solid ${THEME.line}` }}>Edit</button>
-              </div>
-              <div className="space-y-1 text-sm">
-                {c.phone && <div className="flex items-baseline gap-2"><span className="text-xs uppercase tracking-wider flex-shrink-0" style={{ color: THEME.inkSoft, minWidth: 72 }}>Phone</span><span>{c.phone}</span></div>}
-                {c.messenger && <div className="flex items-baseline gap-2"><span className="text-xs uppercase tracking-wider flex-shrink-0" style={{ color: THEME.inkSoft, minWidth: 72 }}>Messenger</span><span>{c.messenger}</span></div>}
-                {c.address && <div className="flex items-baseline gap-2"><span className="text-xs uppercase tracking-wider flex-shrink-0" style={{ color: THEME.inkSoft, minWidth: 72 }}>Address</span><span>{c.address}</span></div>}
-                {c.payment && <div className="flex items-baseline gap-2"><span className="text-xs uppercase tracking-wider flex-shrink-0" style={{ color: THEME.inkSoft, minWidth: 72 }}>Payment</span><span>{c.payment}</span></div>}
-                {c.notes && (
-                  <div className="flex items-start gap-2 mt-1.5 px-2.5 py-1.5 rounded text-xs" style={{ background: THEME.bg, color: THEME.inkSoft }}>
-                    <EyeOff size={12} className="mt-0.5 flex-shrink-0" /><span>{c.notes}</span>
-                  </div>
-                )}
-              </div>
-            </Card>
-          ))}
-        </div>
-      )}
-
-      {/* Edit / add modal */}
-      <Modal open={!!editing} onClose={() => setEditing(null)} maxWidth="max-w-md">
-        {editing && (
-          <div className="p-6">
-            <div className="font-display text-lg mb-4">{editing.id ? `Edit ${editing.name || 'customer'}` : 'Add Customer'}</div>
-            <div className="space-y-3">
-              {field('Customer Name', 'name', 'Customer name')}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {field('Phone', 'phone', '09XX XXX XXXX')}
-                {field('Messenger', 'messenger', 'Messenger name')}
-              </div>
-              {field('Default Delivery Address', 'address', 'House / street / subdivision, barangay')}
-              <div>
-                <Label>Preferred Payment</Label>
-                <Select value={editing.payment || ''} onChange={(ev) => setEditing((p) => ({ ...p, payment: ev.target.value }))}
-                  options={[{ value: '', label: '— None —' }, ...PAYMENT_METHODS.map((pm) => ({ value: pm, label: pm }))]} />
-              </div>
-              <div>
-                <Label>Internal Delivery Notes</Label>
-                <textarea value={editing.notes || ''} onChange={(ev) => setEditing((p) => ({ ...p, notes: ev.target.value }))} rows={2}
-                  className="w-full px-3 py-2 rounded-lg outline-none text-sm"
-                  style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink, fontFamily: 'DM Sans' }}
-                  placeholder="e.g. blue gate near sari-sari store · message before delivery" />
-                <div className="text-xs mt-1 flex items-center gap-1" style={{ color: THEME.inkSoft }}>
-                  <EyeOff size={12} /> Admin only — never shown on receipts or to the customer.
-                </div>
-              </div>
-            </div>
-            <div className="flex items-center justify-between mt-5">
-              {editing.id
-                ? <button onClick={() => removeCustomer(editing)} className="text-xs" style={{ color: THEME.red }}>Remove customer</button>
-                : <span />}
-              <div className="flex gap-2">
-                <Btn variant="secondary" onClick={() => setEditing(null)}>Cancel</Btn>
-                <Btn variant="primary" onClick={saveEdit} disabled={!(editing.name || '').trim()}>Save</Btn>
-              </div>
-            </div>
-          </div>
-        )}
-      </Modal>
-    </div>
-  );
-}
-
-/* ============================================================
    NEW ORDER
    ============================================================ */
 function NewOrder({ catalog, meta, setMeta, orders, setOrders, customers, setCustomers, onSaved }) {
@@ -3196,7 +3074,14 @@ function Orders({ orders, setOrders, productByName, catalog }) {
         {ordersList.length === 0 ? (
           <EmptyHint>No orders match. Try clearing filters.</EmptyHint>
         ) : (
-          <div className="overflow-x-auto -mx-1">
+          <>
+          {/* Filtered summary — what am I looking at, and what's it worth */}
+          <div className="text-xs mb-2" style={{ color: THEME.inkSoft }}>
+            {ordersList.length} order{ordersList.length !== 1 ? 's' : ''} · {peso(ordersList.reduce((s, o) => s + (o.items || []).reduce((t, i) => t + i.qty * i.price, 0), 0))} total value
+          </div>
+
+          {/* Desktop / tablet: table */}
+          <div className="overflow-x-auto -mx-1 hidden sm:block">
           <table className="w-full text-sm" style={{ minWidth: 640 }}>
             <thead>
               <tr className="text-left" style={{ color: THEME.inkSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
@@ -3243,6 +3128,38 @@ function Orders({ orders, setOrders, productByName, catalog }) {
             </tbody>
           </table>
           </div>
+
+          {/* Mobile: tappable order cards — no sideways scrolling */}
+          <div className="sm:hidden space-y-2">
+            {ordersList.map((o) => {
+              const total = (o.items || []).reduce((s, i) => s + i.qty * i.price, 0);
+              const isCancelled = o.delivery_status === 'Cancelled';
+              return (
+                <button key={o.id} onClick={() => setSelected(o)}
+                  className="w-full text-left rounded-xl p-3.5"
+                  style={{ background: THEME.bg, opacity: isCancelled ? 0.55 : 1 }}>
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-sm font-semibold truncate" style={{ textDecoration: isCancelled ? 'line-through' : 'none' }}>{o.customer}</span>
+                    <span className="font-display text-lg flex-shrink-0" style={{ color: THEME.brand }}>{peso(total)}</span>
+                  </div>
+                  <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>
+                    {o.id} · {fmtDate(o.date)} · {(o.items || []).length} item{(o.items || []).length !== 1 ? 's' : ''}
+                  </div>
+                  <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                    {o.delivery_batch && (
+                      <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium"
+                        style={{ background: THEME.brandBg, color: THEME.brand }}>
+                        <Truck size={10} /> {batchLabel(o.delivery_batch)}
+                      </span>
+                    )}
+                    <Badge color={statusColor(o.payment_status)}>{o.payment_status}</Badge>
+                    <Badge color={statusColor(o.delivery_status)}>{o.delivery_status}</Badge>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+          </>
         )}
       </Card>
 
@@ -4259,6 +4176,7 @@ function PrintableView({ order, mode, onBack }) {
 
 function Pickup({ orders, catalog }) {
   const [selected, setSelected] = useState(new Set());
+  const [picked, setPicked] = useState(new Set());   // products ticked off at the supplier (session-only)
   const productByName = useMemo(() => Object.fromEntries((catalog || []).map(p => [p.name, p])), [catalog]);
   // Always use the current supplier cost from the catalog (what you pay today).
   const effectiveCost = (order, it) => {
@@ -4279,9 +4197,29 @@ function Pickup({ orders, catalog }) {
     if (next.has(id)) next.delete(id);
     else next.add(id);
     setSelected(next);
+    setPicked(new Set());   // selection changed -> restart the shopping checklist
   };
-  const selectAll = () => setSelected(new Set(ordersList.map(o => o.id)));
-  const clear = () => setSelected(new Set());
+  const selectAll = () => { setSelected(new Set(ordersList.map(o => o.id))); setPicked(new Set()); };
+  const clear = () => { setSelected(new Set()); setPicked(new Set()); };
+  // The real workflow: "select everything for Saturday" in one tap.
+  const upcomingBatches = useMemo(() => {
+    const byBatch = {};
+    ordersList.forEach((o) => {
+      if (!o.delivery_batch || o.delivery_batch < today()) return;
+      byBatch[o.delivery_batch] = (byBatch[o.delivery_batch] || 0) + 1;
+    });
+    return Object.entries(byBatch).sort(([a], [b]) => a.localeCompare(b)).slice(0, 3);
+  }, [ordersList]);
+  const selectBatch = (batch) => {
+    setSelected(new Set(ordersList.filter(o => o.delivery_batch === batch).map(o => o.id)));
+    setPicked(new Set());
+  };
+  const togglePicked = (product) => {
+    const next = new Set(picked);
+    if (next.has(product)) next.delete(product);
+    else next.add(product);
+    setPicked(next);
+  };
 
   const rollup = useMemo(() => {
     const byProduct = {};
@@ -4319,6 +4257,17 @@ function Pickup({ orders, catalog }) {
               </div>
             </div>
             <div className="text-xs mb-3" style={{ color: THEME.inkSoft }}>{selected.size} selected</div>
+            {upcomingBatches.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-3">
+                {upcomingBatches.map(([batch, n]) => (
+                  <button key={batch} onClick={() => selectBatch(batch)}
+                    className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-full font-medium"
+                    style={{ background: THEME.brandBg, color: THEME.brand, border: `1px solid ${THEME.line}` }}>
+                    <Truck size={11} /> {batchLabel(batch)} ({n})
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="max-h-96 overflow-y-auto overflow-x-auto -mx-2">
               {ordersList.length === 0 && <EmptyHint>No orders yet.</EmptyHint>}
               {ordersList.map((o) => {
@@ -4344,7 +4293,18 @@ function Pickup({ orders, catalog }) {
         <div className="lg:col-span-3">
           <Card className="p-5">
             <div className="font-display text-lg mb-1">Pickup Roll-up</div>
-            <div className="text-xs mb-4" style={{ color: THEME.inkSoft }}>Total quantity & cost to pick up from supplier for the selected orders</div>
+            <div className="text-xs mb-2" style={{ color: THEME.inkSoft }}>Total quantity & cost to pick up from supplier for the selected orders. Tap a row to tick it off at the counter.</div>
+            {rollup.length > 0 && (
+              <div className="mb-4">
+                <div className="flex items-center justify-between text-xs mb-1" style={{ color: THEME.inkSoft }}>
+                  <span>{picked.size} of {rollup.length} picked</span>
+                  {picked.size > 0 && <button onClick={() => setPicked(new Set())} style={{ color: THEME.brand }}>Reset</button>}
+                </div>
+                <div className="h-1.5 rounded-full overflow-hidden" style={{ background: THEME.line }}>
+                  <div className="h-full rounded-full transition-all" style={{ width: `${rollup.length ? (picked.size / rollup.length) * 100 : 0}%`, background: THEME.green }} />
+                </div>
+              </div>
+            )}
             {rollup.length === 0 ? (
               <EmptyHint>Select orders to see the pickup roll-up.</EmptyHint>
             ) : (
@@ -4359,14 +4319,26 @@ function Pickup({ orders, catalog }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {rollup.map((r) => (
-                      <tr key={r.product} style={{ borderTop: `1px solid ${THEME.line}` }}>
-                        <td className="py-2.5">{r.product}</td>
+                    {rollup.map((r) => {
+                      const done = picked.has(r.product);
+                      return (
+                      <tr key={r.product} onClick={() => togglePicked(r.product)} className="cursor-pointer"
+                        style={{ borderTop: `1px solid ${THEME.line}`, opacity: done ? 0.45 : 1 }}>
+                        <td className="py-2.5">
+                          <span className="inline-flex items-center gap-2">
+                            <span className="inline-flex items-center justify-center rounded flex-shrink-0"
+                              style={{ width: 18, height: 18, border: `1.5px solid ${done ? THEME.green : THEME.line}`, background: done ? THEME.green : 'transparent' }}>
+                              {done && <Check size={12} style={{ color: 'white' }} />}
+                            </span>
+                            <span style={{ textDecoration: done ? 'line-through' : 'none' }}>{r.product}</span>
+                          </span>
+                        </td>
                         <td className="py-2.5 text-right font-medium">{r.qty} {r.unit}</td>
                         <td className="py-2.5 text-right">{peso(r.cost)}</td>
                         <td className="py-2.5 text-right font-medium">{peso(r.totalCost)}</td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
                 <div className="mt-4 pt-4 flex items-center justify-between" style={{ borderTop: `2px solid ${THEME.brand}` }}>
@@ -4386,331 +4358,6 @@ function Pickup({ orders, catalog }) {
           </Card>
         </div>
       </div>
-    </div>
-  );
-}
-
-/* ============================================================
-   BATCH MONEY CHECK (simple money reconciliation per batch)
-   ============================================================
-   Marwin's flow: count Cash + GCash BEFORE the supplier run, pay the
-   supplier, deliver the batch, then count Cash + GCash again at the
-   end of the day. This page compares the EXPECTED profit (from the
-   batch's orders, same basis as Sales Check) against how much the
-   money ACTUALLY grew, and — when they don't match — points at the
-   usual reasons (unpaid orders, real expenses, miscounts).
-
-   Money math (kept transparent for the owner):
-     actual money increase = (endCash + endGcash) - (startCash + startGcash)
-     actual profit after withdrawal = actual money increase + owner withdrawal
-     difference = actual profit after withdrawal - expected profit
-   Supplier payment / other expenses are already baked into the end
-   count, so they are recorded but not separate terms in the formula.
-   No locked logic (orders, pricing, basket, submission) is touched. */
-function DayClose({ orders, catalog, dayCloses, setDayCloses, privacy }) {
-  const m = (n) => privacy ? '₱•••••' : peso(n);
-  const productByName = useMemo(() => Object.fromEntries((catalog || []).map(p => [p.name, p])), [catalog]);
-  // Same cost rule as Sales Check: current catalog cost, fall back to snapshot.
-  const effectiveCost = (it) => {
-    const p = productByName[it.product];
-    if (p && typeof p.cost === 'number') return p.cost;
-    return Number(it.cost) || 0;
-  };
-
-  // Every batch that has orders, plus the next Tue & Sat. Most recent first.
-  const batches = useMemo(() => {
-    const set = new Set();
-    Object.values(orders).forEach((o) => {
-      if (o.delivery_batch && o.delivery_status !== 'Cancelled') set.add(o.delivery_batch);
-    });
-    set.add(nextTuesday());
-    set.add(nextSaturday());
-    return Array.from(set).sort().reverse();
-  }, [orders]);
-
-  const defaultBatch = useMemo(() => {
-    const t = today();
-    const pastOrToday = batches.filter((b) => b <= t); // desc → [0] is closest
-    if (pastOrToday.length) return pastOrToday[0];
-    return batches.length ? batches[batches.length - 1] : t;
-  }, [batches]);
-
-  const [batch, setBatch] = useState(defaultBatch);
-  const [showMath, setShowMath] = useState(false);
-  const [justSaved, setJustSaved] = useState(false);
-  useEffect(() => { if (!batches.includes(batch)) setBatch(defaultBatch); }, [batches]); // eslint-disable-line
-  useEffect(() => { setJustSaved(false); }, [batch]);
-
-  const batchOrders = useMemo(
-    () => Object.values(orders).filter((o) => o.delivery_batch === batch && o.delivery_status !== 'Cancelled'),
-    [orders, batch]
-  );
-
-  // The "books" side — what the orders predict.
-  const book = useMemo(() => {
-    let sales = 0, cost = 0, collected = 0;
-    batchOrders.forEach((o) => {
-      const t = (o.items || []).reduce((s, i) => s + (Number(i.qty) || 0) * (Number(i.price) || 0), 0);
-      const c = (o.items || []).reduce((s, i) => s + (Number(i.qty) || 0) * effectiveCost(i), 0);
-      sales += t; cost += c;
-      if (o.payment_status === 'Paid') collected += t;
-      else if (o.payment_status === 'Partial') collected += Number(o.amount_paid) || 0;
-    });
-    return { sales, cost, profit: sales - cost, collected, outstanding: Math.max(0, sales - collected), count: batchOrders.length };
-  }, [batchOrders, productByName]);
-
-  // The counted side — persisted per batch.
-  const rec = dayCloses[batch] || {};
-  const num = (v) => Number(v) || 0;
-  const round2 = (n) => Math.round(n * 100) / 100;
-  const setField = (k, v) => { setJustSaved(false); setDayCloses((prev) => ({ ...prev, [batch]: { ...(prev[batch] || {}), [k]: v } })); };
-  const clearDay = () => {
-    if (!confirm('Clear the money count for this batch? The orders are not affected.')) return;
-    setJustSaved(false);
-    setDayCloses((prev) => { const next = { ...prev }; delete next[batch]; return next; });
-  };
-
-  // Supplier payment auto-fills from the batch's order cost until edited.
-  const supplierEntered = rec.supplier !== undefined && rec.supplier !== null && rec.supplier !== '';
-  const supplierAuto = book.cost > 0 ? round2(book.cost) : 0;
-  const supplierShown = supplierEntered ? rec.supplier : (book.cost > 0 ? String(supplierAuto) : '');
-
-  const startMoney = num(rec.startCash) + num(rec.startGcash);
-  const endMoney = num(rec.endCash) + num(rec.endGcash);
-  const withdrawal = num(rec.withdrawal);
-
-  const started = (rec.startCash ?? '') !== '' || (rec.startGcash ?? '') !== '';
-  const ended = (rec.endCash ?? '') !== '' || (rec.endGcash ?? '') !== '';
-  const canReconcile = started && ended;
-
-  const actualIncrease = endMoney - startMoney;
-  const actualProfit = actualIncrease + withdrawal;       // add owner draw back
-  const difference = actualProfit - book.profit;          // vs expected profit
-
-  const tol = 1;
-  let status = null;
-  if (canReconcile) {
-    if (Math.abs(difference) <= tol) status = { tone: 'ok', text: 'Money count matches the expected profit.' };
-    else if (difference < 0) status = { tone: 'short', text: `Short by ${m(Math.abs(difference))}` };
-    else status = { tone: 'over', text: `Over by ${m(difference)}` };
-  }
-
-  const saveCheck = () => {
-    setDayCloses((prev) => {
-      const cur = { ...(prev[batch] || {}) };
-      // Freeze the auto-filled supplier cost into the saved snapshot.
-      if (cur.supplier === undefined || cur.supplier === null || cur.supplier === '') {
-        if (book.cost > 0) cur.supplier = String(supplierAuto);
-      }
-      cur.savedAt = new Date().toISOString();
-      return { ...prev, [batch]: cur };
-    });
-    setJustSaved(true);
-  };
-
-  const savedTime = rec.savedAt
-    ? new Date(rec.savedAt).toLocaleString('en-PH', { hour: 'numeric', minute: '2-digit' })
-    : null;
-
-  const reasons = [
-    'Some orders are still unpaid',
-    'A customer paid only partially',
-    'Supplier cost was higher than expected',
-    'Extra expenses were added (gas, ice, packaging…)',
-    'Owner withdrew cash',
-    'Wrong payment method recorded on an order',
-    'A GCash payment has not arrived yet',
-    'A product cost or selling price is wrong',
-    'Cash or GCash was counted / typed incorrectly',
-  ];
-
-  // Field helper — a plain function (NOT a child component) so inputs keep focus.
-  const money = (label, k, opts = {}) => (
-    <div>
-      <Label>{label}</Label>
-      <div className="relative">
-        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm pointer-events-none" style={{ color: THEME.inkSoft }}>₱</span>
-        <Input type="number" step="0.01" min="0" inputMode="decimal"
-          value={opts.value !== undefined ? opts.value : (rec[k] ?? '')}
-          onChange={(e) => setField(k, e.target.value)}
-          placeholder="0.00" className="pl-7 tabular-nums" />
-      </div>
-      {opts.hint && <div className="text-xs mt-1.5 leading-snug" style={{ color: THEME.inkSoft }}>{opts.hint}</div>}
-    </div>
-  );
-
-  const stepHead = (n, title) => (
-    <div className="flex items-center gap-2.5 mb-3">
-      <span className="flex items-center justify-center rounded-full text-xs font-semibold flex-shrink-0"
-        style={{ width: 22, height: 22, background: THEME.brand, color: 'white' }}>{n}</span>
-      <span className="font-medium text-sm">{title}</span>
-    </div>
-  );
-
-  const stat = (label, value, color) => (
-    <div>
-      <div className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft, letterSpacing: '0.06em' }}>{label}</div>
-      <div className="font-display text-lg sm:text-xl mt-0.5" style={{ color: color || THEME.ink }}>{value}</div>
-    </div>
-  );
-
-  return (
-    <div className="max-w-3xl">
-      <Header
-        title="Batch Money Check"
-        subtitle="Compare your expected profit with your actual Cash + GCash after a delivery batch."
-        right={
-          <div className="w-full sm:w-60">
-            <Label>Select delivery batch</Label>
-            <Select value={batch} onChange={(e) => setBatch(e.target.value)}
-              options={batches.map((b) => ({ value: b, label: batchLabel(b) }))} />
-          </div>
-        }
-      />
-
-      {/* ===== Today's Batch ===== */}
-      <Card className="p-5 mb-5">
-        <div className="flex items-baseline justify-between mb-4">
-          <div className="font-display text-lg">Today's Batch</div>
-          <div className="text-xs" style={{ color: THEME.inkSoft }}>{book.count} order{book.count !== 1 ? 's' : ''} · {batchLabel(batch)}</div>
-        </div>
-        {book.count === 0 ? (
-          <EmptyHint>No orders on this delivery batch yet.</EmptyHint>
-        ) : (
-          <>
-            <div className="grid grid-cols-3 gap-3 mb-4">
-              {stat('Sales', m(book.sales), THEME.brand)}
-              {stat('Supplier Cost', m(book.cost), THEME.inkSoft)}
-              {stat('Expected Profit', m(book.profit), THEME.green)}
-            </div>
-            <div className="grid grid-cols-2 gap-3 pt-4" style={{ borderTop: `1px solid ${THEME.line}` }}>
-              {stat('Collected', m(book.collected), THEME.ink)}
-              {stat('Still Unpaid', m(book.outstanding), book.outstanding > tol ? THEME.amber : THEME.inkSoft)}
-            </div>
-            {book.outstanding > tol && (
-              <div className="text-xs mt-4 px-3 py-2.5 rounded-md leading-relaxed" style={{ background: THEME.warnBg, color: THEME.warnInk }}>
-                {m(book.outstanding)} is still unpaid, so today's cash may be lower until those payments are collected.
-              </div>
-            )}
-          </>
-        )}
-      </Card>
-
-      {/* ===== Money Count (3 guided steps) ===== */}
-      <Card className="p-5 mb-5">
-        <div className="flex items-center justify-between mb-5">
-          <div className="font-display text-lg">Money Count</div>
-          {(started || ended || withdrawal || supplierEntered || (rec.expenses ?? '') !== '') && (
-            <button onClick={clearDay} className="text-xs px-2 py-1 rounded" style={{ color: THEME.red, border: `1px solid ${THEME.line}` }}>Clear</button>
-          )}
-        </div>
-
-        <div className="mb-6">
-          {stepHead(1, 'Money before supplier')}
-          <div className="text-xs mb-3 -mt-1 leading-snug" style={{ color: THEME.inkSoft }}>Count your money before buying supply.</div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {money('Cash on hand', 'startCash')}
-            {money('GCash balance', 'startGcash')}
-          </div>
-        </div>
-
-        <div className="mb-6 pt-5" style={{ borderTop: `1px solid ${THEME.line}` }}>
-          {stepHead(2, 'Money out')}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            {money('Supplier payment', 'supplier', {
-              value: supplierShown,
-              hint: 'Auto-filled from today\u2019s orders. Edit only if your actual payment is different.',
-            })}
-            {money('Other expenses', 'expenses', { hint: 'Gas, ice, packaging, transport, etc.' })}
-            {money('Owner withdrawal', 'withdrawal', { hint: 'Cash you took out for yourself, if any.' })}
-          </div>
-        </div>
-
-        <div className="pt-5" style={{ borderTop: `1px solid ${THEME.line}` }}>
-          {stepHead(3, 'Money after deliveries')}
-          <div className="text-xs mb-3 -mt-1 leading-snug" style={{ color: THEME.inkSoft }}>Count your money after deliveries and collections.</div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {money('Cash on hand', 'endCash')}
-            {money('GCash balance', 'endGcash')}
-          </div>
-        </div>
-
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mt-6 pt-5" style={{ borderTop: `1px solid ${THEME.line}` }}>
-          <div className="text-xs" style={{ color: THEME.inkSoft }}>
-            {justSaved
-              ? <span style={{ color: THEME.green }}>✓ Saved for {batchLabel(batch)}{savedTime ? ` · ${savedTime}` : ''}.</span>
-              : (rec.savedAt ? `Last saved ${batchLabel(batch)}${savedTime ? ` · ${savedTime}` : ''}.` : 'Auto-saves as you type. Tap to confirm this batch is done.')}
-          </div>
-          <Btn variant="primary" onClick={saveCheck}><Save size={14} className="inline -mt-0.5 mr-1" /> Save Batch Check</Btn>
-        </div>
-      </Card>
-
-      {/* ===== Result ===== */}
-      <Card className="p-5">
-        <div className="font-display text-lg mb-4">Result</div>
-        {!canReconcile ? (
-          <EmptyHint>Enter your before and after counts above to see the result.</EmptyHint>
-        ) : (
-          <>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
-              {stat('Expected Profit', m(book.profit), THEME.green)}
-              {stat('Actual Money Increase', m(actualIncrease), actualIncrease >= 0 ? THEME.ink : THEME.red)}
-              {stat('Difference', (difference >= 0 ? '+' : '−') + m(Math.abs(difference)).replace('₱', '₱'),
-                Math.abs(difference) <= tol ? THEME.green : (difference < 0 ? THEME.red : THEME.green))}
-            </div>
-            {withdrawal > tol && (
-              <div className="text-xs mb-4 -mt-1" style={{ color: THEME.inkSoft }}>
-                Includes {m(withdrawal)} owner withdrawal added back (it's money you earned, just taken out).
-              </div>
-            )}
-
-            <div className="rounded-lg p-4 mb-4" style={{ background: status.tone === 'short' ? THEME.warnBg : THEME.successBg }}>
-              <div className="flex items-center gap-2">
-                {status.tone === 'short'
-                  ? <AlertCircle size={18} style={{ color: THEME.warnInk }} />
-                  : <CheckCircle size={18} style={{ color: THEME.successInk }} />}
-                <span className="font-semibold text-sm tabular-nums" style={{ color: status.tone === 'short' ? THEME.warnInk : THEME.successInk }}>
-                  {status.tone === 'ok' ? '✅ ' : status.tone === 'over' ? '✅ ' : '⚠️ '}{status.text}
-                </span>
-              </div>
-              {book.outstanding > tol && (
-                <div className="text-xs mt-2 leading-relaxed" style={{ color: status.tone === 'short' ? THEME.warnInk : THEME.successInk }}>
-                  Note: some orders are still unpaid ({m(book.outstanding)}), so actual cash may be lower until payment is collected.
-                </div>
-              )}
-            </div>
-
-            {Math.abs(difference) > tol && (
-              <div className="rounded-lg p-4 mb-4" style={{ border: `1px solid ${THEME.line}` }}>
-                <div className="text-sm font-medium mb-2.5">Why it might not match</div>
-                <div className="space-y-1.5">
-                  {reasons.map((r, i) => (
-                    <div key={i} className="flex items-start gap-2 text-xs" style={{ color: THEME.inkSoft }}>
-                      <span className="mt-0.5 flex-shrink-0" style={{ color: THEME.brandSoft }}>•</span>
-                      <span className="leading-snug">{r}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <button onClick={() => setShowMath((s) => !s)}
-              className="flex items-center gap-1.5 text-xs font-medium" style={{ color: THEME.brand }}>
-              {showMath ? <ChevronUp size={14} /> : <ChevronDown size={14} />} How this is calculated
-            </button>
-            {showMath && (
-              <div className="text-xs mt-3 px-3 py-3 rounded-md leading-relaxed space-y-2" style={{ background: THEME.bg, color: THEME.inkSoft }}>
-                <div>Actual money increase = End Cash + End GCash − Start Cash − Start GCash</div>
-                <div>Actual profit after withdrawal = Actual money increase + Owner withdrawal</div>
-                <div>Difference = Actual profit after withdrawal − Expected profit</div>
-                <div className="pt-1" style={{ color: THEME.ink }}>
-                  {m(endMoney)} − {m(startMoney)} = {m(actualIncrease)} increase{withdrawal > tol ? `, + ${m(withdrawal)} withdrawal = ${m(actualProfit)}` : ''}; vs {m(book.profit)} expected → {(difference >= 0 ? '+' : '−')}{m(Math.abs(difference))}.
-                </div>
-              </div>
-            )}
-          </>
-        )}
-      </Card>
     </div>
   );
 }
