@@ -51,7 +51,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Prepared', 'Out for delivery', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v8.9 · Dashboard polish';
+const APP_VERSION = 'v9.0 · Modern UI refresh';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -238,7 +238,7 @@ const storage = {
 
 function Card({ children, className = '', style = {} }) {
   return (
-    <div className={`rounded-lg ${className}`} style={{ background: THEME.card, border: `1px solid ${THEME.line}`, ...style }}>
+    <div className={`rounded-xl ${className}`} style={{ background: THEME.card, border: `1px solid ${THEME.line}`, ...style }}>
       {children}
     </div>
   );
@@ -255,7 +255,7 @@ function Btn({ children, onClick, variant = 'primary', size = 'md', disabled, ty
   const sizes = { sm: 'px-3 py-1.5 text-sm', md: 'px-4 py-2 text-sm', lg: 'px-5 py-2.5' };
   return (
     <button type={type} onClick={onClick} disabled={disabled}
-      className={`${sizes[size]} font-medium rounded-md transition-opacity ${disabled ? 'opacity-40 cursor-not-allowed' : 'hover:opacity-85 cursor-pointer'} ${className}`}
+      className={`${sizes[size]} font-medium rounded-lg transition-opacity ${disabled ? 'opacity-40 cursor-not-allowed' : 'hover:opacity-85 cursor-pointer'} ${className}`}
       style={styles[variant]}>
       {children}
     </button>
@@ -265,7 +265,7 @@ function Btn({ children, onClick, variant = 'primary', size = 'md', disabled, ty
 function Input({ value, onChange, placeholder, type = 'text', className = '', ...rest }) {
   return (
     <input type={type} value={value ?? ''} onChange={onChange} placeholder={placeholder}
-      className={`w-full px-3 py-2 rounded-md outline-none transition-colors ${className}`}
+      className={`w-full px-3 py-2 rounded-lg outline-none transition-colors ${className}`}
       style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink, fontFamily: 'DM Sans, sans-serif' }}
       onFocus={(e) => e.target.style.borderColor = THEME.brand}
       onBlur={(e) => e.target.style.borderColor = THEME.line}
@@ -276,7 +276,7 @@ function Input({ value, onChange, placeholder, type = 'text', className = '', ..
 function Select({ value, onChange, options, className = '' }) {
   return (
     <select value={value ?? ''} onChange={onChange}
-      className={`w-full px-3 py-2 rounded-md outline-none ${className}`}
+      className={`w-full px-3 py-2 rounded-lg outline-none ${className}`}
       style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink }}>
       {options.map((o) => (
         <option key={typeof o === 'string' ? o : o.value} value={typeof o === 'string' ? o : o.value}>
@@ -713,25 +713,29 @@ function MainApp() {
             <div className="font-display text-xl leading-tight" style={{ color: THEME.brand }}>M&N Meatshop</div>
             <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>Your daily meat choice</div>
           </div>
-          <nav className="flex-1 py-4 overflow-y-auto">
+          <nav className="flex-1 py-4 px-3 overflow-y-auto">
             {navItems.map((item) => {
               const Icon = item.icon;
               const active = view === item.id;
               return (
                 <button key={item.id} onClick={() => { setView(item.id); setMobileNav(false); }}
-                  className="w-full flex items-center gap-3 px-6 py-3 lg:py-2.5 text-sm transition-colors text-left"
+                  className="w-full flex items-center gap-3 px-3.5 py-3 lg:py-2.5 text-sm text-left rounded-xl mb-0.5 transition-colors"
                   style={{
-                    background: active ? THEME.brandBg : 'transparent',
-                    color: active ? THEME.brand : THEME.ink,
+                    background: active ? THEME.brand : 'transparent',
+                    color: active ? 'white' : THEME.ink,
                     fontWeight: active ? 600 : 400,
-                    borderLeft: active ? `3px solid ${THEME.brand}` : '3px solid transparent',
-                    paddingLeft: active ? '21px' : '24px',
-                  }}>
-                  <Icon size={17} />
+                  }}
+                  onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = THEME.brandBg; }}
+                  onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = 'transparent'; }}>
+                  <Icon size={17} style={{ opacity: active ? 1 : 0.75, flexShrink: 0 }} />
                   <span className="flex-1">{item.label}</span>
                   {item.id === 'requests' && pendingOnline > 0 && (
                     <span className="flex items-center justify-center text-xs font-semibold rounded-full"
-                      style={{ background: THEME.red, color: 'white', minWidth: 20, height: 20, padding: '0 6px' }}>
+                      style={{
+                        background: active ? 'white' : THEME.red,
+                        color: active ? THEME.brand : 'white',
+                        minWidth: 20, height: 20, padding: '0 6px',
+                      }}>
                       {pendingOnline}
                     </span>
                   )}
@@ -1672,26 +1676,25 @@ function Dashboard({ orders, setOrders, expenses, catalog, setView, privacy, set
               {unpaidShown.map((o) => {
                 const tel = phoneDigits(o.phone);
                 return (
-                  <div key={o.id} className="py-2 px-2 rounded" style={{ background: THEME.bg }}>
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium truncate">{o.customer}</div>
-                        <div className="text-xs" style={{ color: THEME.inkSoft }}>{fmtDateShort(o.date)} · {o.id}</div>
+                  <div key={o.id} className="flex items-center gap-3 py-2.5 px-2.5 rounded-lg" style={{ background: THEME.bg }}>
+                    <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: THEME.brandBg }}>
+                      <Wallet size={16} style={{ color: THEME.brand }} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium truncate">{o.customer}</div>
+                      <div className="text-xs" style={{ color: THEME.inkSoft }}>
+                        {fmtDateShort(o.date)} · {o.id} · <span style={{ color: THEME.red, fontWeight: 600 }}>{m(o._outstanding)}</span> {o.payment_status === 'Partial' ? 'left' : 'unpaid'}
                       </div>
-                      <div className="text-right flex-shrink-0">
-                        <div className="text-sm font-medium" style={{ color: THEME.red }}>{m(o._outstanding)}</div>
-                        <Badge color={statusColor(o.payment_status)}>{o.payment_status}</Badge>
+                      <div className="flex items-center gap-3 mt-1">
+                        <button onClick={() => setView('orders')} className="text-xs" style={{ color: THEME.inkSoft }}>View Order</button>
+                        {tel && <a href={`sms:${tel}`} className="text-xs" style={{ color: THEME.inkSoft }}>Message</a>}
                       </div>
                     </div>
-                    <div className="flex items-center gap-3 mt-1.5">
-                      <button onClick={() => markPaid(o.id)} className="text-xs font-medium inline-flex items-center gap-1" style={{ color: THEME.green }}>
-                        <Check size={13} /> Mark Paid
-                      </button>
-                      <button onClick={() => setView('orders')} className="text-xs" style={{ color: THEME.inkSoft }}>View Order</button>
-                      {tel && (
-                        <a href={`sms:${tel}`} className="text-xs" style={{ color: THEME.inkSoft }}>Message</a>
-                      )}
-                    </div>
+                    <button onClick={() => markPaid(o.id)}
+                      className="text-xs font-semibold px-3 py-2 rounded-lg flex-shrink-0 transition-colors"
+                      style={{ color: THEME.green, border: `1px solid ${THEME.line}`, background: THEME.card }}>
+                      Mark Paid
+                    </button>
                   </div>
                 );
               })}
@@ -2166,7 +2169,7 @@ function OrderRequests({ catalog, orders, setOrders, meta, setMeta, customers, s
           </div>
           <Label>Reason (optional)</Label>
           <textarea value={declineReason} onChange={(e) => setDeclineReason(e.target.value)} rows={2}
-            className="w-full px-3 py-2 rounded-md outline-none text-sm mb-1"
+            className="w-full px-3 py-2 rounded-lg outline-none text-sm mb-1"
             style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink, fontFamily: 'DM Sans' }}
             placeholder="e.g. out of stock, outside delivery area" />
           <div className="text-xs mb-4" style={{ color: THEME.inkSoft }}>Saved for this session so you remember why.</div>
@@ -2484,7 +2487,7 @@ function Customers({ customers, setCustomers, orders, setView, privacy }) {
               <div>
                 <Label>Internal Delivery Notes</Label>
                 <textarea value={editing.notes || ''} onChange={(ev) => setEditing((p) => ({ ...p, notes: ev.target.value }))} rows={2}
-                  className="w-full px-3 py-2 rounded-md outline-none text-sm"
+                  className="w-full px-3 py-2 rounded-lg outline-none text-sm"
                   style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink, fontFamily: 'DM Sans' }}
                   placeholder="e.g. blue gate near sari-sari store · message before delivery" />
                 <div className="text-xs mt-1 flex items-center gap-1" style={{ color: THEME.inkSoft }}>
@@ -2818,7 +2821,7 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, customers, setCus
               <div>
                 <Label>Internal Delivery Notes</Label>
                 <textarea value={internalNotes} onChange={(e) => setInternalNotes(e.target.value)} rows={2}
-                  className="w-full px-3 py-2 rounded-md outline-none text-sm"
+                  className="w-full px-3 py-2 rounded-lg outline-none text-sm"
                   style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink, fontFamily: 'DM Sans' }}
                   placeholder="e.g. blue gate near sari-sari store · message before delivery" />
                 <div className="text-xs mt-1.5 flex items-center gap-1" style={{ color: THEME.inkSoft }}>
@@ -2970,7 +2973,7 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, customers, setCus
               <div>
                 <Label>Customer Note</Label>
                 <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3}
-                  className="w-full px-3 py-2 rounded-md outline-none text-sm"
+                  className="w-full px-3 py-2 rounded-lg outline-none text-sm"
                   style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink, fontFamily: 'DM Sans' }}
                   placeholder="Optional — shows on the customer's order summary" />
                 <div className="text-xs mt-1.5" style={{ color: THEME.inkSoft }}>Customer-facing. For private notes use Internal Delivery Notes above.</div>
@@ -3120,7 +3123,7 @@ function Orders({ orders, setOrders, productByName, catalog }) {
           <div className="relative mb-3">
             <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: THEME.inkSoft }} />
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by order ID, customer, or product…"
-              className="w-full pl-9 pr-3 py-2 rounded-md outline-none text-sm"
+              className="w-full pl-9 pr-3 py-2 rounded-lg outline-none text-sm"
               style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink }} />
           </div>
           <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
@@ -3554,7 +3557,7 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
                     <div className="col-span-2 sm:col-span-4">
                       <Label>Product</Label>
                       <select value={it.product} onChange={(e) => dChangeProduct(idx, e.target.value)}
-                        className="w-full px-3 py-2 rounded-md outline-none text-sm"
+                        className="w-full px-3 py-2 rounded-lg outline-none text-sm"
                         style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink }}>
                         <option value="">— Select product —</option>
                         {['Pork', 'Chicken', 'Beef'].map((group) => (
@@ -3667,14 +3670,14 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
             <div>
               <Label>Customer Note</Label>
               <textarea value={draft.customer_note} onChange={(e) => setDraft({ ...draft, customer_note: e.target.value })} rows={2}
-                className="w-full px-3 py-2 rounded-md outline-none text-sm"
+                className="w-full px-3 py-2 rounded-lg outline-none text-sm"
                 style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink, fontFamily: 'DM Sans' }}
                 placeholder="Shows on the customer's order summary" />
             </div>
             <div>
               <Label>Internal Notes</Label>
               <textarea value={draft.internal_notes} onChange={(e) => setDraft({ ...draft, internal_notes: e.target.value })} rows={2}
-                className="w-full px-3 py-2 rounded-md outline-none text-sm"
+                className="w-full px-3 py-2 rounded-lg outline-none text-sm"
                 style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink, fontFamily: 'DM Sans' }}
                 placeholder="Admin only — never shown to the customer or supplier" />
             </div>
