@@ -51,7 +51,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Prepared', 'Out for delivery', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v8.8 · Safer modal + premium invoice';
+const APP_VERSION = 'v8.9 · Dashboard polish';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -1065,6 +1065,29 @@ function orderDetails(o) {
    DASHBOARD
    ============================================================ */
 
+// One-time ease-out count-up for the hero number. Pure presentation —
+// the underlying stats are untouched; this only animates the displayed value.
+function useCountUp(target, duration = 900) {
+  const [val, setVal] = useState(target);
+  const prevRef = useRef(null);
+  useEffect(() => {
+    const from = prevRef.current === null ? 0 : prevRef.current;
+    prevRef.current = target;
+    if (!isFinite(target) || from === target) { setVal(target); return; }
+    let raf;
+    const t0 = performance.now();
+    const step = (t) => {
+      const p = Math.min(1, (t - t0) / duration);
+      const eased = 1 - Math.pow(1 - p, 3);
+      setVal(from + (target - from) * eased);
+      if (p < 1) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [target, duration]);
+  return val;
+}
+
 function Dashboard({ orders, setOrders, expenses, catalog, setView, privacy, setPrivacy, currentUser, theme, setTheme }) {
   const ordersList = Object.values(orders);
   const [showWeekly, setShowWeekly] = useState(false);
@@ -1341,11 +1364,13 @@ function Dashboard({ orders, setOrders, expenses, catalog, setView, privacy, set
   const unpaidShown = unpaidOrders.slice(0, 6);
 
   const monthName = now.toLocaleString('en-PH', { month: 'long' });
+  // Animated hero number (presentation only — privacy mode bypasses it).
+  const heroProfit = useCountUp(stats.monthProfit || 0);
 
   return (
     <div>
       {/* ===== Clean header: logo + title + privacy toggle ===== */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-7 no-print">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8 no-print mn-rise">
         <div className="flex items-center gap-4">
           <img src={LOGO_DATA_URL} alt="M&N Meatshop" className="w-12 h-12 sm:w-14 sm:h-14 rounded-full object-cover" style={{ boxShadow: '0 2px 8px rgba(122,46,51,0.15)' }} />
           <div>
@@ -1386,80 +1411,12 @@ function Dashboard({ orders, setOrders, expenses, catalog, setView, privacy, set
         </div>
       </div>
 
-      {/* ===== Live metric chips ===== */}
-      {(() => {
-        const tick = [];
-        tick.push({ label: `${monthName} profit`, value: m(stats.monthProfit ?? stats.grossProfit), cls: 'green' });
-        tick.push({ label: 'Sales', value: m(stats.monthSales ?? stats.totalSales), cls: '' });
-        tick.push({ label: 'Orders', value: `${stats.monthOrderCount}`, cls: '' });
-        tick.push({ label: 'Collection', value: `${stats.collectionRate}%`, cls: stats.collectionRate >= 80 ? 'green' : 'amber' });
-        if (stats.unpaid > 0) tick.push({ label: 'Still unpaid', value: m(stats.unpaid), cls: 'red' });
-        if (stats.nextBatch) tick.push({ label: 'Next batch', value: batchLabel(stats.nextBatch.batch), cls: 'gold' });
-        if (stats.topProducts && stats.topProducts.length > 0) tick.push({ label: 'Top product', value: shortLabel(stats.topProducts[0].name), cls: '' });
-        // Secondary metrics — kept after the priorities; wrapping handles overflow.
-        if (stats.b2bRevenue > 0) tick.push({ label: 'B2B', value: m(stats.b2bRevenue), cls: 'gold' });
-        if (stats.repeatRate > 0) tick.push({ label: 'Repeat', value: `${stats.repeatRate}%`, cls: 'green' });
-        if (stats.avgOrderValue > 0) tick.push({ label: 'Avg order', value: m(stats.avgOrderValue), cls: '' });
-
-        const clsColor = (c) => c === 'green' ? THEME.green : c === 'red' ? THEME.red : c === 'gold' ? THEME.accent : THEME.ink;
-        return (
-          <div className="mb-4 rounded-lg overflow-hidden flex items-stretch"
-            style={{ background: THEME.brandBg, border: `1px solid ${THEME.line}` }}>
-            <div className="flex items-center px-2.5 flex-shrink-0" style={{ background: THEME.brand, color: '#fff' }}>
-              <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#fff', marginRight: 5 }} className="mn-live-dot" />
-              <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em' }}>LIVE</span>
-            </div>
-            <div className="overflow-hidden flex items-center" style={{ flex: 1, minWidth: 0 }}>
-              <div className="mn-ticker-track inline-flex items-center gap-2 py-2 pl-2">
-                {[...tick, ...tick].map((it, i) => (
-                  <span key={i} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full flex-shrink-0"
-                    style={{ background: THEME.card, border: `1px solid ${THEME.line}` }}>
-                    <span style={{ fontSize: 10.5, color: THEME.inkSoft, whiteSpace: 'nowrap' }}>{it.label}</span>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: clsColor(it.cls), whiteSpace: 'nowrap' }}>{it.value}</span>
-                  </span>
-                ))}
-              </div>
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* ===== Currently collecting (for next production day) ===== */}
-      <Card className="px-5 py-4 mb-4" style={{ background: stats.pendingOrders > 0 ? THEME.warnBg : THEME.card, border: `1px solid ${stats.pendingOrders > 0 ? THEME.amber : THEME.line}` }}>
-        <div className="flex items-center justify-between flex-wrap gap-y-2">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: stats.pendingOrders > 0 ? THEME.amber : THEME.line }}>
-              <ListOrdered size={17} style={{ color: stats.pendingOrders > 0 ? 'white' : THEME.inkSoft }} />
-            </div>
-            <div>
-              <div className="text-sm font-semibold" style={{ color: THEME.ink }}>
-                {stats.pendingOrders > 0
-                  ? `${stats.pendingOrders} order${stats.pendingOrders !== 1 ? 's' : ''} collecting for next production`
-                  : 'No pending orders — all caught up'}
-              </div>
-              <div className="text-xs" style={{ color: THEME.inkSoft }}>
-                Orders marked Pending, waiting to be delivered on your next production day (Tue / Sat)
-              </div>
-            </div>
-          </div>
-          <div className="flex items-center gap-8">
-            <div className="text-right">
-              <div className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft }}>Batch Value</div>
-              <div className="font-display text-xl" style={{ color: THEME.brand }}>{m(stats.pendingValue)}</div>
-            </div>
-            <Btn variant="secondary" size="sm" onClick={() => setView('pickup')}>
-              View Pickup <ChevronRight size={14} className="inline" />
-            </Btn>
-          </div>
-        </div>
-      </Card>
-
       {/* ===== Hero: This month's profit ===== */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-3 mn-rise">
         <Card className="lg:col-span-2 p-6 relative overflow-hidden" style={{ background: `linear-gradient(135deg, ${THEME.brand} 0%, ${THEME.brandSoft} 100%)`, border: 'none' }}>
           <div className="relative z-10">
             <div className="text-xs uppercase tracking-widest" style={{ color: 'rgba(255,255,255,0.75)' }}>{monthName} Profit</div>
-            <div className="font-display text-5xl mt-2 text-white">{m(stats.monthProfit)}</div>
+            <div className="font-display text-5xl mt-2 text-white">{privacy ? m(stats.monthProfit) : peso(Math.round(heroProfit))}</div>
             <div className="flex gap-6 mt-4">
               <div>
                 <div className="text-xs" style={{ color: 'rgba(255,255,255,0.7)' }}>Sales this month</div>
@@ -1506,33 +1463,109 @@ function Dashboard({ orders, setOrders, expenses, catalog, setView, privacy, set
         </Card>
       </div>
 
+      {/* ===== Currently collecting (for next production day) ===== */}
+      {(() => {
+        // Amber = act soon: there are pending orders AND the next batch is today/tomorrow.
+        // Otherwise stay calm — a standing amber strip stops meaning anything.
+        const daysToBatch = stats.nextBatch ? Math.ceil((new Date(stats.nextBatch.batch) - new Date(today())) / 86400000) : null;
+        const urgent = stats.pendingOrders > 0 && daysToBatch !== null && daysToBatch <= 1;
+        return (
+      <Card className="px-5 py-4 mb-3 mn-rise rise-1" style={{ background: urgent ? THEME.warnBg : THEME.card, border: `1px solid ${urgent ? THEME.amber : THEME.line}` }}>
+        <div className="flex items-center justify-between flex-wrap gap-y-2">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: stats.pendingOrders > 0 ? THEME.amber : THEME.line }}>
+              <ListOrdered size={17} style={{ color: stats.pendingOrders > 0 ? 'white' : THEME.inkSoft }} />
+            </div>
+            <div>
+              <div className="text-sm font-semibold" style={{ color: THEME.ink }}>
+                {stats.pendingOrders > 0
+                  ? `${stats.pendingOrders} order${stats.pendingOrders !== 1 ? 's' : ''} collecting for next production${urgent ? ' — delivery is close' : ''}`
+                  : 'No pending orders — all caught up'}
+              </div>
+              <div className="text-xs" style={{ color: THEME.inkSoft }}>
+                Orders marked Pending, waiting to be delivered on your next production day (Tue / Sat)
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-8">
+            <div className="text-right">
+              <div className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft }}>Batch Value</div>
+              <div className="font-display text-xl" style={{ color: THEME.brand }}>{m(stats.pendingValue)}</div>
+            </div>
+            <Btn variant="secondary" size="sm" onClick={() => setView('pickup')}>
+              View Pickup <ChevronRight size={14} className="inline" />
+            </Btn>
+          </div>
+        </div>
+      </Card>
+        );
+      })()}
+
       {/* ===== Key metrics row ===== */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
-        <Card className="p-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3 mn-rise rise-1">
+        <Card className="p-4 mn-lift">
           <div className="text-xs mb-1" style={{ color: THEME.inkSoft }}>Orders · {monthName}</div>
           <div className="font-display text-2xl" style={{ color: THEME.ink }}>{stats.monthOrderCount}</div>
           <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>this month</div>
         </Card>
-        <Card className="p-4">
+        <Card className="p-4 mn-lift">
           <div className="text-xs mb-1" style={{ color: THEME.inkSoft }}>Repeat customers</div>
           <div className="font-display text-2xl" style={{ color: stats.repeatRate >= 50 ? THEME.green : THEME.ink }}>{stats.repeatRate}%</div>
           <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>{stats.repeatCustomers} of {stats.monthCustomers} ordered 2+</div>
         </Card>
-        <Card className="p-4">
+        <Card className="p-4 mn-lift">
           <div className="text-xs mb-1" style={{ color: THEME.inkSoft }}>Avg order value</div>
           <div className="font-display text-2xl" style={{ color: THEME.ink }}>{m(stats.avgOrderValue)}</div>
           <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>this month</div>
         </Card>
-        <Card className="p-4">
+        <Card className="p-4 mn-lift">
           <div className="text-xs mb-1" style={{ color: THEME.inkSoft }}>B2B revenue</div>
           <div className="font-display text-2xl" style={{ color: THEME.brand }}>{m(stats.b2bRevenue)}</div>
           <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>{stats.b2bOrders} wholesale order{stats.b2bOrders !== 1 ? 's' : ''}</div>
         </Card>
       </div>
 
+      {/* ===== Live metric chips ===== */}
+      {(() => {
+        // Only metrics NOT already shown in the hero zone above — the ticker is
+        // a pulse of secondary stats, not a duplicate of the headline numbers.
+        const tick = [];
+        if (stats.nextBatch) {
+          tick.push({ label: 'Next batch', value: batchLabel(stats.nextBatch.batch), cls: 'gold' });
+          tick.push({ label: 'Projected', value: m(stats.nextBatch.total), cls: 'green' });
+        }
+        if (stats.topProducts && stats.topProducts.length > 0) tick.push({ label: 'Top product', value: shortLabel(stats.topProducts[0].name), cls: '' });
+        if (stats.b2bRevenue > 0) tick.push({ label: 'B2B', value: m(stats.b2bRevenue), cls: '' });
+        if (stats.repeatRate > 0) tick.push({ label: 'Repeat', value: `${stats.repeatRate}%`, cls: 'green' });
+        if (stats.avgOrderValue > 0) tick.push({ label: 'Avg order', value: m(stats.avgOrderValue), cls: '' });
+        if (tick.length === 0) return null;
+
+        const clsColor = (c) => c === 'green' ? THEME.green : c === 'red' ? THEME.red : c === 'gold' ? THEME.accent : THEME.ink;
+        return (
+          <div className="mb-8 rounded-lg overflow-hidden flex items-stretch mn-rise rise-2"
+            style={{ background: THEME.brandBg, border: `1px solid ${THEME.line}` }}>
+            <div className="flex items-center px-2.5 flex-shrink-0" style={{ background: THEME.brand, color: '#fff' }}>
+              <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#fff', marginRight: 5 }} className="mn-live-dot" />
+              <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em' }}>LIVE</span>
+            </div>
+            <div className="overflow-hidden flex items-center" style={{ flex: 1, minWidth: 0 }}>
+              <div className="mn-ticker-track inline-flex items-center gap-2 py-2 pl-2">
+                {[...tick, ...tick].map((it, i) => (
+                  <span key={i} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full flex-shrink-0"
+                    style={{ background: THEME.card, border: `1px solid ${THEME.line}` }}>
+                    <span style={{ fontSize: 11.5, color: THEME.inkSoft, whiteSpace: 'nowrap' }}>{it.label}</span>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: clsColor(it.cls), whiteSpace: 'nowrap' }}>{it.value}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* ===== Next batch preview ===== */}
       {stats.nextBatch && (
-        <Card className="p-5 mb-4">
+        <Card className="p-5 mb-4 mn-lift">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <Truck size={17} style={{ color: THEME.brand }} />
@@ -1567,8 +1600,8 @@ function Dashboard({ orders, setOrders, expenses, catalog, setView, privacy, set
       )}
 
       {/* ===== Production run performance ===== */}
-      <div className="grid grid-cols-1 gap-4 mb-4">
-        <Card className="p-5">
+      <div className="grid grid-cols-1 gap-4 mb-8 mn-rise rise-2">
+        <Card className="p-5 mn-lift">
           <div className="flex items-center justify-between mb-1">
             <div className="font-display text-lg">Delivery Batch Performance</div>
             {stats.runChangePct !== null && (
@@ -1606,9 +1639,9 @@ function Dashboard({ orders, setOrders, expenses, catalog, setView, privacy, set
       </div>
 
       {/* ===== Two columns: Money owed (actionable) + Top products ===== */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4 mn-rise rise-3">
         <div ref={moneyOwedRef} className="min-w-0">
-        <Card className="p-5">
+        <Card className="p-5 mn-lift">
           <div className="flex items-center justify-between mb-3 gap-2">
             <div>
               <div className="font-display text-lg">Money Owed to You</div>
@@ -1672,7 +1705,7 @@ function Dashboard({ orders, setOrders, expenses, catalog, setView, privacy, set
         </Card>
         </div>
 
-        <Card className="p-5">
+        <Card className="p-5 mn-lift">
           <div className="font-display text-lg mb-1">Top Products</div>
           <div className="text-xs mb-4" style={{ color: THEME.inkSoft }}>By total sales</div>
           {stats.topProducts.length === 0 ? (

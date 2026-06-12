@@ -75,3 +75,33 @@ body {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
 }
+
+/* ── Dashboard polish (v8.9) ────────────────────────────────── */
+/* Soft hover lift for interactive summary cards. */
+.mn-lift {
+  transition: transform 0.16s ease, box-shadow 0.16s ease;
+}
+.mn-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(42, 38, 36, 0.08);
+}
+
+/* Gentle entrance: sections rise in with a slight stagger. */
+.mn-rise {
+  animation: mn-rise-in 0.38s ease-out both;
+}
+.mn-rise.rise-1 { animation-delay: 0.06s; }
+.mn-rise.rise-2 { animation-delay: 0.12s; }
+.mn-rise.rise-3 { animation-delay: 0.18s; }
+@keyframes mn-rise-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Respect users who prefer less motion. */
+@media (prefers-reduced-motion: reduce) {
+  .mn-lift, .mn-lift:hover { transition: none; transform: none; box-shadow: none; }
+  .mn-rise { animation: none; }
+  .mn-ticker-track { animation: none; }
+  .mn-live-dot { animation: none; }
+}
