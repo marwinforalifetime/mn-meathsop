@@ -49,9 +49,9 @@ const EXPENSE_CATEGORIES = [
 
 const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
-const DELIVERY_STATUSES = ['Pending', 'Prepared', 'Out for delivery', 'Delivered', 'Cancelled'];
+const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v9.3 · Preferred delivery date fix';
+const APP_VERSION = 'v9.4 · Preferred-date backfill';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -350,7 +350,7 @@ function Badge({ children, color = 'brand' }) {
 function statusColor(status) {
   if (status === 'Paid' || status === 'Delivered') return 'green';
   if (status === 'Unpaid' || status === 'Cancelled') return 'red';
-  if (status === 'Partial' || status === 'Pending' || status === 'Prepared' || status === 'Out for delivery') return 'amber';
+  if (status === 'Partial' || status === 'Pending') return 'amber';
   return 'gray';
 }
 
@@ -566,6 +566,31 @@ function MainApp() {
     })();
     return () => { cancelled = true; };
   }, []);
+
+  // ── One-time backfill ──────────────────────────────────────────────
+  // Online orders accepted before the preferred-date fix were filed under the
+  // auto-suggested batch instead of the customer's requested day. Move each one
+  // onto its preferred date — but ONLY if it's safe: still an online order,
+  // not yet delivered/cancelled, never manually edited, and the preferred date
+  // both parses and differs from where it sits now. We stamp `batch_fixed` so
+  // this never runs twice and never fights a manual change you make later.
+  useEffect(() => {
+    if (!loaded) return;
+    let changed = false;
+    const next = { ...orders };
+    Object.values(next).forEach((o) => {
+      if (o.source !== 'online' || o.batch_fixed || o.edited_at) return;
+      if (o.delivery_status === 'Delivered' || o.delivery_status === 'Cancelled') return;
+      const want = parsePreferredBatch(o.preferred_date);
+      if (want && want !== o.delivery_batch) {
+        next[o.id] = { ...o, delivery_batch: want, batch_fixed: true };
+        changed = true;
+      } else {
+        next[o.id] = { ...o, batch_fixed: true }; // mark as checked so we don't re-scan
+      }
+    });
+    if (changed) setOrders(next);
+  }, [loaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!loaded) return;
