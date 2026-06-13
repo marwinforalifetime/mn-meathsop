@@ -105,3 +105,7 @@ body {
   .mn-ticker-track { animation: none; }
   .mn-live-dot { animation: none; }
 }
+
+/* App-like feel on mobile/PWA: kill double-tap zoom, stop pull-to-zoom on UI.
+   Text stays selectable so admins can still copy order IDs, addresses, etc. */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; touch-action: manipulation; }

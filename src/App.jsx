@@ -51,7 +51,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Prepared', 'Out for delivery', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v9.1 · Focused nav + tab modernization';
+const APP_VERSION = 'v9.2 · Live cost + filters + app feel';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -1149,7 +1149,7 @@ function Dashboard({ orders, setOrders, expenses, catalog, setView, privacy, set
   // if the product is no longer in the catalog.
   const effectiveCost = (order, it) => {
     const p = productByName[it.product];
-    if (p && typeof p.cost === 'number') return p.cost;
+    if (p && p.cost !== undefined && p.cost !== null && p.cost !== '') return Number(p.cost) || 0;
     return Number(it.cost) || 0;
   };
 
@@ -3005,24 +3005,24 @@ function Orders({ orders, setOrders, productByName, catalog }) {
               style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink }} />
           </div>
           <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft, letterSpacing: '0.06em' }}>Payment</span>
-              <div className="flex gap-1">
+              <div className="flex flex-wrap gap-1">
                 {['all', 'Paid', 'Unpaid', 'Partial'].map((f) => (
                   <button key={f} onClick={() => setFilter(f)}
-                    className="px-3 py-1.5 text-sm rounded-md"
+                    className="px-3 py-1.5 text-sm rounded-lg"
                     style={{ background: filter === f ? THEME.brand : 'transparent', color: filter === f ? 'white' : THEME.ink, border: `1px solid ${filter === f ? THEME.brand : THEME.line}` }}>
                     {f === 'all' ? 'All' : f}
                   </button>
                 ))}
               </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft, letterSpacing: '0.06em' }}>Delivery</span>
-              <div className="flex gap-1">
+              <div className="flex flex-wrap gap-1">
                 {['all', 'Pending', 'Delivered', 'Cancelled'].map((f) => (
                   <button key={f} onClick={() => setDeliveryFilter(f)}
-                    className="px-3 py-1.5 text-sm rounded-md"
+                    className="px-3 py-1.5 text-sm rounded-lg"
                     style={{ background: deliveryFilter === f ? THEME.accent : 'transparent', color: deliveryFilter === f ? 'white' : THEME.ink, border: `1px solid ${deliveryFilter === f ? THEME.accent : THEME.line}` }}>
                     {f === 'all' ? 'All' : f}
                   </button>
@@ -3293,7 +3293,7 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
   // Always reflect the current supplier cost from the catalog.
   const vCost = (it) => {
     const p = productByName[it.product];
-    if (p && typeof p.cost === 'number') return p.cost;
+    if (p && p.cost !== undefined && p.cost !== null && p.cost !== '') return Number(p.cost) || 0;
     return Number(it.cost) || 0;
   };
   const total = (view.items || []).reduce((s, i) => s + (Number(i.qty) || 0) * (i.price || 0), 0);
@@ -4181,7 +4181,7 @@ function Pickup({ orders, catalog }) {
   // Always use the current supplier cost from the catalog (what you pay today).
   const effectiveCost = (order, it) => {
     const p = productByName[it.product];
-    if (p && typeof p.cost === 'number') return p.cost;
+    if (p && p.cost !== undefined && p.cost !== null && p.cost !== '') return Number(p.cost) || 0;
     return Number(it.cost) || 0;
   };
 
@@ -4373,7 +4373,7 @@ function SalesCheck({ orders, catalog, privacy }) {
   // product was removed from the catalog.
   const effectiveCost = (order, it) => {
     const p = productByName[it.product];
-    if (p && typeof p.cost === 'number') return p.cost;
+    if (p && p.cost !== undefined && p.cost !== null && p.cost !== '') return Number(p.cost) || 0;
     return Number(it.cost) || 0;
   };
   const [selected, setSelected] = useState(new Set());
@@ -4394,6 +4394,16 @@ function SalesCheck({ orders, catalog, privacy }) {
   };
   const selectAll = () => setSelected(new Set(ordersList.map(o => o.id)));
   const clear = () => setSelected(new Set());
+  // Quick-select an entire delivery batch (e.g. "everything for Saturday").
+  const upcomingBatches = useMemo(() => {
+    const byBatch = {};
+    ordersList.forEach((o) => {
+      if (!o.delivery_batch || o.delivery_batch < today()) return;
+      byBatch[o.delivery_batch] = (byBatch[o.delivery_batch] || 0) + 1;
+    });
+    return Object.entries(byBatch).sort(([a], [b]) => a.localeCompare(b)).slice(0, 3);
+  }, [ordersList]);
+  const selectBatch = (batch) => setSelected(new Set(ordersList.filter(o => o.delivery_batch === batch).map(o => o.id)));
 
   const rollup = useMemo(() => {
     const byProduct = {};
@@ -4432,6 +4442,17 @@ function SalesCheck({ orders, catalog, privacy }) {
                 <button onClick={clear} className="text-xs px-2 py-1 rounded" style={{ color: THEME.inkSoft, border: `1px solid ${THEME.line}` }}>Clear</button>
               </div>
             </div>
+            {upcomingBatches.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-3">
+                {upcomingBatches.map(([batch, n]) => (
+                  <button key={batch} onClick={() => selectBatch(batch)}
+                    className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-full font-medium"
+                    style={{ background: THEME.brandBg, color: THEME.brand, border: `1px solid ${THEME.line}` }}>
+                    <Truck size={11} /> {batchLabel(batch)} ({n})
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="text-xs mb-3" style={{ color: THEME.inkSoft }}>{selected.size} selected</div>
             <div className="max-h-96 overflow-y-auto overflow-x-auto -mx-2">
               {ordersList.length === 0 && <EmptyHint>No orders yet.</EmptyHint>}
