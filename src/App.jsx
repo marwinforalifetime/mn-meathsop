@@ -51,7 +51,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Prepared', 'Out for delivery', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v9.2 · Live cost + filters + app feel';
+const APP_VERSION = 'v9.3 · Preferred delivery date fix';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -134,6 +134,42 @@ const batchLabel = (iso) => {
   const d = new Date(iso + 'T00:00:00');
   const dow = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()];
   return `${dow} · ${d.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}`;
+};
+
+// Turn a customer's free-text preferred date ("Saturday, June 20", "Jun 20",
+// "2026-06-20", "6/20") into a local YYYY-MM-DD batch date. Returns null when it
+// can't be parsed, so callers can fall back to the suggested batch. When no year
+// is given, assume the current year, rolling to next year if the date is past.
+const MONTH_NAMES = ['january','february','march','april','may','june','july','august','september','october','november','december'];
+const parsePreferredBatch = (text) => {
+  if (!text) return null;
+  const s = String(text).trim();
+  const buildIso = (year, monthIdx, day, hadYear) => {
+    if (monthIdx < 0 || monthIdx > 11 || day < 1 || day > 31) return null;
+    let d = new Date(year, monthIdx, day);
+    if (isNaN(d.getTime())) return null;
+    if (!hadYear) {
+      const t = new Date(today() + 'T00:00:00');
+      if (d < t) d = new Date(year + 1, monthIdx, day); // preferred date already passed → next year
+    }
+    return isoLocal(d);
+  };
+  // ISO: 2026-06-20
+  let m = s.match(/(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return buildIso(+m[1], +m[2] - 1, +m[3], true);
+  // Month name + day (+ optional year): "June 20", "Jun 20, 2026", "Saturday, June 20"
+  m = s.match(/([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:[,\s]+(\d{4}))?/);
+  if (m) {
+    const monthIdx = MONTH_NAMES.findIndex((mo) => mo.slice(0, 3) === m[1].toLowerCase().slice(0, 3));
+    if (monthIdx >= 0) return buildIso(m[3] ? +m[3] : new Date().getFullYear(), monthIdx, +m[2], !!m[3]);
+  }
+  // Numeric: 6/20 or 06/20/2026
+  m = s.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/);
+  if (m) {
+    const year = m[3] ? (m[3].length === 2 ? 2000 + +m[3] : +m[3]) : new Date().getFullYear();
+    return buildIso(year, +m[1] - 1, +m[2], !!m[3]);
+  }
+  return null;
 };
 
 /* ============================================================
@@ -2003,12 +2039,15 @@ function OrderRequests({ catalog, orders, setOrders, meta, setMeta, customers, s
       const payMethod = pm.payment
         ? (/gcash/i.test(pm.payment) ? 'Gcash' : /cash/i.test(pm.payment) ? 'Cash' : 'Gcash')
         : 'Gcash';
+      // Honor the customer's requested delivery day. Fall back to the next
+      // scheduled batch only if their preferred date can't be parsed.
+      const requestedBatch = parsePreferredBatch(pm.deliveryDate) || suggestedBatch();
       const order = {
         id, date: today(),
         customer: req.customer_name, phone: req.phone,
         payment_status: 'Unpaid', payment_method: payMethod,
         amount_paid: '',
-        delivery_status: 'Pending', delivery_batch: suggestedBatch(),
+        delivery_status: 'Pending', delivery_batch: requestedBatch,
         // Structured fields — each surface picks what it needs (see orderDetails).
         source: 'online',
         online_ref: reqRef(req) || '',
