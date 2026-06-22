@@ -51,7 +51,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v9.4 · Preferred-date backfill';
+const APP_VERSION = 'v9.5 · Fresh payment + Gcash default';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -2465,8 +2465,8 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, customers, setCus
   const [pickedFromSaved, setPickedFromSaved] = useState(false);
   const [pendingConflict, setPendingConflict] = useState(null);
   const [showSuggest, setShowSuggest] = useState(false);
-  const [paymentStatus, setPaymentStatus] = useState('Paid');
-  const [paymentMethod, setPaymentMethod] = useState('Cash');
+  const [paymentStatus, setPaymentStatus] = useState('Unpaid');
+  const [paymentMethod, setPaymentMethod] = useState('Gcash');
   const [amountPaid, setAmountPaid] = useState('');
   const [justSaved, setJustSaved] = useState(null);
   const [deliveryStatus, setDeliveryStatus] = useState('Pending');
@@ -2521,7 +2521,8 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, customers, setCus
     setCustomer(c.name || '');
     if (c.phone) setPhone(c.phone);
     if (c.address) setAddress(c.address);
-    if (c.payment && PAYMENT_METHODS.includes(c.payment)) setPaymentMethod(c.payment);
+    // Payment is treated fresh every order — never carried over from the saved
+    // customer. Each order starts Unpaid with the GCash default.
     setInternalNotes(c.notes || '');
     setPickedFromSaved(true);
     setShowSuggest(false);
@@ -2563,7 +2564,7 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, customers, setCus
   const resetForm = () => {
     setCustomer(''); setPhone(''); setNotes(''); setAddress(''); setInternalNotes(''); setPickedFromSaved(false);
     setItems([{ product: '', qty: 1, note: '', wholesale: false }]);
-    setPaymentStatus('Paid'); setPaymentMethod('Cash'); setAmountPaid('');
+    setPaymentStatus('Unpaid'); setPaymentMethod('Gcash'); setAmountPaid('');
     setDeliveryStatus('Pending'); setWholesaleOrder(false);
     setError(''); setShowSuggest(false);
     // Order Date and Delivery Batch are kept on purpose — a run of manual
@@ -2578,7 +2579,7 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, customers, setCus
     if (!name) return null;
     const fields = {
       name, phone: phone.trim(), messenger: '', address: address.trim(),
-      payment: paymentStatus !== 'Unpaid' ? paymentMethod : '', notes: internalNotes.trim(),
+      notes: internalNotes.trim(),
     };
     const match = findCustomerMatch(customers, name, fields.phone);
     if (!match) {
@@ -2589,8 +2590,7 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, customers, setCus
     const changed =
       (fields.address && fields.address !== (match.address || '')) ||
       (fields.phone && fields.phone !== (match.phone || '')) ||
-      (fields.notes && fields.notes !== (match.notes || '')) ||
-      (fields.payment && fields.payment !== (match.payment || ''));
+      (fields.notes && fields.notes !== (match.notes || ''));
     return changed ? { matchId: match.id, matchName: match.name, fields } : null;
   };
 
@@ -2605,7 +2605,6 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, customers, setCus
           name: pc.fields.name || ex.name,
           phone: pc.fields.phone || ex.phone,
           address: pc.fields.address || ex.address,
-          payment: pc.fields.payment || ex.payment,
           notes: pc.fields.notes || ex.notes,
         } };
       });
@@ -2634,8 +2633,9 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, customers, setCus
     const order = {
       id, date, customer: customer.trim(), phone: phone.trim(),
       payment_status: paymentStatus,
-      // No payment method when nothing has been collected yet.
-      payment_method: paymentStatus === 'Unpaid' ? '' : paymentMethod,
+      // Keep the chosen method even when unpaid, so the invoice can show the
+      // GCash QR for the customer to pay. Status (Unpaid) tracks payment itself.
+      payment_method: paymentMethod,
       // Partial orders remember how much was actually paid (used by Orders,
       // the Dashboard "owed" total, and Batch Money Check's "collected").
       amount_paid: paymentStatus === 'Partial' ? (Number(amountPaid) || 0) : '',
@@ -2899,17 +2899,15 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, customers, setCus
                 </div>
               )}
 
-              {/* Payment method only matters once money has been collected. */}
-              {paymentStatus === 'Unpaid' ? (
-                <div>
-                  <Label>Payment Method</Label>
-                  <div className="px-3 py-2 text-sm rounded-md" style={{ background: THEME.bg, color: THEME.inkSoft, border: `1px dashed ${THEME.line}` }}>
-                    Not collected yet.
-                  </div>
-                </div>
-              ) : (
-                <div><Label>Payment Method</Label><Select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} options={PAYMENT_METHODS} /></div>
-              )}
+              {/* Payment method = how they'll pay (drives the GCash QR on the
+                  invoice). Valid even when unpaid — status tracks collection. */}
+              <div>
+                <Label>Payment Method</Label>
+                <Select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} options={PAYMENT_METHODS} />
+                {paymentStatus === 'Unpaid' && (
+                  <div className="text-xs mt-1.5" style={{ color: THEME.inkSoft }}>Not collected yet — this is how they'll pay. GCash shows the QR on the invoice.</div>
+                )}
+              </div>
 
               <div><Label>Delivery Status</Label><Select value={deliveryStatus} onChange={(e) => setDeliveryStatus(e.target.value)} options={DELIVERY_STATUSES} /></div>
               <div>
@@ -3258,7 +3256,7 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
       customer: order.customer || '',
       phone: order.phone || '',
       payment_status: order.payment_status || 'Paid',
-      payment_method: order.payment_method || 'Cash',
+      payment_method: order.payment_method || 'Gcash',
       delivery_status: order.delivery_status || 'Pending',
       delivery_batch: order.delivery_batch || '',
       delivery_address: d.address || '',
@@ -3336,7 +3334,7 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
       customer: draft.customer.trim(),
       phone: draft.phone.trim(),
       payment_status: draft.payment_status,
-      payment_method: draft.payment_status === 'Unpaid' ? '' : draft.payment_method,
+      payment_method: draft.payment_method,
       delivery_status: draft.delivery_status,
       delivery_batch: draft.delivery_batch || '',
       delivery_address: (draft.delivery_address || '').trim(),
@@ -3607,7 +3605,7 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
           <div>
             <Label>Payment Method</Label>
             <Select
-              value={editing ? draft.payment_method : order.payment_method}
+              value={editing ? draft.payment_method : (order.payment_method || 'Gcash')}
               onChange={(e) => editing ? setDraft({ ...draft, payment_method: e.target.value }) : onUpdate({ payment_method: e.target.value })}
               options={PAYMENT_METHODS} />
           </div>
@@ -4179,8 +4177,7 @@ function PrintableView({ order, mode, onBack }) {
         {isInvoice && (() => {
           const d = orderDetails(order);
           const deliveryWhen = order.delivery_batch ? batchLabel(order.delivery_batch) : (d.preferredDate || '');
-          const payment = order.payment_method || d.paymentMethod;
-          if (!deliveryWhen && !payment && !d.customerNote) return null;
+          if (!deliveryWhen && !d.customerNote) return null;
           return (
             <div className="mt-6 pt-4 text-sm space-y-1" style={{ borderTop: `1px solid ${THEME.line}` }}>
               {deliveryWhen && (
@@ -4188,9 +4185,6 @@ function PrintableView({ order, mode, onBack }) {
                   <span style={{ color: THEME.inkSoft }}>Delivery: </span>
                   <span style={{ color: THEME.ink }}>{deliveryWhen}{d.preferredTime ? ` · ${d.preferredTime}` : ''}</span>
                 </div>
-              )}
-              {payment && (
-                <div><span style={{ color: THEME.inkSoft }}>Payment: </span><span style={{ color: THEME.ink }}>{payment}</span></div>
               )}
               {d.customerNote && (
                 <div><span style={{ color: THEME.inkSoft }}>Customer Note: </span><span style={{ color: THEME.ink }}>{d.customerNote}</span></div>
@@ -4201,7 +4195,7 @@ function PrintableView({ order, mode, onBack }) {
 
           {/* GCash payment strip — only when the order is actually paid via GCash.
               Stacks cleanly on a phone; stays side-by-side in the saved image. */}
-          {isInvoice && /gcash/i.test(order.payment_method || orderDetails(order).paymentMethod || '') && (
+          {isInvoice && /gcash/i.test(order.payment_method || 'Gcash') && (
             <div className={`mt-8 px-4 py-4 rounded-md flex gap-4 ${exporting ? 'flex-row items-center' : 'flex-col sm:flex-row sm:items-center'}`}
               style={{ background: THEME.brandBg, border: `1px solid ${THEME.line}` }}>
               <div className="flex items-center gap-3 flex-shrink-0">
