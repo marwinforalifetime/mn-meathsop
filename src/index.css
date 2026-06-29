@@ -109,3 +109,13 @@ body {
 /* App-like feel on mobile/PWA: kill double-tap zoom, stop pull-to-zoom on UI.
    Text stays selectable so admins can still copy order IDs, addresses, etc. */
 html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; touch-action: manipulation; }
+
+/* ── Tactile button press (v9.7) ─────────────────────────────────────
+   Every button gives a quick spring-back on press so taps feel physical.
+   Btn-based controls animate via their Tailwind `transition`; plain
+   buttons use this global timing. Honors reduced-motion. */
+button { transition: transform 0.12s cubic-bezier(0.34, 1.56, 0.64, 1); }
+button:active { transform: scale(0.95); }
+@media (prefers-reduced-motion: reduce) {
+  button:active { transform: none; }
+}

@@ -51,7 +51,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v9.6 · Batch year fix + prev batch';
+const APP_VERSION = 'v9.7 · Tactile press + batch chip state';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -301,7 +301,7 @@ function Btn({ children, onClick, variant = 'primary', size = 'md', disabled, ty
   const sizes = { sm: 'px-3 py-1.5 text-sm', md: 'px-4 py-2 text-sm', lg: 'px-5 py-2.5' };
   return (
     <button type={type} onClick={onClick} disabled={disabled}
-      className={`${sizes[size]} font-medium rounded-lg transition-opacity ${disabled ? 'opacity-40 cursor-not-allowed' : 'hover:opacity-85 cursor-pointer'} ${className}`}
+      className={`${sizes[size]} font-medium rounded-lg transition ${disabled ? 'opacity-40 cursor-not-allowed' : 'hover:opacity-85 cursor-pointer'} ${className}`}
       style={styles[variant]}>
       {children}
     </button>
@@ -4255,6 +4255,7 @@ function PrintableView({ order, mode, onBack }) {
 function Pickup({ orders, catalog }) {
   const [selected, setSelected] = useState(new Set());
   const [picked, setPicked] = useState(new Set());   // products ticked off at the supplier (session-only)
+  const [activeBatch, setActiveBatch] = useState(null);   // which batch chip is highlighted
   const productByName = useMemo(() => Object.fromEntries((catalog || []).map(p => [p.name, p])), [catalog]);
   // Always use the current supplier cost from the catalog (what you pay today).
   const effectiveCost = (order, it) => {
@@ -4276,9 +4277,10 @@ function Pickup({ orders, catalog }) {
     else next.add(id);
     setSelected(next);
     setPicked(new Set());   // selection changed -> restart the shopping checklist
+    setActiveBatch(null);   // manual change → no single batch is "active"
   };
-  const selectAll = () => { setSelected(new Set(ordersList.map(o => o.id))); setPicked(new Set()); };
-  const clear = () => { setSelected(new Set()); setPicked(new Set()); };
+  const selectAll = () => { setSelected(new Set(ordersList.map(o => o.id))); setPicked(new Set()); setActiveBatch(null); };
+  const clear = () => { setSelected(new Set()); setPicked(new Set()); setActiveBatch(null); };
   // The real workflow: "select everything for Saturday" in one tap.
   const upcomingBatches = useMemo(() => {
     const todayIso = today();
@@ -4296,6 +4298,7 @@ function Pickup({ orders, catalog }) {
   const selectBatch = (batch) => {
     setSelected(new Set(ordersList.filter(o => o.delivery_batch === batch).map(o => o.id)));
     setPicked(new Set());
+    setActiveBatch(batch);
   };
   const togglePicked = (product) => {
     const next = new Set(picked);
@@ -4342,13 +4345,16 @@ function Pickup({ orders, catalog }) {
             <div className="text-xs mb-3" style={{ color: THEME.inkSoft }}>{selected.size} selected</div>
             {upcomingBatches.length > 0 && (
               <div className="flex flex-wrap gap-1.5 mb-3">
-                {upcomingBatches.map(([batch, n]) => (
+                {upcomingBatches.map(([batch, n]) => {
+                  const on = activeBatch === batch;
+                  return (
                   <button key={batch} onClick={() => selectBatch(batch)}
                     className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-full font-medium"
-                    style={{ background: THEME.brandBg, color: THEME.brand, border: `1px solid ${THEME.line}` }}>
+                    style={{ background: on ? THEME.brand : THEME.brandBg, color: on ? 'white' : THEME.brand, border: `1px solid ${on ? THEME.brand : THEME.line}` }}>
                     <Truck size={11} /> {batchLabel(batch)} ({n})
                   </button>
-                ))}
+                  );
+                })}
               </div>
             )}
             <div className="max-h-96 overflow-y-auto overflow-x-auto -mx-2">
@@ -4460,6 +4466,7 @@ function SalesCheck({ orders, catalog, privacy }) {
     return Number(it.cost) || 0;
   };
   const [selected, setSelected] = useState(new Set());
+  const [activeBatch, setActiveBatch] = useState(null);   // which batch chip is highlighted
   const m = (n) => privacy ? '₱•••••' : peso(n);
 
   const ordersList = useMemo(
@@ -4474,9 +4481,10 @@ function SalesCheck({ orders, catalog, privacy }) {
     if (next.has(id)) next.delete(id);
     else next.add(id);
     setSelected(next);
+    setActiveBatch(null);
   };
-  const selectAll = () => setSelected(new Set(ordersList.map(o => o.id)));
-  const clear = () => setSelected(new Set());
+  const selectAll = () => { setSelected(new Set(ordersList.map(o => o.id))); setActiveBatch(null); };
+  const clear = () => { setSelected(new Set()); setActiveBatch(null); };
   // Quick-select an entire delivery batch (e.g. "everything for Saturday").
   const upcomingBatches = useMemo(() => {
     const todayIso = today();
@@ -4491,7 +4499,7 @@ function SalesCheck({ orders, catalog, privacy }) {
     const dates = prev ? [prev, ...upcoming] : upcoming;   // previous batch first
     return dates.map((b) => [b, counts[b] || 0]);
   }, [ordersList]);
-  const selectBatch = (batch) => setSelected(new Set(ordersList.filter(o => o.delivery_batch === batch).map(o => o.id)));
+  const selectBatch = (batch) => { setSelected(new Set(ordersList.filter(o => o.delivery_batch === batch).map(o => o.id))); setActiveBatch(batch); };
 
   const rollup = useMemo(() => {
     const byProduct = {};
@@ -4532,13 +4540,16 @@ function SalesCheck({ orders, catalog, privacy }) {
             </div>
             {upcomingBatches.length > 0 && (
               <div className="flex flex-wrap gap-1.5 mb-3">
-                {upcomingBatches.map(([batch, n]) => (
+                {upcomingBatches.map(([batch, n]) => {
+                  const on = activeBatch === batch;
+                  return (
                   <button key={batch} onClick={() => selectBatch(batch)}
                     className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-full font-medium"
-                    style={{ background: THEME.brandBg, color: THEME.brand, border: `1px solid ${THEME.line}` }}>
+                    style={{ background: on ? THEME.brand : THEME.brandBg, color: on ? 'white' : THEME.brand, border: `1px solid ${on ? THEME.brand : THEME.line}` }}>
                     <Truck size={11} /> {batchLabel(batch)} ({n})
                   </button>
-                ))}
+                  );
+                })}
               </div>
             )}
             <div className="text-xs mb-3" style={{ color: THEME.inkSoft }}>{selected.size} selected</div>
