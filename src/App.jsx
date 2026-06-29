@@ -51,7 +51,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v9.5 · Fresh payment + Gcash default';
+const APP_VERSION = 'v9.6 · Batch year fix + prev batch';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -141,33 +141,43 @@ const batchLabel = (iso) => {
 // can't be parsed, so callers can fall back to the suggested batch. When no year
 // is given, assume the current year, rolling to next year if the date is past.
 const MONTH_NAMES = ['january','february','march','april','may','june','july','august','september','october','november','december'];
-const parsePreferredBatch = (text) => {
+const parsePreferredBatch = (text, refIso) => {
   if (!text) return null;
   const s = String(text).trim();
-  const buildIso = (year, monthIdx, day, hadYear) => {
+  const ref = new Date((refIso || today()) + 'T00:00:00');
+  // Build an ISO date. When no year is written, pick the year (last / this /
+  // next) whose date lands CLOSEST to the reference. This keeps "June 27"
+  // anchored near when the order was placed instead of blindly jumping a year
+  // ahead — the bug that pushed a past Saturday order into next-year Sunday.
+  const pick = (monthIdx, day, explicitYear) => {
     if (monthIdx < 0 || monthIdx > 11 || day < 1 || day > 31) return null;
-    let d = new Date(year, monthIdx, day);
-    if (isNaN(d.getTime())) return null;
-    if (!hadYear) {
-      const t = new Date(today() + 'T00:00:00');
-      if (d < t) d = new Date(year + 1, monthIdx, day); // preferred date already passed → next year
+    if (explicitYear) {
+      const d = new Date(explicitYear, monthIdx, day);
+      return isNaN(d.getTime()) ? null : isoLocal(d);
     }
-    return isoLocal(d);
+    let best = null, bestDiff = Infinity;
+    for (const y of [ref.getFullYear() - 1, ref.getFullYear(), ref.getFullYear() + 1]) {
+      const d = new Date(y, monthIdx, day);
+      if (isNaN(d.getTime())) continue;
+      const diff = Math.abs(d.getTime() - ref.getTime());
+      if (diff < bestDiff) { bestDiff = diff; best = d; }
+    }
+    return best ? isoLocal(best) : null;
   };
   // ISO: 2026-06-20
   let m = s.match(/(\d{4})-(\d{1,2})-(\d{1,2})/);
-  if (m) return buildIso(+m[1], +m[2] - 1, +m[3], true);
+  if (m) return pick(+m[2] - 1, +m[3], +m[1]);
   // Month name + day (+ optional year): "June 20", "Jun 20, 2026", "Saturday, June 20"
   m = s.match(/([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:[,\s]+(\d{4}))?/);
   if (m) {
     const monthIdx = MONTH_NAMES.findIndex((mo) => mo.slice(0, 3) === m[1].toLowerCase().slice(0, 3));
-    if (monthIdx >= 0) return buildIso(m[3] ? +m[3] : new Date().getFullYear(), monthIdx, +m[2], !!m[3]);
+    if (monthIdx >= 0) return pick(monthIdx, +m[2], m[3] ? +m[3] : null);
   }
   // Numeric: 6/20 or 06/20/2026
   m = s.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/);
   if (m) {
-    const year = m[3] ? (m[3].length === 2 ? 2000 + +m[3] : +m[3]) : new Date().getFullYear();
-    return buildIso(year, +m[1] - 1, +m[2], !!m[3]);
+    const year = m[3] ? (m[3].length === 2 ? 2000 + +m[3] : +m[3]) : null;
+    return pick(+m[1] - 1, +m[2], year);
   }
   return null;
 };
@@ -567,27 +577,33 @@ function MainApp() {
     return () => { cancelled = true; };
   }, []);
 
-  // ── One-time backfill ──────────────────────────────────────────────
-  // Online orders accepted before the preferred-date fix were filed under the
-  // auto-suggested batch instead of the customer's requested day. Move each one
-  // onto its preferred date — but ONLY if it's safe: still an online order,
-  // not yet delivered/cancelled, never manually edited, and the preferred date
-  // both parses and differs from where it sits now. We stamp `batch_fixed` so
-  // this never runs twice and never fights a manual change you make later.
+  // ── One-time correction (runs once per order, then never again) ─────
+  // An earlier date-logic bug rolled some preferred dates a full year forward
+  // (e.g. "June 27" became 2027 instead of 2026), and the old backfill could
+  // re-date orders on every load. This replaces that risky behavior: it ONLY
+  // corrects a batch that sits implausibly far (>120 days) after the order was
+  // created, re-deriving it from the customer's preferred date using the
+  // order's own creation date as the anchor. Everything else is left exactly
+  // as-is — no more silent re-dating on load.
   useEffect(() => {
     if (!loaded) return;
     let changed = false;
     const next = { ...orders };
     Object.values(next).forEach((o) => {
-      if (o.source !== 'online' || o.batch_fixed || o.edited_at) return;
-      if (o.delivery_status === 'Delivered' || o.delivery_status === 'Cancelled') return;
-      const want = parsePreferredBatch(o.preferred_date);
-      if (want && want !== o.delivery_batch) {
-        next[o.id] = { ...o, delivery_batch: want, batch_fixed: true };
-        changed = true;
-      } else {
-        next[o.id] = { ...o, batch_fixed: true }; // mark as checked so we don't re-scan
+      if (o.batch_year_fixed) return;
+      const b = o.delivery_batch;
+      if (!b || typeof b !== 'string' || b.length < 10) { next[o.id] = { ...o, batch_year_fixed: true }; return; }
+      const created = (o.created_at || o.date || '').slice(0, 10) || today();
+      const gapDays = (new Date(b + 'T00:00:00').getTime() - new Date(created + 'T00:00:00').getTime()) / 86400000;
+      if (gapDays > 120 && o.preferred_date) {
+        const fixed = parsePreferredBatch(o.preferred_date, created);
+        if (fixed && fixed !== b) {
+          next[o.id] = { ...o, delivery_batch: fixed, batch_year_fixed: true };
+          changed = true;
+          return;
+        }
       }
+      next[o.id] = { ...o, batch_year_fixed: true };
     });
     if (changed) setOrders(next);
   }, [loaded]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -3005,14 +3021,18 @@ function Orders({ orders, setOrders, productByName, catalog }) {
   const availableBatches = useMemo(() => {
     const set = new Set();
     const todayIso = today();
-    // Only include batches from orders that are today or in the future —
-    // past delivery dates clutter the filter without adding value.
+    let prev = '';   // most recent past batch that still has orders
     Object.values(orders).forEach(o => {
-      if (o.delivery_batch && o.delivery_batch >= todayIso && o.delivery_status !== 'Cancelled') {
-        set.add(o.delivery_batch);
+      if (!o.delivery_batch || o.delivery_status === 'Cancelled') return;
+      if (o.delivery_batch >= todayIso) {
+        set.add(o.delivery_batch);                 // today + upcoming
+      } else if (o.delivery_batch > prev) {
+        prev = o.delivery_batch;                   // track the latest past batch
       }
     });
-    // Always include next Tue and next Sat as choices, even with zero orders.
+    // Include the previous batch (one back) so you can still review it,
+    // plus next Tue and next Sat as choices even with zero orders.
+    if (prev) set.add(prev);
     set.add(nextTuesday());
     set.add(nextSaturday());
     return Array.from(set).sort();
@@ -4261,12 +4281,17 @@ function Pickup({ orders, catalog }) {
   const clear = () => { setSelected(new Set()); setPicked(new Set()); };
   // The real workflow: "select everything for Saturday" in one tap.
   const upcomingBatches = useMemo(() => {
-    const byBatch = {};
+    const todayIso = today();
+    const counts = {};
+    let prev = '';   // most recent past batch, for review
     ordersList.forEach((o) => {
-      if (!o.delivery_batch || o.delivery_batch < today()) return;
-      byBatch[o.delivery_batch] = (byBatch[o.delivery_batch] || 0) + 1;
+      if (!o.delivery_batch) return;
+      counts[o.delivery_batch] = (counts[o.delivery_batch] || 0) + 1;
+      if (o.delivery_batch < todayIso && o.delivery_batch > prev) prev = o.delivery_batch;
     });
-    return Object.entries(byBatch).sort(([a], [b]) => a.localeCompare(b)).slice(0, 3);
+    const upcoming = Object.keys(counts).filter((b) => b >= todayIso).sort().slice(0, 3);
+    const dates = prev ? [prev, ...upcoming] : upcoming;   // previous batch first
+    return dates.map((b) => [b, counts[b] || 0]);
   }, [ordersList]);
   const selectBatch = (batch) => {
     setSelected(new Set(ordersList.filter(o => o.delivery_batch === batch).map(o => o.id)));
@@ -4454,12 +4479,17 @@ function SalesCheck({ orders, catalog, privacy }) {
   const clear = () => setSelected(new Set());
   // Quick-select an entire delivery batch (e.g. "everything for Saturday").
   const upcomingBatches = useMemo(() => {
-    const byBatch = {};
+    const todayIso = today();
+    const counts = {};
+    let prev = '';   // most recent past batch, for review
     ordersList.forEach((o) => {
-      if (!o.delivery_batch || o.delivery_batch < today()) return;
-      byBatch[o.delivery_batch] = (byBatch[o.delivery_batch] || 0) + 1;
+      if (!o.delivery_batch) return;
+      counts[o.delivery_batch] = (counts[o.delivery_batch] || 0) + 1;
+      if (o.delivery_batch < todayIso && o.delivery_batch > prev) prev = o.delivery_batch;
     });
-    return Object.entries(byBatch).sort(([a], [b]) => a.localeCompare(b)).slice(0, 3);
+    const upcoming = Object.keys(counts).filter((b) => b >= todayIso).sort().slice(0, 3);
+    const dates = prev ? [prev, ...upcoming] : upcoming;   // previous batch first
+    return dates.map((b) => [b, counts[b] || 0]);
   }, [ordersList]);
   const selectBatch = (batch) => setSelected(new Set(ordersList.filter(o => o.delivery_batch === batch).map(o => o.id)));
 
