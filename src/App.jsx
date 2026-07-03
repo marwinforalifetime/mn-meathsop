@@ -51,7 +51,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v9.7 · Tactile press + batch chip state';
+const APP_VERSION = 'v9.8 · Multi-device sync engine';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -141,6 +141,92 @@ const batchLabel = (iso) => {
 // can't be parsed, so callers can fall back to the suggested batch. When no year
 // is given, assume the current year, rolling to next year if the date is past.
 const MONTH_NAMES = ['january','february','march','april','may','june','july','august','september','october','november','december'];
+/* ============================================================
+   MULTI-DEVICE MERGE ENGINE
+   ============================================================
+   The whole workspace syncs as one JSON blob. Previously every save
+   OVERWROTE that blob, so a device with stale data erased newer orders
+   from other devices. Now every save and every load MERGES instead:
+   - orders/customers: union by id, newest `updated_at` wins conflicts
+   - deletions: recorded as tombstones in meta so they don't resurrect
+   - expenses: union by id, newest updated_at wins
+   - meta.lastOrderNum: max of both (prevents duplicate ORD numbers)
+   - catalog & other low-contention data: the side with the newer
+     domain stamp wins whole (edits happen on one device in practice)
+   Nothing is ever lost by a stale device saving: its missing orders
+   come back from the cloud copy during the merge.                    */
+const orderStamp = (o) => o?.updated_at || o?.edited_at || o?.created_at || '';
+
+const mergeById = (base = {}, incoming = {}, tombstones = {}) => {
+  const out = {};
+  const ids = new Set([...Object.keys(base || {}), ...Object.keys(incoming || {})]);
+  ids.forEach((id) => {
+    if (tombstones[id]) return; // deleted on some device — stays deleted
+    const a = base?.[id], b = incoming?.[id];
+    if (a && b) out[id] = orderStamp(b) >= orderStamp(a) ? b : a;
+    else out[id] = a || b;
+  });
+  return out;
+};
+
+const mergeArrayById = (base = [], incoming = [], tombstones = {}) => {
+  const map = {};
+  (base || []).forEach((e) => { if (e && e.id != null && !tombstones[e.id]) map[e.id] = e; });
+  (incoming || []).forEach((e) => {
+    if (!e || e.id == null || tombstones[e.id]) return;
+    const prev = map[e.id];
+    if (!prev || orderStamp(e) >= orderStamp(prev)) map[e.id] = e;
+  });
+  return Object.values(map);
+};
+
+const mergeTombstones = (a = {}, b = {}) => {
+  const out = { ...(a || {}) };
+  Object.entries(b || {}).forEach(([id, ts]) => { if (!out[id] || ts > out[id]) out[id] = ts; });
+  // Keep the registry small: newest 400 entries are plenty.
+  const entries = Object.entries(out).sort((x, y) => (y[1] || '').localeCompare(x[1] || '')).slice(0, 400);
+  return Object.fromEntries(entries);
+};
+
+// domainStamps live in meta.domainStamps = { catalog: iso, inventory: iso, ... }
+const newerDomain = (key, metaA, metaB) =>
+  ((metaB?.domainStamps?.[key] || '') > (metaA?.domainStamps?.[key] || ''));
+
+// Merge two full workspace payloads. `incoming` is "the other side".
+// On ties (no stamps at all), `base` wins — callers order args accordingly.
+const mergeAppState = (base, incoming) => {
+  if (!incoming) return base;
+  if (!base) return incoming;
+  const delOrders = mergeTombstones(base.meta?.deletedOrders, incoming.meta?.deletedOrders);
+  const delExpenses = mergeTombstones(base.meta?.deletedExpenses, incoming.meta?.deletedExpenses);
+  const pickDomain = (key) => (newerDomain(key, base.meta, incoming.meta) ? incoming[key] : base[key]) ?? base[key] ?? incoming[key];
+  const domainStamps = { ...(incoming.meta?.domainStamps || {}), ...(base.meta?.domainStamps || {}) };
+  Object.entries(incoming.meta?.domainStamps || {}).forEach(([k, v]) => { if ((v || '') > (domainStamps[k] || '')) domainStamps[k] = v; });
+  return {
+    catalog: pickDomain('catalog'),
+    inventory: pickDomain('inventory'),
+    priceHistory: (() => {   // append-only: union by value
+      const seen = new Set(); const out = [];
+      [...(base.priceHistory || []), ...(incoming.priceHistory || [])].forEach((e) => {
+        const k = JSON.stringify(e); if (!seen.has(k)) { seen.add(k); out.push(e); }
+      });
+      return out;
+    })(),
+    supplierPayments: mergeArrayById(base.supplierPayments, incoming.supplierPayments, {}),
+    dayCloses: { ...(incoming.dayCloses || {}), ...(base.dayCloses || {}) },
+    orders: mergeById(base.orders, incoming.orders, delOrders),
+    expenses: mergeArrayById(base.expenses, incoming.expenses, delExpenses),
+    customers: mergeById(base.customers, incoming.customers, {}),
+    meta: {
+      ...(incoming.meta || {}), ...(base.meta || {}),
+      lastOrderNum: Math.max(Number(base.meta?.lastOrderNum) || 0, Number(incoming.meta?.lastOrderNum) || 0),
+      deletedOrders: delOrders,
+      deletedExpenses: delExpenses,
+      domainStamps,
+    },
+  };
+};
+
 const parsePreferredBatch = (text, refIso) => {
   if (!text) return null;
   const s = String(text).trim();
@@ -521,16 +607,26 @@ function MainApp() {
           (cloud.expenses && cloud.expenses.length > 0) ||
           cloud.catalog
         )) {
-          // Cloud has real data — it's the source of truth.
-          setCatalog(cloud.catalog || SEED_PRODUCTS);
-          setOrders(cloud.orders || {});
-          setExpenses(cloud.expenses || []);
-          setInventory(cloud.inventory || Object.fromEntries(SEED_PRODUCTS.map(p => [p.name, { qty: 0, dateAdded: '', notes: '' }])));
-          setPriceHistory(cloud.priceHistory || []);
-          setSupplierPayments(cloud.supplierPayments || []);
-          setDayCloses(cloud.dayCloses || {});
-          setCustomers(cloud.customers || {});
-          setMeta(cloud.meta || { lastOrderNum: 0 });
+          // Cloud has real data. MERGE it with what this device had locally
+          // (instead of replacing) so a device that made offline/unsynced
+          // changes doesn't lose them — and a stale device instantly gains
+          // everything newer from other devices.
+          const local = {
+            catalog: localCatalog, orders: localOrders || {}, expenses: localExpenses || [],
+            inventory: localInventory, priceHistory: localPriceHistory || [],
+            supplierPayments: localSupplierPayments || [], dayCloses: localDayCloses || {},
+            customers: localCustomers || {}, meta: localMeta || { lastOrderNum: 0 },
+          };
+          const merged = hasLocalData ? mergeAppState(cloud, local) : cloud; // cloud wins ties
+          setCatalog(merged.catalog || SEED_PRODUCTS);
+          setOrders(merged.orders || {});
+          setExpenses(merged.expenses || []);
+          setInventory(merged.inventory || Object.fromEntries(SEED_PRODUCTS.map(p => [p.name, { qty: 0, dateAdded: '', notes: '' }])));
+          setPriceHistory(merged.priceHistory || []);
+          setSupplierPayments(merged.supplierPayments || []);
+          setDayCloses(merged.dayCloses || {});
+          setCustomers(merged.customers || {});
+          setMeta(merged.meta || { lastOrderNum: 0 });
           usedCloud = true;
           setSyncStatus('cloud');
         } else {
@@ -598,7 +694,7 @@ function MainApp() {
       if (gapDays > 120 && o.preferred_date) {
         const fixed = parsePreferredBatch(o.preferred_date, created);
         if (fixed && fixed !== b) {
-          next[o.id] = { ...o, delivery_batch: fixed, batch_year_fixed: true };
+          next[o.id] = { ...o, delivery_batch: fixed, batch_year_fixed: true, updated_at: new Date().toISOString() };
           changed = true;
           return;
         }
@@ -607,6 +703,61 @@ function MainApp() {
     });
     if (changed) setOrders(next);
   }, [loaded]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Stamp low-contention domains whenever they change so the merge's
+  // last-writer-wins picks the genuinely newest copy across devices.
+  const skipStampRef = useRef(true);
+  useEffect(() => {
+    if (!loaded) { return; }
+    if (skipStampRef.current) { skipStampRef.current = false; return; }
+    setMeta((m) => ({ ...m, domainStamps: { ...(m.domainStamps || {}), catalog: new Date().toISOString() } }));
+  }, [catalog]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!loaded || skipStampRef.current) return;
+    setMeta((m) => ({ ...m, domainStamps: { ...(m.domainStamps || {}), inventory: new Date().toISOString() } }));
+  }, [inventory]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Adopt a merged payload into React state, but only for domains that
+  // actually changed (JSON compare) — avoids pointless re-renders and
+  // save-effect loops.
+  const adoptIfChanged = (merged, current) => {
+    const pairs = [
+      ['catalog', setCatalog], ['orders', setOrders], ['expenses', setExpenses],
+      ['inventory', setInventory], ['priceHistory', setPriceHistory],
+      ['supplierPayments', setSupplierPayments], ['dayCloses', setDayCloses],
+      ['customers', setCustomers], ['meta', setMeta],
+    ];
+    pairs.forEach(([key, set]) => {
+      if (JSON.stringify(merged[key]) !== JSON.stringify(current[key])) set(merged[key]);
+    });
+  };
+
+  // ── PULL LOOP: real-time-ish sync from other devices ────────────────
+  // Every 20s (and whenever the app regains focus), fetch the cloud copy
+  // and merge it in. Combined with merge-on-save, all devices converge
+  // without manual refreshes — no more "old session" overwrites.
+  const pullBusyRef = useRef(false);
+  useEffect(() => {
+    if (!loaded) return;
+    const pull = async () => {
+      if (pullBusyRef.current || saving || document.hidden) return;
+      pullBusyRef.current = true;
+      try {
+        const remote = await cloudLoad();
+        if (remote) {
+          const current = { catalog, orders, expenses, inventory, priceHistory, supplierPayments, dayCloses, customers, meta };
+          const merged = mergeAppState(remote, current); // remote wins ties on pull
+          adoptIfChanged(merged, current);
+        }
+      } catch (e) { /* offline — try again next tick */ }
+      pullBusyRef.current = false;
+    };
+    const iv = setInterval(pull, 20000);
+    const onVis = () => { if (!document.hidden) pull(); };
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('focus', onVis);
+    return () => { clearInterval(iv); document.removeEventListener('visibilitychange', onVis); window.removeEventListener('focus', onVis); };
+  }, [loaded, saving, catalog, orders, expenses, inventory, priceHistory, supplierPayments, dayCloses, customers, meta]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -624,14 +775,25 @@ function MainApp() {
     lastSaveRef.current = Date.now();
 
     // Then push to the cloud (debounced so rapid edits don't spam it).
+    // MERGE-ON-SAVE: read the cloud copy first and merge it with this
+    // device's data, so a stale device can never erase newer orders made
+    // on another device. If the merge pulled in anything new from the
+    // cloud, adopt it locally too — that's the "other device's changes
+    // appear here" half of the sync.
     let cancelled = false;
     const t = setTimeout(async () => {
+      const local = { catalog, orders, expenses, inventory, priceHistory, supplierPayments, dayCloses, customers, meta };
       try {
-        await cloudSave({ catalog, orders, expenses, inventory, priceHistory, supplierPayments, dayCloses, customers, meta });
-        if (!cancelled) {
-          setSyncStatus('cloud');
-          setSaving(false);
-        }
+        let payload = local;
+        try {
+          const remote = await cloudLoad();
+          if (remote) payload = mergeAppState(local, remote); // local wins ties; union keeps remote-new
+        } catch (e) { /* cloud read failed — save local as before */ }
+        await cloudSave(payload);
+        if (cancelled) return;
+        adoptIfChanged(payload, local);
+        setSyncStatus('cloud');
+        setSaving(false);
       } catch (e) {
         if (!cancelled) {
           // Saved locally but cloud failed — data is NOT lost, just not synced.
@@ -905,10 +1067,10 @@ function MainApp() {
           {view === 'dashboard' && <Dashboard orders={orders} setOrders={setOrders} expenses={expenses} catalog={catalog} setView={setView} privacy={privacy} setPrivacy={setPrivacy} currentUser={currentUser} theme={theme} setTheme={setTheme} />}
           {view === 'new' && <NewOrder catalog={catalog} meta={meta} setMeta={setMeta} orders={orders} setOrders={setOrders} customers={customers} setCustomers={setCustomers} onSaved={() => setView('orders')} />}
           {view === 'requests' && <OrderRequests catalog={catalog} orders={orders} setOrders={setOrders} meta={meta} setMeta={setMeta} customers={customers} setCustomers={setCustomers} />}
-          {view === 'orders' && <Orders orders={orders} setOrders={setOrders} productByName={productByName} catalog={catalog} />}
+          {view === 'orders' && <Orders orders={orders} setOrders={setOrders} productByName={productByName} catalog={catalog} setMeta={setMeta} />}
           {view === 'pickup' && <Pickup orders={orders} catalog={catalog} />}
           {view === 'salescheck' && <SalesCheck orders={orders} catalog={catalog} privacy={privacy} />}
-          {view === 'expenses' && <Expenses expenses={expenses} setExpenses={setExpenses} />}
+          {view === 'expenses' && <Expenses expenses={expenses} setExpenses={setExpenses} setMeta={setMeta} />}
           {view === 'products' && <Products catalog={catalog} setCatalog={setCatalog} priceHistory={priceHistory} setPriceHistory={setPriceHistory} />}
           {view === 'restaurantquote' && <RestaurantQuote catalog={catalog} setCatalog={setCatalog} qtys={quoteQtys} setQtys={setQuoteQtys} />}
           {view === 'profitcheck' && <QuoteProfitCheck catalog={catalog} privacy={privacy} qtys={quoteQtys} setQtys={setQuoteQtys} />}
@@ -1202,7 +1364,7 @@ function Dashboard({ orders, setOrders, expenses, catalog, setView, privacy, set
 
   // Mark an unpaid/partial order as fully paid, straight from the dashboard.
   const markPaid = (id) => {
-    setOrders((prev) => prev[id] ? { ...prev, [id]: { ...prev[id], payment_status: 'Paid', amount_paid: '' } } : prev);
+    setOrders((prev) => prev[id] ? { ...prev, [id]: { ...prev[id], payment_status: 'Paid', amount_paid: '', updated_at: new Date().toISOString() } } : prev);
   };
 
   // tel:/sms: link only when the contact is an actual phone number (not a
@@ -2099,7 +2261,7 @@ function OrderRequests({ catalog, orders, setOrders, meta, setMeta, customers, s
         customer_note: pm.freeNote || '',
         internal_notes: '',
         notes: '',
-        items: snapshotItems, created_at: new Date().toISOString(),
+        items: snapshotItems, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
       };
       setOrders({ ...orders, [id]: order });
       setMeta({ ...meta, lastOrderNum: newNum });
@@ -2600,7 +2762,7 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, customers, setCus
     const match = findCustomerMatch(customers, name, fields.phone);
     if (!match) {
       const id = makeCustomerId();
-      setCustomers((prev) => ({ ...prev, [id]: { id, ...fields } }));
+      setCustomers((prev) => ({ ...prev, [id]: { id, ...fields, updated_at: new Date().toISOString() } }));
       return null;
     }
     const changed =
@@ -2622,6 +2784,7 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, customers, setCus
           phone: pc.fields.phone || ex.phone,
           address: pc.fields.address || ex.address,
           notes: pc.fields.notes || ex.notes,
+          updated_at: new Date().toISOString(),
         } };
       });
     } else if (action === 'new') {
@@ -2666,7 +2829,7 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, customers, setCus
       customer_note: notes.trim(),
       internal_notes: internalNotes.trim(),
       notes: '',
-      items: snapshotItems, created_at: new Date().toISOString(),
+      items: snapshotItems, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     };
     setOrders({ ...orders, [id]: order });
     setMeta({ ...meta, lastOrderNum: newNum });
@@ -2989,7 +3152,7 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, customers, setCus
    ORDERS LIST
    ============================================================ */
 
-function Orders({ orders, setOrders, productByName, catalog }) {
+function Orders({ orders, setOrders, productByName, catalog, setMeta }) {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all');
   const [deliveryFilter, setDeliveryFilter] = useState('all');
@@ -3043,11 +3206,14 @@ function Orders({ orders, setOrders, productByName, catalog }) {
     const next = { ...orders };
     delete next[id];
     setOrders(next);
+    // Tombstone so the deletion survives multi-device merging (otherwise the
+    // cloud copy would just bring the order back on the next sync).
+    setMeta((m) => ({ ...m, deletedOrders: { ...(m.deletedOrders || {}), [id]: new Date().toISOString() } }));
     setSelected(null);
   };
 
   const updateOrderStatus = (id, patch) => {
-    setOrders({ ...orders, [id]: { ...orders[id], ...patch } });
+    setOrders({ ...orders, [id]: { ...orders[id], ...patch, updated_at: new Date().toISOString() } });
     if (selected && selected.id === id) setSelected({ ...selected, ...patch });
   };
 
@@ -3365,6 +3531,7 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
       amount_paid: draft.payment_status === 'Partial' ? (draft.amount_paid === '' ? '' : Number(draft.amount_paid) || 0) : '',
       items: cleanItems,
       edited_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
     };
     onSaveFull(updated);
     setEditing(false);
@@ -4632,7 +4799,7 @@ function SalesCheck({ orders, catalog, privacy }) {
    EXPENSES
    ============================================================ */
 
-function Expenses({ expenses, setExpenses }) {
+function Expenses({ expenses, setExpenses, setMeta }) {
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState(null);   // null = adding, otherwise editing this id
   const [date, setDate] = useState(today());
@@ -4664,12 +4831,13 @@ function Expenses({ expenses, setExpenses }) {
     if (!description.trim() || !amount || Number(amount) <= 0) return;
     if (editId) {
       setExpenses(expenses.map(e => e.id === editId
-        ? { ...e, date, category, description: description.trim(), amount: Number(amount), payment, notes: notes.trim() }
+        ? { ...e, date, category, description: description.trim(), amount: Number(amount), payment, notes: notes.trim(), updated_at: new Date().toISOString() }
         : e));
     } else {
       const newExpense = {
         id: 'EXP-' + Date.now(), date, category,
         description: description.trim(), amount: Number(amount), payment, notes: notes.trim(),
+        updated_at: new Date().toISOString(),
       };
       setExpenses([newExpense, ...expenses]);
     }
@@ -4679,6 +4847,8 @@ function Expenses({ expenses, setExpenses }) {
   const deleteExpense = (id) => {
     if (!confirm('Delete this expense?')) return;
     setExpenses(expenses.filter(e => e.id !== id));
+    // Tombstone so the deletion survives multi-device merging.
+    setMeta((m) => ({ ...m, deletedExpenses: { ...(m.deletedExpenses || {}), [id]: new Date().toISOString() } }));
   };
 
   // Sort entries by the actual expense date (newest first), so logging a past
