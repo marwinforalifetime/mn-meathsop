@@ -51,7 +51,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v9.8 · Multi-device sync engine';
+const APP_VERSION = 'v9.9 · Batch document export';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -3157,6 +3157,7 @@ function Orders({ orders, setOrders, productByName, catalog, setMeta }) {
   const [filter, setFilter] = useState('all');
   const [deliveryFilter, setDeliveryFilter] = useState('all');
   const [batchFilter, setBatchFilter] = useState('all');
+  const [batchExport, setBatchExport] = useState(false);
   const [selected, setSelected] = useState(null);
   const [printMode, setPrintMode] = useState(null);
   const [pickupMode, setPickupMode] = useState(false);
@@ -3231,6 +3232,13 @@ function Orders({ orders, setOrders, productByName, catalog, setMeta }) {
       .filter(o => o.delivery_batch === batchFilter && o.delivery_status !== 'Cancelled')
       .sort((a, b) => (a.customer || '').localeCompare(b.customer || ''));
     return <PickupMode batch={batchFilter} orders={batchOrders} onBack={() => setPickupMode(false)} />;
+  }
+
+  if (batchExport && batchFilter !== 'all' && batchFilter !== 'unassigned') {
+    const batchOrders = Object.values(orders)
+      .filter(o => o.delivery_batch === batchFilter && o.delivery_status !== 'Cancelled')
+      .sort((a, b) => (a.customer || '').localeCompare(b.customer || ''));
+    return <BatchExportView batchOrders={batchOrders} batch={batchFilter} onBack={() => setBatchExport(false)} />;
   }
 
   return (
@@ -3312,9 +3320,14 @@ function Orders({ orders, setOrders, productByName, catalog, setMeta }) {
             </div>
             {/* Pickup Mode button — only shows when a specific batch is selected */}
             {batchFilter !== 'all' && batchFilter !== 'unassigned' && (
+              <>
               <Btn variant="primary" size="sm" onClick={() => setPickupMode(true)}>
                 <Check size={14} className="inline -mt-0.5 mr-1" /> Pickup Mode
               </Btn>
+              <Btn variant="secondary" size="sm" onClick={() => setBatchExport(true)}>
+                <ImageIcon size={14} className="inline -mt-0.5 mr-1" /> Export Docs
+              </Btn>
+              </>
             )}
           </div>
         </div>
@@ -4094,135 +4107,19 @@ function PickupMode({ batch, orders, onBack }) {
    PRINTABLE INVOICE / SUPPLIER COPY
    ============================================================ */
 
-function PrintableView({ order, mode, onBack }) {
+/* ============================================================
+   ORDER DOCUMENT (shared by single view + batch export)
+   ============================================================
+   The ONE source of truth for how a Supplier Copy / Invoice looks.
+   PrintableView renders it for a single order; BatchExportView
+   renders many of them for a whole delivery batch.                */
+function OrderDocument({ order, mode, exporting = false }) {
   const total = (order.items || []).reduce((s, i) => s + i.qty * i.price, 0);
   const totalQty = (order.items || []).reduce((s, i) => s + Number(i.qty || 0), 0);
   const isInvoice = mode === 'invoice';
-  const docRef = useRef(null);
-  const [savingImg, setSavingImg] = useState(false);
-  const [exporting, setExporting] = useState(false);
-
-  const saveAsImage = async () => {
-    if (!docRef.current) return;
-    setSavingImg(true);
-    // Force the desktop table layout (not the mobile stacked cards) into the
-    // captured image so the saved invoice looks the same on every device.
-    setExporting(true);
-    await new Promise((r) => setTimeout(r, 60));
-    try {
-      const node = docRef.current;
-
-      // ── MOBILE FIX: force a fixed desktop-width render during capture ──
-      // On mobile the invoice renders at phone screen width (~390px on iPhone 12),
-      // which squishes the table columns and distorts the QR aspect ratio.
-      // We temporarily override the node's width to match the web layout (680px),
-      // capture at that size, then restore everything. This makes the exported PNG
-      // identical on all devices — phone, tablet, desktop — every time.
-      const EXPORT_WIDTH = 680;
-      const prevStyles = {
-        width: node.style.width,
-        minWidth: node.style.minWidth,
-        maxWidth: node.style.maxWidth,
-        overflow: node.style.overflow,
-        position: node.style.position,
-      };
-      node.style.width = `${EXPORT_WIDTH}px`;
-      node.style.minWidth = `${EXPORT_WIDTH}px`;
-      node.style.maxWidth = `${EXPORT_WIDTH}px`;
-      node.style.overflow = 'visible';
-      node.style.position = 'relative';
-
-      // Force a reflow so the browser recalculates layout at the new width
-      // before we measure scrollHeight for the capture dimensions.
-      void node.offsetHeight;
-      await new Promise((r) => setTimeout(r, 100));
-
-      // Turn off internal overflow scrollbars so they don't appear in the PNG
-      const scrollables = Array.from(node.querySelectorAll('*')).filter((el) => {
-        const cs = getComputedStyle(el);
-        return cs.overflowX === 'auto' || cs.overflowX === 'scroll' ||
-               cs.overflowY === 'auto' || cs.overflowY === 'scroll' ||
-               cs.overflow === 'auto' || cs.overflow === 'scroll';
-      });
-      const savedOverflow = scrollables.map((el) => ({ el, prev: el.style.overflow }));
-      scrollables.forEach(({ }, i) => { savedOverflow[i].el.style.overflow = 'visible'; });
-
-      const fullWidth = EXPORT_WIDTH;
-      const fullHeight = node.scrollHeight;
-
-      // Force full image decode before capture (logo + QR both base64).
-      // .decode() makes the browser fully prepare the bitmap — required on iOS.
-      const imgs = Array.from(node.querySelectorAll('img'));
-      await Promise.all(imgs.map(async (img) => {
-        try {
-          if (typeof img.decode === 'function') { await img.decode(); return; }
-        } catch (e) { /* decode can reject on some browsers — fall through */ }
-        if (img.complete && img.naturalWidth > 0) return;
-        await new Promise((res) => { img.onload = res; img.onerror = res; });
-      }));
-      // Let fonts settle at the new width
-      await new Promise((r) => setTimeout(r, 300));
-
-      const opts = {
-        quality: 1,
-        pixelRatio: 2,
-        backgroundColor: '#ffffff',
-        width: fullWidth,
-        height: fullHeight,
-        cacheBust: true,
-        style: { margin: '0', transform: 'none' },
-      };
-
-      // iOS Safari renders base64 images unreliably on the FIRST capture.
-      // Triple-pass is the documented workaround — keep the final result.
-      let dataUrl = await toPng(node, opts);
-      dataUrl = await toPng(node, opts);
-      dataUrl = await toPng(node, opts);
-
-      // Restore all overridden styles so the on-screen view goes back to mobile layout
-      savedOverflow.forEach(({ el, prev }) => { el.style.overflow = prev; });
-      node.style.width = prevStyles.width;
-      node.style.minWidth = prevStyles.minWidth;
-      node.style.maxWidth = prevStyles.maxWidth;
-      node.style.overflow = prevStyles.overflow;
-      node.style.position = prevStyles.position;
-
-      const cleanName = (order.customer || 'Customer').replace(/[\\/:*?"<>|]+/g, '').trim();
-      const a = document.createElement('a');
-      a.href = dataUrl;
-      a.download = `${order.id} - ${cleanName}.png`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-    } catch (e) {
-      alert('Could not save the image. Try the Print button instead.');
-      console.error(e);
-    } finally {
-      setSavingImg(false);
-      setExporting(false);
-    }
-  };
-
   return (
-    <div style={{ background: THEME.bg, minHeight: '100vh' }}>
-      <div className="no-print sticky top-0 z-10 px-4 sm:px-8 py-3 flex items-center justify-between gap-2" style={{ background: THEME.card, borderBottom: `1px solid ${THEME.line}` }}>
-        <button onClick={onBack} className="flex items-center gap-1.5 text-sm flex-shrink-0" style={{ color: THEME.ink }}>
-          <ArrowLeft size={16} /> <span className="hidden sm:inline">Back to order</span><span className="sm:hidden">Back</span>
-        </button>
-        <div className="flex gap-2">
-          <Btn variant="accent" onClick={saveAsImage} disabled={savingImg}>
-            {savingImg
-              ? <><Loader2 size={15} className="inline -mt-0.5 mr-1.5 animate-spin" /> Saving…</>
-              : <><ImageIcon size={15} className="inline -mt-0.5 mr-1.5" /> <span className="hidden sm:inline">{isInvoice ? 'Save Order Summary' : 'Save Supplier Copy'}</span><span className="sm:hidden">Save</span></>}
-          </Btn>
-          <Btn variant="primary" onClick={() => { setExporting(true); setTimeout(() => { window.print(); setExporting(false); }, 80); }}>
-            <Printer size={15} className="inline -mt-0.5 sm:mr-1.5" /> <span className="hidden sm:inline">Print</span>
-          </Btn>
-        </div>
-      </div>
+    <>
 
-      <div className="w-full max-w-3xl mx-auto px-3 sm:px-0" style={{ marginTop: 16, marginBottom: 24 }}>
-        <div ref={docRef} className="p-5 sm:p-10" style={{ background: 'white', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
           <div className="flex flex-col items-center text-center mb-6 pb-5" style={{ borderBottom: `2px solid ${THEME.brand}` }}>
             <img src={LOGO_DATA_URL} alt="M&N Meatshop"
               width="96" height="96"
@@ -4409,6 +4306,193 @@ function PrintableView({ order, mode, onBack }) {
           <div className="text-center mt-10 pt-6 text-sm" style={{ borderTop: `1px solid ${THEME.line}`, color: THEME.inkSoft }}>
             {isInvoice ? 'Thank you for your order!' : 'For supplier use only  ·  M&N Meatshop'}
           </div>
+    </>
+  );
+}
+
+// Capture a rendered document node as a PNG download. Shared by the single
+// Save button and the batch exporter — identical output either way.
+async function captureDocNode(node, filename) {
+  const EXPORT_WIDTH = 680;
+  const prevStyles = {
+    width: node.style.width, minWidth: node.style.minWidth,
+    maxWidth: node.style.maxWidth, overflow: node.style.overflow, position: node.style.position,
+  };
+  node.style.width = `${EXPORT_WIDTH}px`;
+  node.style.minWidth = `${EXPORT_WIDTH}px`;
+  node.style.maxWidth = `${EXPORT_WIDTH}px`;
+  node.style.overflow = 'visible';
+  node.style.position = 'relative';
+  void node.offsetHeight;
+  await new Promise((r) => setTimeout(r, 100));
+  const scrollables = Array.from(node.querySelectorAll('*')).filter((el) => {
+    const cs = getComputedStyle(el);
+    return ['auto', 'scroll'].includes(cs.overflowX) || ['auto', 'scroll'].includes(cs.overflowY) || ['auto', 'scroll'].includes(cs.overflow);
+  });
+  const savedOverflow = scrollables.map((el) => ({ el, prev: el.style.overflow }));
+  savedOverflow.forEach((s) => { s.el.style.overflow = 'visible'; });
+  const imgs = Array.from(node.querySelectorAll('img'));
+  await Promise.all(imgs.map(async (img) => {
+    try { if (typeof img.decode === 'function') { await img.decode(); return; } } catch (e) {}
+    if (img.complete && img.naturalWidth > 0) return;
+    await new Promise((res) => { img.onload = res; img.onerror = res; });
+  }));
+  await new Promise((r) => setTimeout(r, 250));
+  const opts = {
+    quality: 1, pixelRatio: 2, backgroundColor: '#ffffff',
+    width: EXPORT_WIDTH, height: node.scrollHeight, cacheBust: true,
+    style: { margin: '0', transform: 'none' },
+  };
+  // iOS Safari renders base64 images unreliably on the first capture — triple-pass.
+  let dataUrl = await toPng(node, opts);
+  dataUrl = await toPng(node, opts);
+  dataUrl = await toPng(node, opts);
+  savedOverflow.forEach(({ el, prev }) => { el.style.overflow = prev; });
+  Object.assign(node.style, prevStyles);
+  const a = document.createElement('a');
+  a.href = dataUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+/* ============================================================
+   BATCH EXPORT — all Supplier Copies / Invoices for one delivery batch
+   ============================================================ */
+function BatchExportView({ batchOrders, batch, onBack }) {
+  const [mode, setMode] = useState('supplier');           // 'supplier' | 'invoice'
+  const [progress, setProgress] = useState(null);          // "3 / 12" while saving
+  const refs = useRef({});
+  const stackRef = useRef(null);
+
+  const clean = (s) => (s || '').replace(/[\\/:*?"<>|]+/g, '').trim();
+  const suffix = mode === 'supplier' ? 'Supplier Copy' : 'Invoice';
+
+  // Save every order's document as its own image, one after another.
+  const saveAll = async () => {
+    setProgress(`0 / ${batchOrders.length}`);
+    try {
+      for (let i = 0; i < batchOrders.length; i++) {
+        const o = batchOrders[i];
+        const node = refs.current[o.id];
+        if (!node) continue;
+        setProgress(`${i + 1} / ${batchOrders.length}`);
+        await captureDocNode(node, `${o.id} - ${clean(o.customer)} - ${suffix}.png`);
+        // Small gap between downloads so the browser accepts each one.
+        await new Promise((r) => setTimeout(r, 400));
+      }
+    } catch (e) {
+      alert('Could not save all images. The ones already downloaded are safe — try again for the rest.');
+      console.error(e);
+    } finally {
+      setProgress(null);
+    }
+  };
+
+  // Save the entire batch as ONE tall image — easiest to send in one message.
+  const saveCombined = async () => {
+    if (!stackRef.current) return;
+    setProgress('1 / 1');
+    try {
+      await captureDocNode(stackRef.current, `Batch ${clean(batchLabel(batch))} - ${suffix === 'Invoice' ? 'Invoices' : 'Supplier Copies'}.png`);
+    } catch (e) {
+      alert('Could not save the combined image.');
+      console.error(e);
+    } finally {
+      setProgress(null);
+    }
+  };
+
+  return (
+    <div style={{ background: THEME.bg, minHeight: '100vh' }}>
+      <div className="no-print sticky top-0 z-10 px-4 sm:px-8 py-3 flex items-center justify-between gap-2 flex-wrap" style={{ background: THEME.card, borderBottom: `1px solid ${THEME.line}` }}>
+        <button onClick={onBack} className="flex items-center gap-1.5 text-sm flex-shrink-0" style={{ color: THEME.ink }}>
+          <ArrowLeft size={16} /> Back
+        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Mode toggle: which document type to export */}
+          <div className="flex rounded-lg overflow-hidden" style={{ border: `1px solid ${THEME.line}` }}>
+            {[['supplier', 'Supplier Copies'], ['invoice', 'Invoices']].map(([m, label]) => (
+              <button key={m} onClick={() => setMode(m)} className="px-3 py-1.5 text-sm font-medium"
+                style={{ background: mode === m ? THEME.brand : 'transparent', color: mode === m ? 'white' : THEME.ink }}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <Btn variant="accent" onClick={saveAll} disabled={!!progress}>
+            {progress ? <><Loader2 size={15} className="inline -mt-0.5 mr-1.5 animate-spin" /> Saving {progress}…</> : <><ImageIcon size={15} className="inline -mt-0.5 mr-1.5" /> Save All ({batchOrders.length})</>}
+          </Btn>
+          <Btn variant="primary" onClick={saveCombined} disabled={!!progress}>
+            <ImageIcon size={15} className="inline -mt-0.5 mr-1.5" /> Save as One Image
+          </Btn>
+        </div>
+      </div>
+
+      <div className="max-w-3xl mx-auto px-3 sm:px-0 py-4">
+        <div className="text-sm mb-3" style={{ color: THEME.inkSoft }}>
+          <Truck size={14} className="inline -mt-0.5 mr-1" /> Batch {batchLabel(batch)} · {batchOrders.length} order{batchOrders.length !== 1 ? 's' : ''} · {mode === 'supplier' ? 'documents for your supplier' : 'order summaries for customers'}
+        </div>
+        <div ref={stackRef} style={{ background: 'white' }}>
+          {batchOrders.map((o, i) => (
+            <div key={o.id} ref={(el) => { refs.current[o.id] = el; }} className="p-5 sm:p-10"
+              style={{ background: 'white', borderBottom: i < batchOrders.length - 1 ? `2px dashed ${THEME.line}` : 'none' }}>
+              <OrderDocument order={o} mode={mode} exporting={true} />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PrintableView({ order, mode, onBack }) {
+  const total = (order.items || []).reduce((s, i) => s + i.qty * i.price, 0);
+  const totalQty = (order.items || []).reduce((s, i) => s + Number(i.qty || 0), 0);
+  const isInvoice = mode === 'invoice';
+  const docRef = useRef(null);
+  const [savingImg, setSavingImg] = useState(false);
+  const [exporting, setExporting] = useState(false);
+
+  const saveAsImage = async () => {
+    if (!docRef.current) return;
+    setSavingImg(true);
+    // Force the desktop table layout into the captured image.
+    setExporting(true);
+    await new Promise((r) => setTimeout(r, 60));
+    try {
+      const cleanName = (order.customer || 'Customer').replace(/[\\/:*?"<>|]+/g, '').trim();
+      await captureDocNode(docRef.current, `${order.id} - ${cleanName}.png`);
+    } catch (e) {
+      alert('Could not save the image. Try the Print button instead.');
+      console.error(e);
+    } finally {
+      setSavingImg(false);
+      setExporting(false);
+    }
+  };
+
+  return (
+    <div style={{ background: THEME.bg, minHeight: '100vh' }}>
+      <div className="no-print sticky top-0 z-10 px-4 sm:px-8 py-3 flex items-center justify-between gap-2" style={{ background: THEME.card, borderBottom: `1px solid ${THEME.line}` }}>
+        <button onClick={onBack} className="flex items-center gap-1.5 text-sm flex-shrink-0" style={{ color: THEME.ink }}>
+          <ArrowLeft size={16} /> <span className="hidden sm:inline">Back to order</span><span className="sm:hidden">Back</span>
+        </button>
+        <div className="flex gap-2">
+          <Btn variant="accent" onClick={saveAsImage} disabled={savingImg}>
+            {savingImg
+              ? <><Loader2 size={15} className="inline -mt-0.5 mr-1.5 animate-spin" /> Saving…</>
+              : <><ImageIcon size={15} className="inline -mt-0.5 mr-1.5" /> <span className="hidden sm:inline">{isInvoice ? 'Save Order Summary' : 'Save Supplier Copy'}</span><span className="sm:hidden">Save</span></>}
+          </Btn>
+          <Btn variant="primary" onClick={() => { setExporting(true); setTimeout(() => { window.print(); setExporting(false); }, 80); }}>
+            <Printer size={15} className="inline -mt-0.5 sm:mr-1.5" /> <span className="hidden sm:inline">Print</span>
+          </Btn>
+        </div>
+      </div>
+
+      <div className="w-full max-w-3xl mx-auto px-3 sm:px-0" style={{ marginTop: 16, marginBottom: 24 }}>
+        <div ref={docRef} className="p-5 sm:p-10" style={{ background: 'white', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
+          <OrderDocument order={order} mode={mode} exporting={exporting} />
         </div>
       </div>
     </div>
@@ -4423,6 +4507,8 @@ function Pickup({ orders, catalog }) {
   const [selected, setSelected] = useState(new Set());
   const [picked, setPicked] = useState(new Set());   // products ticked off at the supplier (session-only)
   const [activeBatch, setActiveBatch] = useState(null);   // which batch chip is highlighted
+  const [savingRollup, setSavingRollup] = useState(false);
+  const rollupExportRef = useRef(null);
   const productByName = useMemo(() => Object.fromEntries((catalog || []).map(p => [p.name, p])), [catalog]);
   // Always use the current supplier cost from the catalog (what you pay today).
   const effectiveCost = (order, it) => {
@@ -4495,6 +4581,21 @@ function Pickup({ orders, catalog }) {
   // Total kilos across rollup (only items priced per kg, so the figure is meaningful).
   const totalKg = rollup.reduce((s, r) => s + ((r.unit === 'kg' || !r.unit) ? r.qty : 0), 0);
 
+  // Save the roll-up as a branded image to send straight to the supplier.
+  const saveRollupImage = async () => {
+    setSavingRollup(true);
+    await new Promise((r) => setTimeout(r, 120)); // let the offscreen node render
+    try {
+      const label = activeBatch ? batchLabel(activeBatch) : fmtDate(today());
+      await captureDocNode(rollupExportRef.current, `Pickup Roll-up - ${label.replace(/[\\/:*?"<>|]+/g, '')}.png`);
+    } catch (e) {
+      alert('Could not save the roll-up image.');
+      console.error(e);
+    } finally {
+      setSavingRollup(false);
+    }
+  };
+
   return (
     <div>
       <Header title="Pickup Cross-Check" subtitle="Select multiple orders to roll up supplier pickup quantities" />
@@ -4548,7 +4649,16 @@ function Pickup({ orders, catalog }) {
 
         <div className="lg:col-span-3">
           <Card className="p-5">
-            <div className="font-display text-lg mb-1">Pickup Roll-up</div>
+            <div className="flex items-center justify-between mb-1">
+              <div className="font-display text-lg">Pickup Roll-up</div>
+              {rollup.length > 0 && (
+                <Btn variant="accent" size="sm" onClick={saveRollupImage} disabled={savingRollup}>
+                  {savingRollup
+                    ? <><Loader2 size={14} className="inline -mt-0.5 mr-1 animate-spin" /> Saving…</>
+                    : <><ImageIcon size={14} className="inline -mt-0.5 mr-1" /> Save Image</>}
+                </Btn>
+              )}
+            </div>
             <div className="text-xs mb-2" style={{ color: THEME.inkSoft }}>Total quantity & cost to pick up from supplier for the selected orders. Tap a row to tick it off at the counter.</div>
             {rollup.length > 0 && (
               <div className="mb-4">
@@ -4614,7 +4724,48 @@ function Pickup({ orders, catalog }) {
           </Card>
         </div>
       </div>
+      {/* Offscreen branded roll-up document, rendered only during capture */}
+      {savingRollup && (
+        <div style={{ position: 'fixed', left: -9999, top: 0, width: 680 }}>
+          <div ref={rollupExportRef} className="p-10" style={{ background: 'white' }}>
+            <div className="flex flex-col items-center text-center mb-6 pb-5" style={{ borderBottom: `2px solid ${THEME.brand}` }}>
+              <img src={LOGO_DATA_URL} alt="M&N Meatshop" width="80" height="80" className="rounded-full object-cover mb-2" style={{ display: 'block', width: 80, height: 80 }} />
+              <div className="font-display text-2xl" style={{ color: THEME.brand }}>M&N MEATSHOP</div>
+              <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>Your Daily Meat Choice</div>
+            </div>
+            <div className="text-center mb-6">
+              <div className="font-display text-xl tracking-wide uppercase" style={{ color: THEME.ink }}>Supplier Pickup List</div>
+              <div className="text-sm mt-1" style={{ color: THEME.inkSoft }}>
+                {activeBatch ? `Delivery batch: ${batchLabel(activeBatch)}` : `As of ${fmtDate(today())}`} · {selected.size} order{selected.size !== 1 ? 's' : ''}
+              </div>
+            </div>
+            <table className="w-full text-sm">
+              <thead>
+                <tr style={{ background: THEME.brandBg }}>
+                  <th className="text-left px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Product</th>
+                  <th className="text-right px-3 py-2.5 font-medium" style={{ color: THEME.brand }}>Quantity</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rollup.map((r) => (
+                  <tr key={r.product} style={{ borderBottom: `1px solid ${THEME.line}` }}>
+                    <td className="px-3 py-3">{r.product}</td>
+                    <td className="px-3 py-3 text-right font-medium whitespace-nowrap">{r.qty} {r.unit}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="mt-5 pt-4 text-sm" style={{ borderTop: `2px solid ${THEME.brand}`, color: THEME.inkSoft }}>
+              {rollup.length} products{totalKg > 0 ? ` · ${totalKg} kg total` : ''}
+            </div>
+            <div className="text-center mt-8 pt-5 text-sm" style={{ borderTop: `1px solid ${THEME.line}`, color: THEME.inkSoft }}>
+              For supplier use only · M&N Meatshop
+            </div>
+          </div>
+        </div>
+      )}
     </div>
+
   );
 }
 
