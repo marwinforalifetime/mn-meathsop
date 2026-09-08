@@ -51,7 +51,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v9.9 · Batch document export';
+const APP_VERSION = 'v9.10 · iOS save-to-Files fix';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -4310,9 +4310,10 @@ function OrderDocument({ order, mode, exporting = false }) {
   );
 }
 
-// Capture a rendered document node as a PNG download. Shared by the single
-// Save button and the batch exporter — identical output either way.
-async function captureDocNode(node, filename) {
+// Render a document node to a PNG data URL (no download/share side effect).
+// Exposed separately so batch export can render several documents first and
+// deliver them together in a single Share Sheet call (see shareOrDownloadMultiple).
+async function renderNodeToDataUrl(node) {
   const EXPORT_WIDTH = 680;
   const prevStyles = {
     width: node.style.width, minWidth: node.style.minWidth,
@@ -4349,12 +4350,88 @@ async function captureDocNode(node, filename) {
   dataUrl = await toPng(node, opts);
   savedOverflow.forEach(({ el, prev }) => { el.style.overflow = prev; });
   Object.assign(node.style, prevStyles);
+  return dataUrl;
+}
+
+// Capture a rendered document node and deliver it as a single file.
+// Shared by the single Save button and "Save as One Image".
+async function captureDocNode(node, filename) {
+  const dataUrl = await renderNodeToDataUrl(node);
+  await shareOrDownloadDataUrl(dataUrl, filename);
+}
+
+// Deliver a captured image to the user. iOS Safari (all browsers there share
+// the same WebKit engine) has a long-standing bug where an <a download> anchor
+// pointing at a large base64 `data:` URI silently fails — no save, no error —
+// once the image crosses a size threshold that depends on the device's memory
+// and iOS version. That's exactly why this worked on some phones and not
+// others, and why it broke as the invoice grew taller over recent versions
+// (GCash block, order-details panel) pushing more devices past the limit.
+// Fix: convert to a Blob and use a short `blob:` URL instead of embedding the
+// whole image as text in the href — this alone removes the size ceiling. On
+// top of that, the native Share Sheet (Web Share API) is offered first on
+// phones/tablets, since it's the officially reliable way to save an image to
+// Photos or Files on iOS, and feels more native than a browser download.
+async function shareOrDownloadDataUrl(dataUrl, filename) {
+  const res = await fetch(dataUrl);
+  const blob = await res.blob();
+  const isTouchDevice = typeof window !== 'undefined' && 'ontouchstart' in window;
+  if (isTouchDevice && navigator.canShare) {
+    try {
+      const file = new File([blob], filename, { type: 'image/png' });
+      if (navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file] });
+        return;
+      }
+    } catch (e) {
+      if (e && e.name === 'AbortError') return; // user closed the share sheet — not a failure
+      // Any other share error: fall through to the blob-URL download below.
+    }
+  }
+  const blobUrl = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = dataUrl;
+  a.href = blobUrl;
   a.download = filename;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+}
+
+// Deliver several images at once (batch export's "Save All"). iOS requires a
+// fresh user gesture for every navigator.share() call, so sharing files one
+// at a time in a loop breaks after the first — instead we render everything
+// first, then make ONE share call with every file, which opens a single
+// native Share Sheet the person can save all of at once (or picks Files).
+async function shareOrDownloadMultiple(items) {
+  if (items.length === 0) return;
+  const files = await Promise.all(items.map(async ({ dataUrl, filename }) => {
+    const blob = await (await fetch(dataUrl)).blob();
+    return new File([blob], filename, { type: 'image/png' });
+  }));
+  const isTouchDevice = typeof window !== 'undefined' && 'ontouchstart' in window;
+  if (isTouchDevice && navigator.canShare) {
+    try {
+      if (navigator.canShare({ files })) {
+        await navigator.share({ files });
+        return;
+      }
+    } catch (e) {
+      if (e && e.name === 'AbortError') return;
+      // fall through to sequential downloads below
+    }
+  }
+  for (const file of files) {
+    const blobUrl = URL.createObjectURL(file);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = file.name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+    await new Promise((r) => setTimeout(r, 400)); // let the browser accept each one
+  }
 }
 
 /* ============================================================
@@ -4373,17 +4450,19 @@ function BatchExportView({ batchOrders, batch, onBack }) {
   const saveAll = async () => {
     setProgress(`0 / ${batchOrders.length}`);
     try {
+      const items = [];
       for (let i = 0; i < batchOrders.length; i++) {
         const o = batchOrders[i];
         const node = refs.current[o.id];
         if (!node) continue;
-        setProgress(`${i + 1} / ${batchOrders.length}`);
-        await captureDocNode(node, `${o.id} - ${clean(o.customer)} - ${suffix}.png`);
-        // Small gap between downloads so the browser accepts each one.
-        await new Promise((r) => setTimeout(r, 400));
+        setProgress(`Rendering ${i + 1} / ${batchOrders.length}`);
+        const dataUrl = await renderNodeToDataUrl(node);
+        items.push({ dataUrl, filename: `${o.id} - ${clean(o.customer)} - ${suffix}.png` });
       }
+      setProgress('Saving…');
+      await shareOrDownloadMultiple(items);
     } catch (e) {
-      alert('Could not save all images. The ones already downloaded are safe — try again for the rest.');
+      alert('Could not save all images. Please try again.');
       console.error(e);
     } finally {
       setProgress(null);
@@ -5250,13 +5329,8 @@ function RestaurantQuote({ catalog, setCatalog, qtys, setQtys }) {
         height: 816,
       });
       node.style.cssText = prev;
-      const a = document.createElement('a');
       const ts = new Date().toISOString().slice(0, 10);
-      a.href = dataUrl;
-      a.download = `M&N Wholesale Price Sheet - ${ts}.png`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      await shareOrDownloadDataUrl(dataUrl, `M&N Wholesale Price Sheet - ${ts}.png`);
     } catch (e) {
       alert('Could not save the image. Please try again.');
       console.error(e);
