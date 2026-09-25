@@ -4,11 +4,13 @@ import {
   Printer, Trash2, Edit3, Search, X, Check, AlertCircle, TrendingUp,
   Receipt, FileText, ChevronRight, ChevronUp, ChevronDown, Save, Loader2, Plus,
   Eye, EyeOff, ArrowLeft, RefreshCw, Download, Upload, HardDrive, Image as ImageIcon,
-  Activity, Menu, Store, Moon, Sun, CheckCircle, Inbox, MapPin, Users, MessageCircle
+  Activity, Menu, Store, Moon, Sun, CheckCircle, Inbox, MapPin, Users, MessageCircle,
+  Crown, Trophy, Lightbulb, Sparkles, TrendingDown, ArrowUpRight, ArrowDownRight, CalendarDays,
+  Target, Package, Info, Minus, BarChart3,
 } from 'lucide-react';
 import {
   BarChart, Bar, PieChart, Pie, Cell, ResponsiveContainer, XAxis, YAxis,
-  Tooltip, CartesianGrid, LineChart, Line, Area, AreaChart, ReferenceLine,
+  Tooltip, CartesianGrid, LineChart, Line, Area, AreaChart, ReferenceLine, LabelList,
 } from 'recharts';
 import { toPng } from 'html-to-image';
 import { LOGO_DATA_URL } from './logo.js';
@@ -51,7 +53,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v9.10 · iOS save-to-Files fix';
+const APP_VERSION = 'v9.11 · Monthly Report';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -911,6 +913,7 @@ function MainApp() {
       { id: 'restaurantquote', label: 'Restaurant Quote', icon: Store },
       { id: 'profitcheck', label: 'Quote Profit Check', icon: EyeOff },
       { id: 'supplierprices', label: 'Supplier Prices', icon: TrendingUp },
+      { id: 'monthlyreport', label: 'Monthly Report', icon: BarChart3 },
     ]},
   ];
 
@@ -1076,6 +1079,7 @@ function MainApp() {
           {view === 'profitcheck' && <QuoteProfitCheck catalog={catalog} privacy={privacy} qtys={quoteQtys} setQtys={setQuoteQtys} />}
           {view === 'supplierprices' && <SupplierPrices priceHistory={priceHistory} setPriceHistory={setPriceHistory} catalog={catalog} setCatalog={setCatalog} privacy={privacy} />}
           {view === 'supplierpayments' && <SupplierPayments payments={supplierPayments} setPayments={setSupplierPayments} privacy={privacy} />}
+          {view === 'monthlyreport' && <MonthlyReport orders={orders} expenses={expenses} catalog={catalog} privacy={privacy} />}
         </main>
       </div>
 
@@ -6381,3 +6385,942 @@ function Products({ catalog, setCatalog, priceHistory, setPriceHistory }) {
     </div>
   );
 }
+
+/* ============================================================
+   MONTHLY REPORT ENGINE (pure — no React, unit-testable)
+   ============================================================
+   Turns orders + expenses into one record per calendar month.
+   Definitions (kept consistent with the Dashboard):
+   - Month = the order's date (same as the Dashboard's "this month").
+   - Cancelled orders are excluded everywhere.
+   - Supplier cost: every order uses the cost locked on each line when it
+     was placed, so a price change today never rewrites history (valuing
+     May's orders at September prices would cut May's real 25.6% margin to
+     16.7%). The one exception: current-month orders NOT yet delivered use
+     today's Price List cost, because they still have to be bought at it.
+   - Expenses: operating expenses logged in that month. "Stock" and
+     "Capital / Stock" are excluded — that's inventory money already
+     counted as supplier cost, so including it would double-count.
+   - Net profit = gross profit − operating expenses.                    */
+const MR_STOCK_CATEGORIES = ['Capital / Stock', 'Stock'];
+const mrMonthLabel = (key, opts = { month: 'long', year: 'numeric' }) => {
+  const [y, m] = key.split('-').map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString('en-PH', opts);
+};
+const mrDaysInMonth = (key) => { const [y, m] = key.split('-').map(Number); return new Date(y, m, 0).getDate(); };
+
+function buildMonthlyReport(orders, expenses, catalog, todayIso) {
+  const productByName = Object.fromEntries((catalog || []).map((p) => [p.name, p]));
+  const currentKey = (todayIso || '').slice(0, 7);
+  const liveCost = (it) => {
+    const p = productByName[it.product];
+    if (p && p.cost !== undefined && p.cost !== null && p.cost !== '') return Number(p.cost) || 0;
+    return Number(it.cost) || 0;
+  };
+  const lockedCost = (it) => {
+    const c = Number(it.cost);
+    return c > 0 ? c : liveCost(it); // fall back only if the line never stored a cost
+  };
+  const blank = (key) => ({
+    key, sales: 0, cost: 0, gross: 0, expenses: 0, net: 0, orders: 0, cancelled: 0,
+    kg: 0, outstanding: 0, b2bSales: 0, firstDay: 99, lastDay: 0, unbatched: 0,
+    customers: {}, products: {}, batches: {}, expenseByCat: {},
+  });
+  const months = {};
+  const get = (key) => (months[key] = months[key] || blank(key));
+
+  // First month each customer ever ordered → "new customer" detection.
+  const firstSeen = {};
+  const live = Object.values(orders || {}).filter((o) => o && o.date);
+  [...live].sort((a, b) => (a.date || '').localeCompare(b.date || '')).forEach((o) => {
+    if (o.delivery_status === 'Cancelled') return;
+    const c = (o.customer || '').trim().toLowerCase();
+    if (c && !firstSeen[c]) firstSeen[c] = o.date.slice(0, 7);
+  });
+
+  live.forEach((o) => {
+    const key = o.date.slice(0, 7);
+    const M = get(key);
+    if (o.delivery_status === 'Cancelled') { M.cancelled += 1; return; }
+    const useLive = key === currentKey && o.delivery_status !== 'Delivered';
+    let sales = 0, cost = 0;
+    (o.items || []).forEach((it) => {
+      const q = Number(it.qty) || 0;
+      const ls = q * (Number(it.price) || 0);
+      const lc = q * (useLive ? liveCost(it) : lockedCost(it));
+      sales += ls; cost += lc;
+      if (!it.unit || it.unit === 'kg') M.kg += q;
+      const P = (M.products[it.product] = M.products[it.product] || { name: it.product, qty: 0, unit: it.unit || 'kg', sales: 0, gross: 0 });
+      P.qty += q; P.sales += ls; P.gross += ls - lc;
+    });
+    M.sales += sales; M.cost += cost; M.orders += 1;
+    const day = Number(o.date.slice(8, 10)) || 1;
+    M.firstDay = Math.min(M.firstDay, day); M.lastDay = Math.max(M.lastDay, day);
+    if (o.payment_status === 'Unpaid') M.outstanding += sales;
+    else if (o.payment_status === 'Partial') M.outstanding += Math.max(0, sales - (Number(o.amount_paid) || 0));
+    if ((o.items || []).some((it) => it.wholesale) || /pick\s*n.?\s*go/i.test(o.customer || '')) M.b2bSales += sales;
+    const cname = (o.customer || '').trim();
+    const ck = cname.toLowerCase();
+    if (ck) {
+      const C = (M.customers[ck] = M.customers[ck] || { name: cname, orders: 0, sales: 0, gross: 0, isNew: firstSeen[ck] === key });
+      C.orders += 1; C.sales += sales; C.gross += sales - cost;
+    }
+    // Batches = real delivery days only. Orders never given a batch are
+    // counted separately instead of each becoming a fake "batch".
+    if (o.delivery_batch) {
+      const bday = o.delivery_batch;
+      const B = (M.batches[bday] = M.batches[bday] || { date: bday, orders: 0, sales: 0, gross: 0 });
+      B.orders += 1; B.sales += sales; B.gross += sales - cost;
+    } else {
+      M.unbatched += 1;
+    }
+  });
+
+  (expenses || []).forEach((e) => {
+    if (!e || !e.date || MR_STOCK_CATEGORIES.includes(e.category)) return;
+    const M = get(e.date.slice(0, 7));
+    const amt = Number(e.amount) || 0;
+    M.expenses += amt;
+    M.expenseByCat[e.category || 'Other'] = (M.expenseByCat[e.category || 'Other'] || 0) + amt;
+  });
+
+  const list = Object.values(months)
+    .filter((M) => M.orders > 0 || M.expenses > 0)
+    .sort((a, b) => a.key.localeCompare(b.key))
+    .map((M, idx, arr) => {
+      M.gross = M.sales - M.cost;
+      M.net = M.gross - M.expenses;
+      M.margin = M.sales > 0 ? M.gross / M.sales : 0;
+      M.aov = M.orders > 0 ? M.sales / M.orders : 0;
+      M.profitPerOrder = M.orders > 0 ? M.gross / M.orders : 0;
+      const custs = Object.values(M.customers);
+      M.customerCount = custs.length;
+      M.newCustomers = custs.filter((c) => c.isNew).length;
+      M.returningGross = custs.filter((c) => !c.isNew).reduce((s, c) => s + c.gross, 0);
+      M.topCustomers = custs.sort((a, b) => b.sales - a.sales).slice(0, 5);
+      M.topProducts = Object.values(M.products).sort((a, b) => b.gross - a.gross);
+      M.batchList = Object.values(M.batches).sort((a, b) => a.date.localeCompare(b.date)).map((b) => ({
+        ...b,
+        weekday: new Date(b.date + 'T00:00:00').toLocaleDateString('en-PH', { weekday: 'short' }),
+        label: new Date(b.date + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric' }),
+      }));
+      // Share of this month's orders that had a real delivery batch. Batch and
+      // weekday comparisons are only shown when most orders are covered.
+      M.batchCoverage = M.orders > 0 ? (M.orders - M.unbatched) / M.orders : 0;
+      M.expenseCats = Object.entries(M.expenseByCat).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
+      M.label = mrMonthLabel(M.key);
+      M.short = mrMonthLabel(M.key, { month: 'short' });
+      M.isCurrent = M.key === currentKey;
+      M.daysInMonth = mrDaysInMonth(M.key);
+      M.isFirst = idx === 0;
+      // A month that started late (the first month of the business) isn't a fair comparison.
+      M.partialStart = idx === 0 && M.firstDay > 7;
+      if (M.isCurrent) {
+        const elapsed = Math.max(1, Number((todayIso || '').slice(8, 10)) || 1);
+        M.daysElapsed = elapsed;
+        M.projectedNet = elapsed < M.daysInMonth ? (M.net / elapsed) * M.daysInMonth : null;
+      }
+      M.prevKey = idx > 0 ? arr[idx - 1].key : null;
+      return M;
+    });
+
+  const byKey = Object.fromEntries(list.map((M) => [M.key, M]));
+  // Rank only full, comparable months (skip a still-running current month).
+  const ranked = list.filter((M) => !M.isCurrent).slice().sort((a, b) => b.net - a.net);
+  const rankOf = Object.fromEntries(ranked.map((M, i) => [M.key, i + 1]));
+  const totals = list.reduce((t, M) => ({ net: t.net + M.net, gross: t.gross + M.gross, sales: t.sales + M.sales, orders: t.orders + M.orders }), { net: 0, gross: 0, sales: 0, orders: 0 });
+  return { list, byKey, ranked, rankOf, totals, best: ranked[0] || null, weakest: ranked.length > 1 ? ranked[ranked.length - 1] : null };
+}
+
+// Explain WHY profit moved between two months: gross = orders × avg order × margin.
+// Splits the peso change into those three drivers (log-share method, so the
+// three parts always add up exactly to the real change).
+function mrDrivers(cur, prev) {
+  if (!cur || !prev || cur.gross <= 0 || prev.gross <= 0 || cur.orders <= 0 || prev.orders <= 0 || cur.aov <= 0 || prev.aov <= 0 || cur.margin <= 0 || prev.margin <= 0) return null;
+  const dG = cur.gross - prev.gross;
+  const lnTotal = Math.log(cur.gross / prev.gross);
+  const parts = [
+    { id: 'orders', label: 'Number of orders', ln: Math.log(cur.orders / prev.orders) },
+    { id: 'aov', label: 'Order size', ln: Math.log(cur.aov / prev.aov) },
+    { id: 'margin', label: 'Margin', ln: Math.log(cur.margin / prev.margin) },
+  ];
+  if (Math.abs(lnTotal) < 1e-9) return { dG, parts: parts.map((p) => ({ ...p, value: 0 })) };
+  return { dG, parts: parts.map((p) => ({ ...p, value: dG * (p.ln / lnTotal) })) };
+}
+
+// Plain-English takeaways for one month. Each insight: { tone: 'good'|'warn'|'info', text }.
+function mrInsights(M, report, fmt) {
+  if (!M) return [];
+  const out = [];
+  const prev = M.prevKey ? report.byKey[M.prevKey] : null;
+  const rank = report.rankOf[M.key];
+  const nRanked = report.ranked.length;
+  if (M.isCurrent) {
+    if (M.projectedNet != null) out.push({ tone: M.projectedNet >= 0 ? 'info' : 'warn', text: `Month in progress — day ${M.daysElapsed} of ${M.daysInMonth}. At this pace you'll finish around ${M.projectedNet >= 0 ? `${fmt(M.projectedNet)} net profit` : `a ${fmt(Math.abs(M.projectedNet))} loss`}.` });
+  } else if (nRanked >= 2 && rank === 1) {
+    out.push({ tone: 'good', text: `Your strongest month so far — #1 of ${nRanked} months by net profit.` });
+  } else if (nRanked >= 3 && rank === nRanked && M.partialStart) {
+    out.push({ tone: 'info', text: `Lowest net profit so far (#${rank} of ${nRanked}) — but it was a partial first month.` });
+  } else if (nRanked >= 3 && rank === nRanked) {
+    out.push({ tone: 'warn', text: `Your weakest month so far — #${rank} of ${nRanked}. Worth asking what was different this month.` });
+  } else if (rank) {
+    out.push({ tone: 'info', text: `Ranked #${rank} of ${nRanked} months by net profit.` });
+  }
+  if (M.partialStart) out.push({ tone: 'info', text: `This was your first month and started on day ${M.firstDay}, so it isn't a full-month comparison.` });
+  const d = mrDrivers(M, prev);
+  // Totals of an unfinished month vs a full month aren't a fair fight, so the
+  // "why profit moved" sentence is only written for finished months.
+  if (d && prev && !M.isCurrent) {
+    const sorted = [...d.parts].sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
+    const main = sorted[0];
+    const dir = d.dG >= 0 ? 'rose' : 'fell';
+    const why = { orders: main.value >= 0 ? 'more orders' : 'fewer orders', aov: main.value >= 0 ? 'bigger orders' : 'smaller orders', margin: main.value >= 0 ? 'a better margin' : 'a thinner margin' }[main.id];
+    const reason = (p) => ({ orders: p.value >= 0 ? 'more orders' : 'fewer orders', aov: p.value >= 0 ? 'bigger orders' : 'smaller orders', margin: p.value >= 0 ? 'a better margin' : 'a thinner margin' }[p.id]);
+    // Also name a driver that pulled the other way, if it mattered.
+    const against = sorted.find((p) => Math.sign(p.value) !== Math.sign(d.dG) && Math.abs(p.value) >= Math.abs(d.dG) * 0.25);
+    const tail = against ? `, while ${reason(against)} ${against.value >= 0 ? 'added' : 'cost'} ${fmt(Math.abs(against.value))}` : '';
+    out.push({ tone: d.dG >= 0 ? 'good' : 'warn', text: `Gross profit ${dir} ${fmt(Math.abs(d.dG))} vs ${prev.short}, mostly from ${why} (${main.value >= 0 ? '+' : '−'}${fmt(Math.abs(main.value))})${tail}.` });
+  }
+  // Margin trend: compare with the best-margin month so far.
+  const earlier = report.list.filter((x) => x.key < M.key && x.sales > 0);
+  if (earlier.length >= 2 && M.sales > 0) {
+    const peak = earlier.reduce((a, b) => (b.margin > a.margin ? b : a));
+    const drop = (peak.margin - M.margin) * 100;
+    if (drop >= 3) out.push({ tone: 'warn', text: `Margin has slipped from ${(peak.margin * 100).toFixed(1)}% in ${peak.short} to ${(M.margin * 100).toFixed(1)}%${M.isCurrent ? ' so far' : ''}. On ${fmt(M.sales)} of sales, every point of margin is about ${fmt(M.sales / 100)}.` });
+  }
+  // Which product's profit per unit shrank the most vs last month (weighted by volume).
+  if (prev) {
+    let worst = null;
+    Object.values(M.products).forEach((p) => {
+      const q = prev.products[p.name];
+      if (!q || q.qty <= 0 || p.qty <= 0) return;
+      const nowPer = p.gross / p.qty, thenPer = q.gross / q.qty;
+      const lost = (thenPer - nowPer) * p.qty;
+      if (!worst || lost > worst.lost) worst = { name: p.name, unit: p.unit, nowPer, thenPer, lost };
+    });
+    if (worst && worst.lost >= Math.max(300, M.gross * 0.03)) {
+      out.push({ tone: 'warn', text: `${worst.name} now earns ${fmt(worst.nowPer)}/${worst.unit} vs ${fmt(worst.thenPer)}/${worst.unit} in ${prev.short} — about ${fmt(worst.lost)} less profit this month. Worth checking its selling price against the supplier cost.` });
+    }
+  }
+  if (M.isCurrent && M.expenses === 0 && prev && prev.expenses > 0) {
+    out.push({ tone: 'info', text: `No expenses logged yet this month. ${prev.short} had ${fmt(prev.expenses)}, so net profit will likely come down once they're added.` });
+  }
+  const top = M.topProducts[0];
+  if (top && M.gross > 0) out.push({ tone: 'info', text: `${top.name} earned the most — ${fmt(top.gross)}, ${Math.round((top.gross / M.gross) * 100)}% of the month's gross profit.` });
+  const wk = {};
+  M.batchList.forEach((b) => { (wk[b.weekday] = wk[b.weekday] || { n: 0, g: 0 }); wk[b.weekday].n += 1; wk[b.weekday].g += b.gross; });
+  if (wk.Tue && wk.Sat && wk.Tue.n >= 2 && wk.Sat.n >= 2 && M.batchCoverage >= 0.6) {
+    const tue = wk.Tue.g / wk.Tue.n, sat = wk.Sat.g / wk.Sat.n;
+    const hi = sat >= tue ? ['Saturday', sat, 'Tuesday', tue] : ['Tuesday', tue, 'Saturday', sat];
+    out.push({ tone: 'info', text: `${hi[0]} batches earned ${fmt(hi[1])} each on average, vs ${fmt(hi[3])} on ${hi[2]}.` });
+  }
+  if (M.customerCount > 0 && M.isFirst) {
+    out.push({ tone: 'good', text: `${M.customerCount} customers ordered in your first month.` });
+  } else if (M.customerCount > 0) {
+    const retShare = M.gross > 0 ? Math.round((M.returningGross / M.gross) * 100) : 0;
+    out.push({ tone: M.newCustomers > 0 ? 'good' : 'info', text: `${M.newCustomers} new customer${M.newCustomers !== 1 ? 's' : ''} this month; returning customers brought ${retShare}% of gross profit.` });
+  }
+  if (M.gross > 0 && M.expenses / M.gross > 0.2 && M.expenseCats[0]) {
+    out.push({ tone: 'warn', text: `Expenses took ${Math.round((M.expenses / M.gross) * 100)}% of gross profit — biggest was ${M.expenseCats[0].name} (${fmt(M.expenseCats[0].value)}).` });
+  }
+  if (M.outstanding > 0.5) out.push({ tone: 'warn', text: `${fmt(M.outstanding)} from this month's orders is still unpaid.` });
+  return out;
+}
+
+/* ============================================================
+   MONTHLY REPORT (UI)
+   ============================================================ */
+
+// Fill bar that grows from 0 on mount and glides when the value changes.
+function MrBar({ pct, color, delay = 0, height = 8, track }) {
+  const [w, setW] = useState(0);
+  useEffect(() => {
+    const t = setTimeout(() => setW(Math.max(0, Math.min(100, pct || 0))), 40 + delay);
+    return () => clearTimeout(t);
+  }, [pct, delay]);
+  return (
+    <div className="rounded-full overflow-hidden" style={{ height, background: track || THEME.line }}>
+      <div className="h-full rounded-full mn-grow" style={{ width: `${w}%`, background: color }} />
+    </div>
+  );
+}
+
+// Signed change chip: arrow + text, green when the move is good, red when bad.
+function MrDelta({ diff, text, onDark = false, goodWhenUp = true, neutral = false }) {
+  const flat = Math.abs(diff || 0) < 1e-9;
+  const up = diff > 0;
+  // neutral: direction shown, but not judged (e.g. an unfinished month's running totals)
+  const good = flat || neutral ? null : up === goodWhenUp;
+  const color = good === null
+    ? (onDark ? 'rgba(255,255,255,0.8)' : THEME.inkSoft)
+    : good ? (onDark ? '#CDEBC0' : THEME.green) : (onDark ? '#FFC9CF' : THEME.red);
+  const Icon = flat ? Minus : up ? ArrowUpRight : ArrowDownRight;
+  return (
+    <span className="inline-flex items-center gap-0.5 text-xs font-semibold whitespace-nowrap" style={{ color }}>
+      <Icon size={13} />{text}
+    </span>
+  );
+}
+
+// Tiny month-by-month columns; the selected month is solid, the rest muted.
+function MrSpark({ values, selectedIdx }) {
+  const max = Math.max(1, ...values.map((v) => Math.abs(v)));
+  return (
+    <div className="flex items-end gap-[3px] h-8 mt-3" aria-hidden="true">
+      {values.map((v, i) => (
+        <div key={i} className="flex-1 rounded-t-sm mn-spark"
+          style={{
+            height: `${Math.max(8, (Math.abs(v) / max) * 100)}%`,
+            maxWidth: 14,
+            background: v < 0 ? THEME.red : THEME.brand,
+            opacity: i === selectedIdx ? 1 : 0.28,
+            animationDelay: `${i * 40}ms`,
+          }} />
+      ))}
+    </div>
+  );
+}
+
+function MrSectionTitle({ icon: Icon, title, sub, right }) {
+  return (
+    <div className="flex items-start justify-between gap-3 mb-4">
+      <div className="min-w-0">
+        <div className="font-display text-lg flex items-center gap-2" style={{ color: THEME.ink }}>
+          {Icon && <Icon size={17} style={{ color: THEME.brand }} />}{title}
+        </div>
+        {sub && <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>{sub}</div>}
+      </div>
+      {right && <div className="flex-shrink-0">{right}</div>}
+    </div>
+  );
+}
+
+// The hero stays deep maroon in both themes so white text always reads well.
+const MR_HERO_FROM = '#7A2E33';
+const MR_HERO_TO = '#A04D52';
+
+function MonthlyReport({ orders, expenses, catalog, privacy }) {
+  const todayIso = today();
+  const report = useMemo(
+    () => buildMonthlyReport(orders, expenses, catalog, todayIso),
+    [orders, expenses, catalog, todayIso]
+  );
+  const list = report.list;
+  const [selectedKey, setSelectedKey] = useState(null);
+  const [metric, setMetric] = useState('net');           // net | gross | sales
+  const [showMath, setShowMath] = useState(false);
+  const [showAllTips, setShowAllTips] = useState(false);
+  const pillsRef = useRef(null);
+  const topRef = useRef(null);
+
+  // Default to the newest month; fall back if a selected month disappears.
+  const key = selectedKey && report.byKey[selectedKey] ? selectedKey : (list.length ? list[list.length - 1].key : null);
+  const M = key ? report.byKey[key] : null;
+  const prev = M && M.prevKey ? report.byKey[M.prevKey] : null;
+  const heroNet = useCountUp(M ? M.net : 0);
+
+  // Start the month strip scrolled to the newest month.
+  useEffect(() => {
+    if (pillsRef.current) pillsRef.current.scrollLeft = pillsRef.current.scrollWidth;
+  }, [list.length]);
+
+  // ── Formatters (privacy-aware, whole pesos for monthly totals) ──
+  const HIDDEN = '₱•••••';
+  const m0 = (n) => (privacy ? HIDDEN : `${n < 0 ? '−' : ''}${peso(Math.abs(Math.round(n || 0)))}`);
+  const sm = (n) => (privacy ? HIDDEN : `${n < 0 ? '−' : '+'}${peso(Math.abs(Math.round(n || 0)))}`);
+  const compact = (v) => {
+    if (privacy) return '•••';
+    const a = Math.abs(v);
+    const s = a >= 1e6 ? `${(a / 1e6).toFixed(1)}M` : a >= 1000 ? `${(a / 1000).toFixed(a >= 10000 ? 0 : 1).replace(/\.0$/, '')}k` : `${Math.round(a)}`;
+    return `${v < 0 ? '−' : ''}₱${s}`;
+  };
+  const pctOf = (a, b) => (b > 0 ? Math.round(((a - b) / b) * 100) : null);
+  const pctTxt = (p) => (p === null ? '' : ` (${p >= 0 ? '+' : ''}${p}%)`);
+
+  const metrics = {
+    net: { label: 'Net profit', get: (x) => x.net },
+    gross: { label: 'Gross profit', get: (x) => x.gross },
+    sales: { label: 'Sales', get: (x) => x.sales },
+  };
+  const metricGet = metrics[metric].get;
+
+  if (!M) {
+    return (
+      <div>
+        <Header title="Monthly Report" subtitle="See which months are strong or weak, and why." />
+        <Card className="p-6"><EmptyHint>No orders yet. Your monthly report appears after your first order.</EmptyHint></Card>
+      </div>
+    );
+  }
+
+  const shown = list.slice(-12);
+  const selIdx = shown.findIndex((x) => x.key === key);
+  const chartData = shown.map((x) => ({ key: x.key, value: Math.round(metricGet(x)) }));
+  const completed = list.filter((x) => !x.isCurrent);
+  const avg = completed.length >= 2 ? completed.reduce((s, x) => s + metricGet(x), 0) / completed.length : null;
+  const rankedByMetric = completed.slice().sort((a, b) => metricGet(b) - metricGet(a));
+  const rankMax = Math.max(1, ...rankedByMetric.map((x) => Math.abs(metricGet(x))), M.isCurrent ? Math.abs(metricGet(M)) : 0);
+  const netRank = report.rankOf[M.key];
+  const isBest = !M.isCurrent && report.ranked.length >= 2 && netRank === 1;
+  const isWeakest = !M.isCurrent && report.ranked.length >= 3 && netRank === report.ranked.length;
+  const drivers = mrDrivers(M, prev);
+  const insights = mrInsights(M, report, (n) => (privacy ? HIDDEN : peso(Math.round(n))));
+  const heroText = privacy ? HIDDEN : `${heroNet < 0 ? '−' : ''}${peso(Math.abs(Math.round(heroNet)))}`;
+  const monthPill = (x) => mrMonthLabel(x.key, { month: 'short', year: 'numeric' });
+  const fullMonthsNet = completed.reduce((s, x) => s + x.net, 0);
+
+  const selectMonth = (k, scroll = false) => {
+    setSelectedKey(k);
+    setShowAllTips(false);
+    if (scroll && topRef.current) topRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  // ── Chart pieces ──
+  const MonthTick = ({ x, y, payload }) => {
+    const d = report.byKey[payload.value];
+    if (!d) return null;
+    const sel = payload.value === key;
+    const yr = d.key.endsWith('-01') ? ` '${d.key.slice(2, 4)}` : '';
+    return (
+      <g transform={`translate(${x},${y})`}>
+        <text dy={14} textAnchor="middle" fontSize={11} fontWeight={sel ? 700 : 400} fill={sel ? THEME.ink : THEME.inkSoft}>{d.short}{yr}</text>
+        {d.isCurrent && <text dy={27} textAnchor="middle" fontSize={9} fill={THEME.inkSoft}>so far</text>}
+      </g>
+    );
+  };
+  const SelectedLabel = ({ x, y, width, height, value, index }) => {
+    const d = chartData[index];
+    if (!d || d.key !== key) return null;
+    const ty = value >= 0 ? y - 8 : y + Math.abs(height) + 14;
+    return <text x={x + width / 2} y={ty} textAnchor="middle" fontSize={11} fontWeight={700} fill={THEME.ink}>{compact(value)}</text>;
+  };
+  const ChartTip = ({ active, payload }) => {
+    if (!active || !payload || !payload[0]) return null;
+    const d = report.byKey[payload[0].payload.key];
+    if (!d) return null;
+    const row = (k, v, strong) => (
+      <div className="flex justify-between gap-5"><span style={{ color: THEME.inkSoft }}>{k}</span><span style={{ fontWeight: strong ? 700 : 500 }}>{v}</span></div>
+    );
+    return (
+      <div className="rounded-lg px-3 py-2.5 text-xs space-y-0.5" style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink, boxShadow: '0 6px 18px rgba(0,0,0,0.08)', minWidth: 170 }}>
+        <div className="font-semibold mb-1">{d.label}{d.isCurrent ? ' · so far' : ''}</div>
+        {row('Sales', m0(d.sales))}
+        {row('Gross profit', m0(d.gross))}
+        {row('Expenses', m0(d.expenses))}
+        {row('Net profit', m0(d.net), true)}
+        {row('Margin', `${(d.margin * 100).toFixed(1)}%`)}
+        {row('Orders', d.orders)}
+      </div>
+    );
+  };
+
+  // ── KPI tiles with month-over-month change + spark columns ──
+  const kpis = [
+    { label: 'Orders', running: true, value: String(M.orders), diff: prev ? M.orders - prev.orders : null, text: prev ? `${M.orders - prev.orders >= 0 ? '+' : ''}${M.orders - prev.orders}` : '', series: shown.map((x) => x.orders), sub: `${M.customerCount} customers` },
+    { label: 'New customers', running: true, value: String(M.newCustomers), diff: prev ? M.newCustomers - prev.newCustomers : null, text: prev ? `${M.newCustomers - prev.newCustomers >= 0 ? '+' : ''}${M.newCustomers - prev.newCustomers}` : '', series: shown.map((x) => x.newCustomers), sub: `${M.customerCount - M.newCustomers} returning` },
+    { label: 'Avg order', value: m0(M.aov), diff: prev ? M.aov - prev.aov : null, text: prev ? `${sm(M.aov - prev.aov)}${pctTxt(pctOf(M.aov, prev.aov))}` : '', series: shown.map((x) => x.aov), sub: `${m0(M.profitPerOrder)} profit per order` },
+    { label: 'Margin', value: `${(M.margin * 100).toFixed(1)}%`, diff: prev ? M.margin - prev.margin : null, text: prev ? `${M.margin - prev.margin >= 0 ? '+' : '−'}${Math.abs((M.margin - prev.margin) * 100).toFixed(1)} pts` : '', series: shown.map((x) => x.margin), sub: `${Math.round(M.kg * 10) / 10} kg sold` },
+  ];
+
+  const batchesReliable = M.batchList.length > 0 && M.batchCoverage >= 0.6;
+  const batchMax = Math.max(1, ...M.batchList.map((b) => Math.abs(b.gross)));
+  const prodList = M.topProducts.slice(0, 6);
+  const prodMax = Math.max(1, ...prodList.map((p) => Math.abs(p.gross)));
+  const custMax = Math.max(1, ...M.topCustomers.map((c) => c.sales));
+  const expMax = Math.max(1, ...M.expenseCats.map((c) => c.value));
+  const collected = Math.max(0, M.sales - M.outstanding);
+  const collectedPct = M.sales > 0 ? (collected / M.sales) * 100 : 100;
+  const toneIcon = { good: CheckCircle, warn: AlertCircle, info: Info };
+  const toneColor = { good: THEME.green, warn: THEME.amber, info: THEME.inkSoft };
+
+  return (
+    <div ref={topRef} style={{ scrollMarginTop: 80 }}>
+      <Header
+        title="Monthly Report"
+        subtitle="See which months are strong or weak, and why, so you can plan ahead." />
+
+      {/* ===== Month strip ===== */}
+      <div ref={pillsRef} className="flex gap-2 overflow-x-auto mn-noscroll pb-1 mb-5 mn-rise">
+        {list.map((x) => {
+          const sel = x.key === key;
+          const crown = !x.isCurrent && report.ranked.length >= 2 && report.rankOf[x.key] === 1;
+          return (
+            <button key={x.key} onClick={() => selectMonth(x.key)}
+              className="flex-shrink-0 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-medium"
+              style={{ background: sel ? THEME.brand : THEME.card, color: sel ? 'white' : THEME.ink, border: `1px solid ${sel ? THEME.brand : THEME.line}` }}
+              aria-pressed={sel}>
+              {crown && <Crown size={13} style={{ color: sel ? '#FFD98A' : THEME.accent }} />}
+              {monthPill(x)}
+              {x.isCurrent && <span className="mn-live-dot" style={{ width: 6, height: 6, borderRadius: '50%', background: sel ? 'white' : THEME.green }} />}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ===== Hero: the selected month ===== */}
+      <Card key={`hero-${key}`} className="p-6 sm:p-7 mb-4 relative overflow-hidden mn-rise"
+        style={{ background: `linear-gradient(135deg, ${MR_HERO_FROM} 0%, ${MR_HERO_TO} 100%)`, border: 'none' }}>
+        <div className="mn-glow" />
+        <div className="hidden sm:block absolute -right-10 -bottom-10 opacity-10 pointer-events-none">
+          <img src={LOGO_DATA_URL} alt="" className="w-48 h-48 rounded-full object-cover" />
+        </div>
+        <div className="relative z-10">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-display text-xl sm:text-2xl text-white">{M.label}</span>
+            {isBest && (
+              <span className="mn-shimmer inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full" style={{ color: '#FFE3A3' }}>
+                <Crown size={12} /> Best month
+              </span>
+            )}
+            {isWeakest && (
+              <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full" style={{ background: 'rgba(255,255,255,0.14)', color: 'white' }}>
+                <TrendingDown size={12} /> Weakest month
+              </span>
+            )}
+            {M.isCurrent && (
+              <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full" style={{ background: 'rgba(255,255,255,0.14)', color: 'white' }}>
+                <CalendarDays size={12} /> In progress · day {M.daysElapsed} of {M.daysInMonth}
+              </span>
+            )}
+            {M.partialStart && (
+              <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full" style={{ background: 'rgba(255,255,255,0.14)', color: 'white' }}>
+                First month · from day {M.firstDay}
+              </span>
+            )}
+          </div>
+
+          <div className="text-xs uppercase tracking-widest mt-5" style={{ color: 'rgba(255,255,255,0.75)' }}>Net profit{M.isCurrent ? ' so far' : ''}</div>
+          <div className="font-display text-5xl sm:text-6xl text-white mt-1 leading-none">{heroText}</div>
+          <div className="flex items-center gap-2 flex-wrap mt-3">
+            {prev ? (
+              <>
+                <span className="px-2 py-0.5 rounded-full" style={{ background: 'rgba(255,255,255,0.12)' }}>
+                  <MrDelta onDark neutral={M.isCurrent} diff={M.net - prev.net} text={`${sm(M.net - prev.net)}${privacy ? '' : pctTxt(prev.net > 0 ? pctOf(M.net, prev.net) : null)}`} />
+                </span>
+                <span className="text-xs" style={{ color: 'rgba(255,255,255,0.75)' }}>{M.isCurrent ? `so far vs all of ${prev.label}` : `vs ${prev.label}`}</span>
+              </>
+            ) : (
+              <span className="text-xs" style={{ color: 'rgba(255,255,255,0.75)' }}>Your first month on record.</span>
+            )}
+          </div>
+          {M.isCurrent && M.projectedNet != null && (
+            <div className="text-sm mt-3" style={{ color: 'rgba(255,255,255,0.9)' }}>
+              <Target size={14} className="inline -mt-0.5 mr-1.5" />On pace for about <span className="font-semibold text-white">{m0(M.projectedNet)}</span> by month end (estimate)
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-6">
+            {[
+              ['Sales', m0(M.sales)],
+              ['Gross profit', m0(M.gross)],
+              ['Expenses', m0(M.expenses)],
+              ['Margin', `${(M.margin * 100).toFixed(1)}%`],
+            ].map(([k, v]) => (
+              <div key={k} className="rounded-lg px-3 py-2.5" style={{ background: 'rgba(255,255,255,0.12)' }}>
+                <div className="text-xs" style={{ color: 'rgba(255,255,255,0.72)' }}>{k}</div>
+                <div className="text-base sm:text-lg font-semibold text-white mt-0.5">{v}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </Card>
+
+      {/* ===== Trend + ranking (cross-month views: selection only changes the highlight) ===== */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+        <Card className="p-5 lg:col-span-2 min-w-0 mn-rise rise-1">
+          <MrSectionTitle icon={BarChart3} title="Month by month"
+            sub="Tap a month to open it."
+            right={
+              <div className="flex rounded-lg overflow-hidden text-xs" style={{ border: `1px solid ${THEME.line}` }}>
+                {Object.entries(metrics).map(([id, d]) => (
+                  <button key={id} onClick={() => setMetric(id)} className="px-2.5 py-1.5 font-medium"
+                    style={{ background: metric === id ? THEME.brand : 'transparent', color: metric === id ? 'white' : THEME.ink }}
+                    aria-pressed={metric === id}>
+                    {id === 'net' ? 'Net' : id === 'gross' ? 'Gross' : 'Sales'}
+                  </button>
+                ))}
+              </div>
+            } />
+          <ResponsiveContainer width="100%" height={250}>
+            <BarChart data={chartData} margin={{ top: 22, right: 12, left: 0, bottom: 0 }}
+              onClick={(e) => { if (e && e.activePayload && e.activePayload[0]) selectMonth(e.activePayload[0].payload.key); }}>
+              <CartesianGrid vertical={false} stroke={THEME.line} />
+              <XAxis dataKey="key" interval={0} height={36} tickLine={false} axisLine={{ stroke: THEME.line }} tick={<MonthTick />} />
+              <YAxis width={52} tickLine={false} axisLine={false} tick={{ fill: THEME.inkSoft, fontSize: 11 }} tickFormatter={compact} />
+              <Tooltip cursor={{ fill: THEME.brandBg, opacity: 0.6 }} content={<ChartTip />} />
+              {avg !== null && (
+                <ReferenceLine y={avg} stroke={THEME.accent} strokeWidth={1} />
+              )}
+              <ReferenceLine y={0} stroke={THEME.line} />
+              <Bar dataKey="value" maxBarSize={28} radius={[4, 4, 0, 0]} animationDuration={750} cursor="pointer">
+                {chartData.map((d) => (
+                  <Cell key={d.key} fill={d.value < 0 ? THEME.red : THEME.brand} fillOpacity={d.key === key ? 1 : 0.28} />
+                ))}
+                <LabelList dataKey="value" content={<SelectedLabel />} />
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+          <div className="text-xs mt-2" style={{ color: THEME.inkSoft }}>
+            {metrics[metric].label} per month{avg !== null ? ` · gold line = average of full months (${m0(avg)})` : ''}.
+          </div>
+        </Card>
+
+        <Card className="p-5 min-w-0 mn-rise rise-2">
+          <MrSectionTitle icon={Trophy} title="Best to weakest" sub={`Full months, ranked by ${metrics[metric].label.toLowerCase()}`} />
+          {rankedByMetric.length === 0 ? (
+            <div className="text-sm py-6 text-center" style={{ color: THEME.inkSoft }}>Your first full month will be ranked here once it ends.</div>
+          ) : (
+            <div className="space-y-1">
+              {rankedByMetric.map((x, i) => {
+                const v = metricGet(x);
+                const sel = x.key === key;
+                return (
+                  <button key={x.key} onClick={() => selectMonth(x.key)}
+                    className="w-full text-left rounded-lg px-2.5 py-2"
+                    style={{ background: sel ? THEME.brandBg : 'transparent' }}>
+                    <div className="flex items-center justify-between gap-2 text-sm">
+                      <span className="flex items-center gap-2 min-w-0">
+                        <span className="w-5 text-xs font-semibold tabular-nums" style={{ color: THEME.inkSoft }}>#{i + 1}</span>
+                        <span className="truncate" style={{ fontWeight: sel ? 700 : 500, color: THEME.ink }}>{x.label}</span>
+                        {i === 0 && rankedByMetric.length > 1 && <Crown size={13} style={{ color: THEME.accent }} />}
+                        {i === rankedByMetric.length - 1 && rankedByMetric.length > 2 && <TrendingDown size={13} style={{ color: THEME.red }} />}
+                      </span>
+                      <span className="font-semibold tabular-nums flex-shrink-0" style={{ color: THEME.ink }}>{m0(v)}</span>
+                    </div>
+                    <div className="mt-1.5 pl-7">
+                      <MrBar pct={(Math.abs(v) / rankMax) * 100} color={v < 0 ? THEME.red : THEME.brand} delay={i * 70} height={6} />
+                    </div>
+                  </button>
+                );
+              })}
+              {list.filter((x) => x.isCurrent).map((x) => (
+                <button key={x.key} onClick={() => selectMonth(x.key)}
+                  className="w-full text-left rounded-lg px-2.5 py-2 mt-2"
+                  style={{ background: x.key === key ? THEME.brandBg : 'transparent', borderTop: `1px solid ${THEME.line}` }}>
+                  <div className="flex items-center justify-between gap-2 text-sm">
+                    <span className="flex items-center gap-2 min-w-0">
+                      <span className="w-5 flex justify-center"><span className="mn-live-dot" style={{ width: 6, height: 6, borderRadius: '50%', background: THEME.green }} /></span>
+                      <span className="truncate" style={{ color: THEME.ink }}>{x.label} <span style={{ color: THEME.inkSoft }}>· so far</span></span>
+                    </span>
+                    <span className="font-semibold tabular-nums flex-shrink-0" style={{ color: THEME.ink }}>{m0(metricGet(x))}</span>
+                  </div>
+                  <div className="mt-1.5 pl-7">
+                    <MrBar pct={(Math.abs(metricGet(x)) / rankMax) * 100} color={metricGet(x) < 0 ? THEME.red : THEME.brand} height={6} track={THEME.line} />
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+          {completed.length > 0 && (
+            <div className="text-xs mt-4 pt-3" style={{ borderTop: `1px solid ${THEME.line}`, color: THEME.inkSoft }}>
+              Full months total: <span className="font-semibold" style={{ color: THEME.ink }}>{m0(fullMonthsNet)}</span> net · average <span className="font-semibold" style={{ color: THEME.ink }}>{m0(fullMonthsNet / completed.length)}</span> per month
+            </div>
+          )}
+        </Card>
+      </div>
+
+      {/* ===== Everything below is about the selected month (re-animates on switch) ===== */}
+      <div key={`detail-${key}`}>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+          <Card className="p-5 min-w-0 mn-rise">
+            <MrSectionTitle icon={Sparkles} title="What moved profit"
+              sub={prev ? (M.isCurrent ? `So far vs all of ${prev.label} — order count keeps growing until month end` : `Gross profit vs ${prev.label}, split into its three drivers`) : 'Comparisons start from your second month'} />
+            {!drivers ? (
+              <div className="text-sm py-4" style={{ color: THEME.inkSoft }}>
+                {prev ? 'Not enough data to split this change into drivers.' : `Once ${mrMonthLabel(nextMonthKey(M.key))} has orders, you'll see here exactly what made profit go up or down.`}
+              </div>
+            ) : (
+              <>
+                {(() => {
+                  const maxAbs = Math.max(1, ...drivers.parts.map((p) => Math.abs(p.value)));
+                  return drivers.parts.map((p, i) => {
+                    const pos = p.value >= 0;
+                    const w = (Math.abs(p.value) / maxAbs) * 50;
+                    // Order count isn't final until the month ends, so don't judge it yet.
+                    const judge = !(M.isCurrent && p.id === 'orders');
+                    const tone = !judge ? THEME.inkSoft : pos ? THEME.green : THEME.red;
+                    return (
+                      <div key={p.id} className="mb-3">
+                        <div className="flex items-center justify-between text-sm mb-1">
+                          <span style={{ color: THEME.ink }}>{p.label}</span>
+                          <span className="font-semibold tabular-nums" style={{ color: tone }}>{sm(p.value)}{!judge ? ' so far' : ''}</span>
+                        </div>
+                        <div className="relative h-2.5 rounded-full" style={{ background: THEME.bg }}>
+                          <div className="absolute top-0 bottom-0" style={{ left: '50%', width: 1, background: THEME.line }} />
+                          <MrDiverge pos={pos} width={w} delay={i * 90} color={tone} />
+                        </div>
+                      </div>
+                    );
+                  });
+                })()}
+                <div className="flex items-center justify-between text-sm mt-4 pt-3" style={{ borderTop: `1px solid ${THEME.line}` }}>
+                  <span className="font-semibold" style={{ color: THEME.ink }}>Change in gross profit{M.isCurrent ? ' so far' : ''}</span>
+                  <MrDelta neutral={M.isCurrent} diff={drivers.dG} text={sm(drivers.dG)} />
+                </div>
+                <div className="text-xs mt-2 leading-relaxed" style={{ color: THEME.inkSoft }}>
+                  {prev.orders} → {M.orders} orders · avg order {m0(prev.aov)} → {m0(M.aov)} · margin {(prev.margin * 100).toFixed(1)}% → {(M.margin * 100).toFixed(1)}%
+                </div>
+              </>
+            )}
+          </Card>
+
+          <Card className="p-5 min-w-0 mn-rise rise-1">
+            <MrSectionTitle icon={Lightbulb} title="Takeaways" sub="Written from this month's numbers" />
+            {insights.length === 0 ? (
+              <div className="text-sm" style={{ color: THEME.inkSoft }}>Nothing stands out yet.</div>
+            ) : (
+              <ul className="space-y-3">
+                {(showAllTips ? insights : insights.slice(0, 5)).map((it, i) => {
+                  const Icon = toneIcon[it.tone] || Info;
+                  return (
+                    <li key={i} className="flex items-start gap-2.5 text-sm mn-rise" style={{ animationDelay: `${0.08 + i * 0.07}s`, color: THEME.ink }}>
+                      <Icon size={16} className="mt-0.5 flex-shrink-0" style={{ color: toneColor[it.tone] }} />
+                      <span className="leading-snug">{it.text}</span>
+                    </li>
+                  );
+                })}
+                {insights.length > 5 && (
+                  <li>
+                    <button onClick={() => setShowAllTips((v) => !v)} className="text-xs font-medium pl-6" style={{ color: THEME.brand }}>
+                      {showAllTips ? 'Show fewer' : `Show ${insights.length - 5} more`}
+                    </button>
+                  </li>
+                )}
+              </ul>
+            )}
+          </Card>
+        </div>
+
+        {/* KPI tiles */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+          {kpis.map((k, i) => (
+            <Card key={k.label} className={`p-4 min-w-0 mn-lift mn-rise rise-${Math.min(3, i)}`}>
+              <div className="text-xs" style={{ color: THEME.inkSoft }}>{k.label}</div>
+              <div className="font-display text-2xl mt-0.5" style={{ color: THEME.ink }}>{k.value}</div>
+              <div className="mt-0.5 min-h-[18px]">
+                {k.diff !== null ? <MrDelta neutral={k.running && M.isCurrent} diff={k.diff} text={`${k.text} vs ${prev.short}${k.running && M.isCurrent ? ' (so far)' : ''}`} /> : <span className="text-xs" style={{ color: THEME.inkSoft }}>—</span>}
+              </div>
+              <div className="text-xs mt-1" style={{ color: THEME.inkSoft }}>{k.sub}</div>
+              <MrSpark values={k.series} selectedIdx={selIdx} />
+            </Card>
+          ))}
+        </div>
+
+        {/* Products + batches */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+          <Card className="p-5 min-w-0 mn-rise rise-1">
+            <MrSectionTitle icon={Package} title="Top products" sub="Ranked by gross profit this month" />
+            {prodList.length === 0 ? <div className="text-sm" style={{ color: THEME.inkSoft }}>No products sold.</div> : (
+              <div className="space-y-3">
+                {prodList.map((p, i) => (
+                  <div key={p.name}>
+                    <div className="flex items-baseline justify-between gap-2 text-sm">
+                      <span className="truncate" style={{ color: THEME.ink }}>{p.name}</span>
+                      <span className="font-semibold tabular-nums flex-shrink-0" style={{ color: THEME.ink }}>{m0(p.gross)}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs mt-0.5 mb-1" style={{ color: THEME.inkSoft }}>
+                      <span>{Math.round(p.qty * 100) / 100} {p.unit} · {m0(p.sales)} sales</span>
+                      <span>{M.gross > 0 ? `${Math.round((p.gross / M.gross) * 100)}% of profit` : ''}</span>
+                    </div>
+                    <MrBar pct={(Math.abs(p.gross) / prodMax) * 100} color={p.gross < 0 ? THEME.red : THEME.brand} delay={i * 60} height={6} />
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+
+          <Card className="p-5 min-w-0 mn-rise rise-2">
+            <MrSectionTitle icon={Truck} title="Delivery batches" sub="Gross profit per delivery day, from this month's orders" />
+            {!batchesReliable ? (
+              <div className="text-sm leading-relaxed" style={{ color: THEME.inkSoft }}>
+                {M.unbatched > 0
+                  ? `${M.unbatched} of ${M.orders} orders this month had no delivery batch set, so a batch breakdown wouldn't be accurate for this month.`
+                  : 'No delivery batches this month.'}
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {M.batchList.map((b, i) => (
+                  <div key={b.date}>
+                    <div className="flex items-center justify-between gap-2 text-sm">
+                      <span className="flex items-center gap-2 min-w-0">
+                        <span className="text-xs font-semibold px-1.5 py-0.5 rounded" style={{ background: THEME.brandBg, color: THEME.brand, minWidth: 34, textAlign: 'center' }}>{b.weekday}</span>
+                        <span style={{ color: THEME.ink }}>{b.label}</span>
+                        <span className="text-xs" style={{ color: THEME.inkSoft }}>· {b.orders} order{b.orders !== 1 ? 's' : ''}</span>
+                      </span>
+                      <span className="font-semibold tabular-nums flex-shrink-0" style={{ color: THEME.ink }}>{m0(b.gross)}</span>
+                    </div>
+                    <div className="mt-1">
+                      <MrBar pct={(Math.abs(b.gross) / batchMax) * 100} color={b.gross < 0 ? THEME.red : THEME.brand} delay={i * 50} height={5} />
+                    </div>
+                  </div>
+                ))}
+                {M.unbatched > 0 && (
+                  <div className="text-xs pt-1" style={{ color: THEME.inkSoft }}>+ {M.unbatched} order{M.unbatched !== 1 ? 's' : ''} with no batch set</div>
+                )}
+              </div>
+            )}
+          </Card>
+        </div>
+
+        {/* Customers + expenses + collection */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+          <Card className="p-5 min-w-0 mn-rise rise-1">
+            <MrSectionTitle icon={Users} title="Top customers" sub="By sales this month" />
+            {M.topCustomers.length === 0 ? <div className="text-sm" style={{ color: THEME.inkSoft }}>No customers yet.</div> : (
+              <div className="space-y-3">
+                {M.topCustomers.map((c, i) => (
+                  <div key={c.name + i}>
+                    <div className="flex items-center justify-between gap-2 text-sm">
+                      <span className="flex items-center gap-1.5 min-w-0">
+                        <span className="truncate" style={{ color: THEME.ink }}>{c.name}</span>
+                        {c.isNew && !M.isFirst && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full flex-shrink-0" style={{ background: THEME.successBg, color: THEME.successInk }}>New</span>}
+                      </span>
+                      <span className="font-semibold tabular-nums flex-shrink-0" style={{ color: THEME.ink }}>{m0(c.sales)}</span>
+                    </div>
+                    <div className="text-xs mt-0.5 mb-1" style={{ color: THEME.inkSoft }}>{c.orders} order{c.orders !== 1 ? 's' : ''}</div>
+                    <MrBar pct={(c.sales / custMax) * 100} color={THEME.brand} delay={i * 60} height={5} />
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+
+          <Card className="p-5 min-w-0 mn-rise rise-2">
+            <MrSectionTitle icon={Wallet} title="Expenses"
+              sub={M.gross > 0 && M.expenses > 0 ? `${Math.round((M.expenses / M.gross) * 100)}% of gross profit` : 'Operating costs this month'}
+              right={<span className="text-sm font-semibold" style={{ color: THEME.ink }}>{m0(M.expenses)}</span>} />
+            {M.expenseCats.length === 0 ? <div className="text-sm" style={{ color: THEME.inkSoft }}>No expenses logged this month.</div> : (
+              <div className="space-y-3">
+                {M.expenseCats.map((c, i) => (
+                  <div key={c.name}>
+                    <div className="flex items-center justify-between text-sm mb-1">
+                      <span style={{ color: THEME.ink }}>{c.name}</span>
+                      <span className="tabular-nums" style={{ color: THEME.ink }}>{m0(c.value)}</span>
+                    </div>
+                    <MrBar pct={(c.value / expMax) * 100} color={THEME.brandSoft} delay={i * 60} height={5} />
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+
+          <Card className="p-5 min-w-0 mn-rise rise-3">
+            <MrSectionTitle icon={Receipt} title="Collection" sub="How much of this month's sales is in your hands" />
+            <div className="font-display text-3xl" style={{ color: collectedPct >= 95 ? THEME.green : collectedPct >= 80 ? THEME.ink : THEME.red }}>
+              {Math.round(collectedPct)}%
+            </div>
+            <div className="text-xs mt-0.5 mb-3" style={{ color: THEME.inkSoft }}>collected</div>
+            <MrBar pct={collectedPct} color={THEME.green} height={10} track={THEME.errorBg} />
+            <div className="flex justify-between text-xs mt-2">
+              <span style={{ color: THEME.inkSoft }}>Collected <span className="font-semibold" style={{ color: THEME.ink }}>{m0(collected)}</span></span>
+              <span style={{ color: THEME.inkSoft }}>Unpaid <span className="font-semibold" style={{ color: M.outstanding > 0 ? THEME.red : THEME.ink }}>{m0(M.outstanding)}</span></span>
+            </div>
+            {M.cancelled > 0 && (
+              <div className="text-xs mt-4 pt-3" style={{ borderTop: `1px solid ${THEME.line}`, color: THEME.inkSoft }}>
+                {M.cancelled} cancelled order{M.cancelled !== 1 ? 's' : ''} left out of all totals.
+              </div>
+            )}
+          </Card>
+        </div>
+      </div>
+
+      {/* ===== All months side by side (the table view of every chart above) ===== */}
+      <Card className="p-5 mb-4 min-w-0 mn-rise">
+        <MrSectionTitle icon={CalendarDays} title="All months" sub="Newest first. Tap a month to open it." />
+        <div className="hidden sm:block overflow-x-auto">
+          <table className="w-full text-sm tabular-nums">
+            <thead>
+              <tr className="text-left" style={{ color: THEME.inkSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                <th className="pb-2 font-medium">Month</th>
+                <th className="pb-2 font-medium text-right">Orders</th>
+                <th className="pb-2 font-medium text-right">Sales</th>
+                <th className="pb-2 font-medium text-right">Gross</th>
+                <th className="pb-2 font-medium text-right">Expenses</th>
+                <th className="pb-2 font-medium text-right">Net</th>
+                <th className="pb-2 font-medium text-right">Margin</th>
+                <th className="pb-2 font-medium text-right">Net vs prev</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[...list].reverse().map((x) => {
+                const p = x.prevKey ? report.byKey[x.prevKey] : null;
+                const sel = x.key === key;
+                return (
+                  <tr key={x.key} onClick={() => selectMonth(x.key, true)} className="cursor-pointer row-hover"
+                    style={{ borderTop: `1px solid ${THEME.line}`, background: sel ? THEME.brandBg : 'transparent' }}>
+                    <td className="py-2.5" style={{ fontWeight: sel ? 700 : 500 }}>
+                      {x.label}{x.isCurrent && <span className="text-xs font-normal" style={{ color: THEME.inkSoft }}> · so far</span>}
+                    </td>
+                    <td className="py-2.5 text-right">{x.orders}</td>
+                    <td className="py-2.5 text-right">{m0(x.sales)}</td>
+                    <td className="py-2.5 text-right">{m0(x.gross)}</td>
+                    <td className="py-2.5 text-right">{m0(x.expenses)}</td>
+                    <td className="py-2.5 text-right font-semibold" style={{ color: x.net < 0 ? THEME.red : THEME.ink }}>{m0(x.net)}</td>
+                    <td className="py-2.5 text-right">{(x.margin * 100).toFixed(1)}%</td>
+                    <td className="py-2.5 text-right">{p ? <MrDelta neutral={x.isCurrent} diff={x.net - p.net} text={sm(x.net - p.net)} /> : <span style={{ color: THEME.inkSoft }}>—</span>}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div className="sm:hidden space-y-2">
+          {[...list].reverse().map((x) => {
+            const p = x.prevKey ? report.byKey[x.prevKey] : null;
+            const sel = x.key === key;
+            return (
+              <button key={x.key} onClick={() => selectMonth(x.key, true)} className="w-full text-left rounded-xl p-3.5"
+                style={{ background: sel ? THEME.brandBg : THEME.bg }}>
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-sm font-semibold" style={{ color: THEME.ink }}>{x.label}{x.isCurrent && <span className="text-xs font-normal" style={{ color: THEME.inkSoft }}> · so far</span>}</span>
+                  <span className="font-display text-lg" style={{ color: x.net < 0 ? THEME.red : THEME.brand }}>{m0(x.net)}</span>
+                </div>
+                <div className="flex items-center justify-between gap-2 text-xs mt-1" style={{ color: THEME.inkSoft }}>
+                  <span>{x.orders} orders · {m0(x.sales)} sales · {(x.margin * 100).toFixed(1)}%</span>
+                  {p && <MrDelta neutral={x.isCurrent} diff={x.net - p.net} text={sm(x.net - p.net)} />}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </Card>
+
+      {/* ===== How it's calculated ===== */}
+      <Card className="p-5 mb-2">
+        <button onClick={() => setShowMath((s) => !s)} className="w-full flex items-center justify-between text-sm font-medium" style={{ color: THEME.ink }}>
+          <span className="flex items-center gap-2"><Info size={15} style={{ color: THEME.inkSoft }} /> How these numbers are calculated</span>
+          {showMath ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+        </button>
+        {showMath && (
+          <ul className="text-xs leading-relaxed mt-3 space-y-1.5 list-disc pl-5" style={{ color: THEME.inkSoft }}>
+            <li>Each order counts in the month of its <b>order date</b> — the same rule the Dashboard uses. Cancelled orders are left out.</li>
+            <li><b>Gross profit</b> = sales − supplier cost. <b>Net profit</b> = gross profit − expenses logged that month.</li>
+            <li>Past months use the supplier cost saved on each order when it was placed, so a price change today never rewrites old months. The current month uses today's Price List cost, so it matches the Dashboard.</li>
+            <li>Expenses in "Stock" or "Capital / Stock" are left out, because that money is already counted as supplier cost.</li>
+            <li>"What moved profit" splits the change in gross profit into three parts — number of orders, average order size and margin — that add up exactly to the real change.</li>
+            <li>The month-end pace is an estimate: profit so far ÷ days passed × days in the month.</li>
+          </ul>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+// Center-anchored bar for the drivers card: grows right for gains, left for losses.
+function MrDiverge({ pos, width, delay = 0, color }) {
+  const [w, setW] = useState(0);
+  useEffect(() => {
+    const t = setTimeout(() => setW(width), 60 + delay);
+    return () => clearTimeout(t);
+  }, [width, delay]);
+  return (
+    <div className="absolute top-0 bottom-0 rounded-full mn-grow"
+      style={{ [pos ? 'left' : 'right']: '50%', width: `${w}%`, background: color || (pos ? THEME.green : THEME.red) }} />
+  );
+}
+
+const nextMonthKey = (key) => {
+  const [y, m] = key.split('-').map(Number);
+  const d = new Date(y, m, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+};

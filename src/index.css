@@ -119,3 +119,27 @@ button:active { transform: scale(0.95); }
 @media (prefers-reduced-motion: reduce) {
   button:active { transform: none; }
 }
+
+/* ── Monthly Report motion (v9.11) ─────────────────────────────────── */
+.mn-grow { transition: width 0.8s cubic-bezier(0.22, 1, 0.36, 1); }
+.mn-spark { transform-origin: bottom; animation: mn-spark-in 0.6s cubic-bezier(0.22, 1, 0.36, 1) both; }
+@keyframes mn-spark-in { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+/* Soft light drifting across the hero card. */
+.mn-glow {
+  position: absolute; width: 420px; height: 420px; border-radius: 50%; top: -170px; left: -130px;
+  background: radial-gradient(circle, rgba(255,255,255,0.18), rgba(255,255,255,0) 65%);
+  animation: mn-drift 14s ease-in-out infinite alternate; pointer-events: none;
+}
+@keyframes mn-drift { from { transform: translate(0, 0); } to { transform: translate(280px, 130px); } }
+/* Gold sheen on the "Best month" badge. */
+.mn-shimmer {
+  background-image: linear-gradient(110deg, rgba(255,217,138,0.18) 30%, rgba(255,240,200,0.42) 50%, rgba(255,217,138,0.18) 70%);
+  background-size: 250% 100%; animation: mn-shimmer 3.2s linear infinite;
+}
+@keyframes mn-shimmer { from { background-position: 150% 0; } to { background-position: -100% 0; } }
+.mn-noscroll { scrollbar-width: none; }
+.mn-noscroll::-webkit-scrollbar { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  .mn-grow { transition: none; }
+  .mn-spark, .mn-glow, .mn-shimmer { animation: none; }
+}
