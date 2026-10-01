@@ -53,7 +53,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v9.11 · Monthly Report';
+const APP_VERSION = 'v9.12 · Areas + Pickup status';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -201,6 +201,7 @@ const mergeAppState = (base, incoming) => {
   if (!base) return incoming;
   const delOrders = mergeTombstones(base.meta?.deletedOrders, incoming.meta?.deletedOrders);
   const delExpenses = mergeTombstones(base.meta?.deletedExpenses, incoming.meta?.deletedExpenses);
+  const delAreas = mergeTombstones(base.meta?.deletedAreas, incoming.meta?.deletedAreas);
   const pickDomain = (key) => (newerDomain(key, base.meta, incoming.meta) ? incoming[key] : base[key]) ?? base[key] ?? incoming[key];
   const domainStamps = { ...(incoming.meta?.domainStamps || {}), ...(base.meta?.domainStamps || {}) };
   Object.entries(incoming.meta?.domainStamps || {}).forEach(([k, v]) => { if ((v || '') > (domainStamps[k] || '')) domainStamps[k] = v; });
@@ -224,6 +225,10 @@ const mergeAppState = (base, incoming) => {
       lastOrderNum: Math.max(Number(base.meta?.lastOrderNum) || 0, Number(incoming.meta?.lastOrderNum) || 0),
       deletedOrders: delOrders,
       deletedExpenses: delExpenses,
+      // Areas: union by id (newest edit wins), so two devices adding areas
+      // at once both keep theirs; deletions stay deleted via tombstones.
+      areas: mergeArrayById(base.meta?.areas, incoming.meta?.areas, delAreas),
+      deletedAreas: delAreas,
       domainStamps,
     },
   };
@@ -1070,7 +1075,7 @@ function MainApp() {
           {view === 'dashboard' && <Dashboard orders={orders} setOrders={setOrders} expenses={expenses} catalog={catalog} setView={setView} privacy={privacy} setPrivacy={setPrivacy} currentUser={currentUser} theme={theme} setTheme={setTheme} />}
           {view === 'new' && <NewOrder catalog={catalog} meta={meta} setMeta={setMeta} orders={orders} setOrders={setOrders} customers={customers} setCustomers={setCustomers} onSaved={() => setView('orders')} />}
           {view === 'requests' && <OrderRequests catalog={catalog} orders={orders} setOrders={setOrders} meta={meta} setMeta={setMeta} customers={customers} setCustomers={setCustomers} />}
-          {view === 'orders' && <Orders orders={orders} setOrders={setOrders} productByName={productByName} catalog={catalog} setMeta={setMeta} />}
+          {view === 'orders' && <Orders orders={orders} setOrders={setOrders} productByName={productByName} catalog={catalog} meta={meta} setMeta={setMeta} customers={customers} setCustomers={setCustomers} />}
           {view === 'pickup' && <Pickup orders={orders} catalog={catalog} />}
           {view === 'salescheck' && <SalesCheck orders={orders} catalog={catalog} privacy={privacy} />}
           {view === 'expenses' && <Expenses expenses={expenses} setExpenses={setExpenses} setMeta={setMeta} />}
@@ -1223,6 +1228,59 @@ export default function App() {
 const cNormName = (s) => (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
 const cDigits = (s) => (s || '').replace(/[^\d]/g, '');
 const makeCustomerId = () => 'cust_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+/* ============================================================
+   AREAS — colored location tags (e.g. "The Bellecourt")
+   ============================================================
+   Stored in meta.areas = [{ id, name, color, keywords, updated_at }].
+   Orders carry area_id; saved customers carry area_id too, so a
+   customer only has to be tagged once. Deleted areas are tombstoned
+   in meta.deletedAreas so multi-device merging can't resurrect them. */
+const AREA_COLORS = [
+  { id: 'red',    light: { bg: '#FBE4E2', ink: '#9F2F2D', dot: '#D9534F' }, dark: { bg: '#4A2624', ink: '#F4ADA8', dot: '#E5736D' } },
+  { id: 'orange', light: { bg: '#FCEBDD', ink: '#9A4A12', dot: '#E08A3C' }, dark: { bg: '#4A3220', ink: '#F5C08E', dot: '#E89A55' } },
+  { id: 'yellow', light: { bg: '#FBF1C9', ink: '#7A5B0C', dot: '#D4A82A' }, dark: { bg: '#463D1C', ink: '#EAD48A', dot: '#D9B840' } },
+  { id: 'green',  light: { bg: '#E3F0DF', ink: '#2F6630', dot: '#5A9A55' }, dark: { bg: '#25381F', ink: '#A9D49C', dot: '#74B067' } },
+  { id: 'teal',   light: { bg: '#DCEFEC', ink: '#1E615C', dot: '#3E9A92' }, dark: { bg: '#1F3836', ink: '#93D1CA', dot: '#55B0A7' } },
+  { id: 'blue',   light: { bg: '#DFEAF7', ink: '#2B5584', dot: '#4F84C4' }, dark: { bg: '#22324A', ink: '#A6C4EC', dot: '#6A9BDA' } },
+  { id: 'purple', light: { bg: '#ECE3F5', ink: '#5C3D86', dot: '#8E6BC2' }, dark: { bg: '#352A48', ink: '#C9B3EB', dot: '#A285D6' } },
+  { id: 'pink',   light: { bg: '#F8E1EC', ink: '#8C2F5E', dot: '#CF5F96' }, dark: { bg: '#462638', ink: '#F0AECF', dot: '#DB78A8' } },
+  { id: 'gray',   light: { bg: '#ECE8E3', ink: '#55504A', dot: '#8F877E' }, dark: { bg: '#353029', ink: '#CFC6BB', dot: '#A39A8E' } },
+];
+const areaTone = (colorId) => {
+  const c = AREA_COLORS.find((x) => x.id === colorId) || AREA_COLORS[AREA_COLORS.length - 1];
+  return THEME.bg === THEME_DARK.bg ? c.dark : c.light;
+};
+const makeAreaId = () => 'area_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+const newAreaRecord = (list, name) => ({
+  id: makeAreaId(),
+  name: name.trim(),
+  // Next unused color, so neighbouring areas never share one by accident.
+  color: (AREA_COLORS.find((c) => !(list || []).some((a) => a.color === c.id)) || AREA_COLORS[(list || []).length % AREA_COLORS.length]).id,
+  keywords: '',
+  updated_at: new Date().toISOString(),
+});
+// Words that identify an area inside an address: its name (with and without a
+// leading "The"), plus any comma-separated "also matches" keywords.
+const areaTerms = (a) => {
+  const name = (a.name || '').trim().toLowerCase();
+  return [name, name.replace(/^the\s+/, ''), ...String(a.keywords || '').split(',').map((s) => s.trim().toLowerCase())]
+    .filter((s, i, arr) => s.length >= 3 && arr.indexOf(s) === i);
+};
+// The one area whose name/keywords appear in an address. Ambiguous → null.
+function detectArea(areas, address) {
+  const addr = (address || '').toLowerCase();
+  if (!addr) return null;
+  const hits = (areas || []).filter((a) => areaTerms(a).some((t) => addr.includes(t)));
+  return hits.length === 1 ? hits[0].id : null;
+}
+// Is this order from the given person? Phone (7+ digits) first, then exact name.
+const sameCustomer = (o, name, phone) => {
+  const d = cDigits(phone);
+  if (d.length >= 7 && cDigits(o.phone) === d) return true;
+  const n = cNormName(name);
+  return !!n && cNormName(o.customer) === n;
+};
 
 // Live last-order date + order count for a saved customer, read from orders.
 function customerStats(orders, c) {
@@ -2249,6 +2307,10 @@ function OrderRequests({ catalog, orders, setOrders, meta, setMeta, customers, s
       // Honor the customer's requested delivery day. Fall back to the next
       // scheduled batch only if their preferred date can't be parsed.
       const requestedBatch = parsePreferredBatch(pm.deliveryDate) || suggestedBatch();
+      // Area: the saved customer's area wins; otherwise detect it from the address.
+      const savedCust = findCustomerMatch(customers, req.customer_name, req.phone);
+      const reqAreas = (meta && meta.areas) || [];
+      const areaIdForOrder = (savedCust && reqAreas.some((a) => a.id === savedCust.area_id) ? savedCust.area_id : '') || detectArea(reqAreas, req.address) || '';
       const order = {
         id, date: today(),
         customer: req.customer_name, phone: req.phone,
@@ -2260,6 +2322,7 @@ function OrderRequests({ catalog, orders, setOrders, meta, setMeta, customers, s
         online_ref: reqRef(req) || '',
         contact_method: isMsgr ? 'Messenger' : 'SMS / Call',
         delivery_address: req.address || '',
+        area_id: areaIdForOrder,
         preferred_date: pm.deliveryDate || '',
         preferred_time: pm.preferredTime || '',
         customer_note: pm.freeNote || '',
@@ -2281,7 +2344,8 @@ function OrderRequests({ catalog, orders, setOrders, meta, setMeta, customers, s
             id: cid, name: req.customer_name,
             phone: isMsgr ? '' : (req.phone || ''),
             messenger: isMsgr ? (req.phone || '').replace(/^messenger:\s*/i, '') : '',
-            address: req.address || '', payment: '', notes: '',
+            address: req.address || '', payment: '', notes: '', area_id: areaIdForOrder,
+            updated_at: new Date().toISOString(),
           } }));
         } else if (req.address && req.address !== (match.address || '')) {
           setCustomers((prev) => ({ ...prev, [match.id]: { ...prev[match.id], address: req.address } }));
@@ -2645,6 +2709,24 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, customers, setCus
   const [address, setAddress] = useState('');
   const [internalNotes, setInternalNotes] = useState('');
   const [pickedFromSaved, setPickedFromSaved] = useState(false);
+  // Area: filled from the saved customer, else detected from the address,
+  // until the admin picks one by hand (areaTouched).
+  const [areaId, setAreaId] = useState('');
+  const [areaTouched, setAreaTouched] = useState(false);
+  const [areaPickerOpen, setAreaPickerOpen] = useState(false);
+  const areas = (meta && meta.areas) || [];
+  const areaById = Object.fromEntries(areas.map((a) => [a.id, a]));
+  useEffect(() => {
+    if (!areaTouched) setAreaId(detectArea(areas, address) || '');
+  }, [address, areaTouched, meta && meta.areas]); // eslint-disable-line react-hooks/exhaustive-deps
+  const chooseArea = (id) => { setAreaId(id || ''); setAreaTouched(true); setAreaPickerOpen(false); };
+  const createAreaHere = (name) => {
+    const existing = areas.find((a) => a.name.trim().toLowerCase() === name.trim().toLowerCase());
+    if (existing) return existing.id;
+    const rec = newAreaRecord(areas, name);
+    setMeta((m) => ({ ...m, areas: [...(m.areas || []), rec] }));
+    return rec.id;
+  };
   const [pendingConflict, setPendingConflict] = useState(null);
   const [showSuggest, setShowSuggest] = useState(false);
   const [paymentStatus, setPaymentStatus] = useState('Unpaid');
@@ -2703,6 +2785,7 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, customers, setCus
     setCustomer(c.name || '');
     if (c.phone) setPhone(c.phone);
     if (c.address) setAddress(c.address);
+    if (c.area_id) { setAreaId(c.area_id); setAreaTouched(true); }
     // Payment is treated fresh every order — never carried over from the saved
     // customer. Each order starts Unpaid with the GCash default.
     setInternalNotes(c.notes || '');
@@ -2745,6 +2828,7 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, customers, setCus
 
   const resetForm = () => {
     setCustomer(''); setPhone(''); setNotes(''); setAddress(''); setInternalNotes(''); setPickedFromSaved(false);
+    setAreaId(''); setAreaTouched(false);
     setItems([{ product: '', qty: 1, note: '', wholesale: false }]);
     setPaymentStatus('Unpaid'); setPaymentMethod('Gcash'); setAmountPaid('');
     setDeliveryStatus('Pending'); setWholesaleOrder(false);
@@ -2764,10 +2848,14 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, customers, setCus
       notes: internalNotes.trim(),
     };
     const match = findCustomerMatch(customers, name, fields.phone);
+    const validArea = areaById[areaId] ? areaId : '';
     if (!match) {
       const id = makeCustomerId();
-      setCustomers((prev) => ({ ...prev, [id]: { id, ...fields, updated_at: new Date().toISOString() } }));
+      setCustomers((prev) => ({ ...prev, [id]: { id, ...fields, area_id: validArea, updated_at: new Date().toISOString() } }));
       return null;
+    }
+    if (validArea && match.area_id !== validArea) {
+      setCustomers((prev) => (prev[match.id] ? { ...prev, [match.id]: { ...prev[match.id], area_id: validArea, updated_at: new Date().toISOString() } } : prev));
     }
     const changed =
       (fields.address && fields.address !== (match.address || '')) ||
@@ -2828,6 +2916,7 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, customers, setCus
       // admin-only and never reaches a receipt. Address stays admin-only too.
       source: 'manual',
       delivery_address: address.trim(),
+      area_id: areaById[areaId] ? areaId : '',
       contact_method: /messenger/i.test(phone) ? 'Messenger' : (phone.trim() ? 'SMS / Call' : ''),
       online_ref: '', preferred_date: '', preferred_time: '',
       customer_note: notes.trim(),
@@ -2941,6 +3030,29 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, customers, setCus
                   <div className="text-xs mt-1.5 flex items-center gap-1" style={{ color: THEME.green }}>
                     <Check size={12} /> Saved from a previous order. You can still edit this address.
                   </div>
+                )}
+              </div>
+              <div>
+                <Label>Area</Label>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {areas.map((a) => {
+                    const on = areaId === a.id;
+                    return (
+                      <button key={a.id} type="button" onClick={() => chooseArea(on ? '' : a.id)}
+                        className="rounded-full p-0.5" style={{ outline: on ? `2px solid ${areaTone(a.color).dot}` : 'none', outlineOffset: 1, opacity: areaId && !on ? 0.55 : 1 }}
+                        aria-pressed={on}>
+                        <AreaChip area={a} size="md" />
+                      </button>
+                    );
+                  })}
+                  <button type="button" onClick={() => setAreaPickerOpen(true)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-sm"
+                    style={{ border: `1px dashed ${THEME.inkSoft}`, color: THEME.inkSoft }}>
+                    <Plus size={12} /> {areas.length ? 'New' : 'Add an area'}
+                  </button>
+                </div>
+                {areaId && !areaTouched && (
+                  <div className="text-xs mt-1.5" style={{ color: THEME.inkSoft }}>Detected from the address. Tap another area to change it.</div>
                 )}
               </div>
               <div>
@@ -3148,6 +3260,9 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, customers, setCus
           </div>
         )}
       </Modal>
+      <AreaPickerModal open={areaPickerOpen} onClose={() => setAreaPickerOpen(false)} areas={areas}
+        currentId={areaById[areaId] ? areaId : null} title="Area" subtitle="Where this customer lives"
+        onPick={chooseArea} onCreate={createAreaHere} />
     </div>
   );
 }
@@ -3156,8 +3271,19 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, customers, setCus
    ORDERS LIST
    ============================================================ */
 
-function Orders({ orders, setOrders, productByName, catalog, setMeta }) {
+function Orders({ orders, setOrders, productByName, catalog, meta, setMeta, customers, setCustomers }) {
   const [search, setSearch] = useState('');
+  const [areaFilter, setAreaFilter] = useState('all');        // 'all' | areaId | 'none'
+  const [areaFor, setAreaFor] = useState(null);                // order whose area is being picked
+  const [alsoOthers, setAlsoOthers] = useState(true);          // also tag this customer's untagged orders
+  const [showAreaManager, setShowAreaManager] = useState(false);
+  const [areaToast, setAreaToast] = useState('');
+  const [groupByArea, setGroupByArea] = useState(() => {
+    try { return localStorage.getItem(STORAGE_PREFIX + 'groupByArea') !== '0'; } catch (e) { return true; }
+  });
+  const areas = (meta && meta.areas) || [];
+  const areaById = useMemo(() => Object.fromEntries(areas.map((a) => [a.id, a])), [areas]);
+  const areaOf = (o) => areaById[o.area_id] || null;
   const [filter, setFilter] = useState('all');
   const [deliveryFilter, setDeliveryFilter] = useState('all');
   const [batchFilter, setBatchFilter] = useState('all');
@@ -3174,6 +3300,8 @@ function Orders({ orders, setOrders, productByName, catalog, setMeta }) {
       if (batchFilter === 'unassigned') list = list.filter(o => !o.delivery_batch);
       else list = list.filter(o => o.delivery_batch === batchFilter);
     }
+    if (areaFilter === 'none') list = list.filter(o => !areaById[o.area_id]);
+    else if (areaFilter !== 'all') list = list.filter(o => o.area_id === areaFilter);
     if (search.trim()) {
       const q = search.toLowerCase();
       list = list.filter(o =>
@@ -3183,7 +3311,68 @@ function Orders({ orders, setOrders, productByName, catalog, setMeta }) {
       );
     }
     return list.sort((a, b) => (b.id || '').localeCompare(a.id || ''));
-  }, [orders, search, filter, deliveryFilter, batchFilter]);
+  }, [orders, search, filter, deliveryFilter, batchFilter, areaFilter, areaById]);
+
+  // ── Area tagging ──
+  const nowIso = () => new Date().toISOString();
+  const createArea = (name) => {
+    const existing = areas.find((a) => a.name.trim().toLowerCase() === name.trim().toLowerCase());
+    if (existing) return existing.id;
+    const rec = newAreaRecord(areas, name);
+    setMeta((m) => ({ ...m, areas: [...(m.areas || []), rec] }));
+    return rec.id;
+  };
+  // Other orders from the same customer that have no area yet.
+  const untaggedSiblings = (order) => Object.values(orders).filter((o) =>
+    o.id !== order.id && !areaById[o.area_id] && sameCustomer(o, order.customer, order.phone));
+  const assignArea = (order, areaId) => {
+    const t = nowIso();
+    const siblings = areaId && alsoOthers ? untaggedSiblings(order) : [];
+    setOrders((prev) => {
+      const next = { ...prev };
+      [order, ...siblings].forEach((o) => { if (next[o.id]) next[o.id] = { ...next[o.id], area_id: areaId || '', updated_at: t }; });
+      return next;
+    });
+    // Remember it on the saved customer so their next order is tagged automatically.
+    if (setCustomers) {
+      const match = findCustomerMatch(customers, order.customer, order.phone);
+      if (match) {
+        setCustomers((prev) => (prev[match.id] ? { ...prev, [match.id]: { ...prev[match.id], area_id: areaId || '', updated_at: t } } : prev));
+      } else if (areaId && (order.customer || '').trim()) {
+        const cid = makeCustomerId();
+        const isMsgr = /messenger/i.test(order.phone || '');
+        setCustomers((prev) => ({ ...prev, [cid]: {
+          id: cid, name: order.customer.trim(),
+          phone: isMsgr ? '' : (order.phone || ''),
+          messenger: isMsgr ? (order.phone || '').replace(/^messenger:\s*/i, '') : '',
+          address: order.delivery_address || '', notes: '', area_id: areaId, updated_at: t,
+        } }));
+      }
+    }
+    setSelected((sel) => (sel && sel.id === order.id ? { ...sel, area_id: areaId || '' } : sel));
+    setAreaFor(null);
+    if (siblings.length) {
+      setAreaToast(`Also tagged ${siblings.length} other order${siblings.length !== 1 ? 's' : ''} from ${order.customer}.`);
+      setTimeout(() => setAreaToast(''), 3500);
+    }
+  };
+  const openAreaPicker = (e, order) => { if (e) e.stopPropagation(); setAlsoOthers(true); setAreaFor(order); };
+  const toggleGroup = () => setGroupByArea((v) => {
+    try { localStorage.setItem(STORAGE_PREFIX + 'groupByArea', v ? '0' : '1'); } catch (e) {}
+    return !v;
+  });
+  // Grouping only makes sense inside one delivery batch.
+  const grouped = groupByArea && areas.length > 0 && batchFilter !== 'all' && batchFilter !== 'unassigned';
+  const orderGroups = useMemo(() => {
+    if (!grouped) return [{ area: null, orders: ordersList, plain: true }];
+    const byKey = {};
+    ordersList.forEach((o) => { const k = areaById[o.area_id] ? o.area_id : '__none'; (byKey[k] = byKey[k] || []).push(o); });
+    const keys = [...areas.map((a) => a.id).filter((id) => byKey[id]), ...(byKey.__none ? ['__none'] : [])];
+    return keys.map((k) => ({
+      area: k === '__none' ? null : areaById[k],
+      orders: byKey[k].slice().sort((a, b) => (a.customer || '').localeCompare(b.customer || '')),
+    }));
+  }, [grouped, ordersList, areas, areaById]);
 
   // Available batches — derived from existing orders' delivery_batch, plus the next 2 Tuesdays and Saturdays.
   const availableBatches = useMemo(() => {
@@ -3235,7 +3424,7 @@ function Orders({ orders, setOrders, productByName, catalog, setMeta }) {
     const batchOrders = Object.values(orders)
       .filter(o => o.delivery_batch === batchFilter && o.delivery_status !== 'Cancelled')
       .sort((a, b) => (a.customer || '').localeCompare(b.customer || ''));
-    return <PickupMode batch={batchFilter} orders={batchOrders} onBack={() => setPickupMode(false)} />;
+    return <PickupMode batch={batchFilter} orders={batchOrders} areas={areas} onBack={() => setPickupMode(false)} />;
   }
 
   if (batchExport && batchFilter !== 'all' && batchFilter !== 'unassigned') {
@@ -3334,6 +3523,49 @@ function Orders({ orders, setOrders, productByName, catalog, setMeta }) {
               </>
             )}
           </div>
+
+          {/* Area filter row — counts follow the batch you're looking at */}
+          <div className="flex flex-wrap items-center gap-2 mt-2.5 pt-2.5" style={{ borderTop: `1px solid ${THEME.line}` }}>
+            <span className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft, letterSpacing: '0.06em' }}>Area</span>
+            {areas.length === 0 ? (
+              <button onClick={() => setShowAreaManager(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg"
+                style={{ border: `1px dashed ${THEME.inkSoft}`, color: THEME.inkSoft }}>
+                <MapPin size={13} /> Set up areas to color-code where customers live
+              </button>
+            ) : (() => {
+              const inScope = Object.values(orders).filter((o) => o.delivery_status !== 'Cancelled' &&
+                (batchFilter === 'all' ? true : batchFilter === 'unassigned' ? !o.delivery_batch : o.delivery_batch === batchFilter));
+              const noneCount = inScope.filter((o) => !areaById[o.area_id]).length;
+              const pillStyle = (on) => ({ border: `1px solid ${on ? THEME.brand : THEME.line}`, background: on ? THEME.brandBg : 'transparent' });
+              return (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button onClick={() => setAreaFilter('all')} className="px-3 py-1.5 text-sm rounded-lg"
+                    style={{ background: areaFilter === 'all' ? THEME.brand : 'transparent', color: areaFilter === 'all' ? 'white' : THEME.ink, border: `1px solid ${areaFilter === 'all' ? THEME.brand : THEME.line}` }}>All</button>
+                  {areas.map((a) => {
+                    const n = inScope.filter((o) => o.area_id === a.id).length;
+                    const on = areaFilter === a.id;
+                    return (
+                      <button key={a.id} onClick={() => setAreaFilter(on ? 'all' : a.id)}
+                        className="inline-flex items-center gap-1.5 pl-1 pr-2 py-1 rounded-lg" style={pillStyle(on)} aria-pressed={on}>
+                        <AreaChip area={a} />
+                        <span className="text-xs" style={{ color: THEME.inkSoft }}>{n}</span>
+                      </button>
+                    );
+                  })}
+                  {noneCount > 0 && (
+                    <button onClick={() => setAreaFilter(areaFilter === 'none' ? 'all' : 'none')}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs" style={{ ...pillStyle(areaFilter === 'none'), color: THEME.inkSoft }}>
+                      No area <span>{noneCount}</span>
+                    </button>
+                  )}
+                  <button onClick={() => setShowAreaManager(true)} className="text-xs font-medium px-2 py-1" style={{ color: THEME.inkSoft }}>
+                    Manage
+                  </button>
+                </div>
+              );
+            })()}
+          </div>
         </div>
 
         {ordersList.length === 0 ? (
@@ -3341,28 +3573,52 @@ function Orders({ orders, setOrders, productByName, catalog, setMeta }) {
         ) : (
           <>
           {/* Filtered summary — what am I looking at, and what's it worth */}
-          <div className="text-xs mb-2" style={{ color: THEME.inkSoft }}>
-            {ordersList.length} order{ordersList.length !== 1 ? 's' : ''} · {peso(ordersList.reduce((s, o) => s + (o.items || []).reduce((t, i) => t + i.qty * i.price, 0), 0))} total value
+          <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+            <div className="text-xs" style={{ color: THEME.inkSoft }}>
+              {ordersList.length} order{ordersList.length !== 1 ? 's' : ''} · {peso(ordersList.reduce((s, o) => s + (o.items || []).reduce((t, i) => t + i.qty * i.price, 0), 0))} total value
+            </div>
+            {areas.length > 0 && batchFilter !== 'all' && batchFilter !== 'unassigned' && (
+              <button onClick={toggleGroup} className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full"
+                style={{ background: groupByArea ? THEME.brandBg : 'transparent', color: groupByArea ? THEME.brand : THEME.inkSoft, border: `1px solid ${groupByArea ? THEME.brandBg : THEME.line}` }}
+                aria-pressed={groupByArea}>
+                <MapPin size={12} /> Group by area
+              </button>
+            )}
           </div>
 
           {/* Desktop / tablet: table */}
           <div className="overflow-x-auto -mx-1 hidden sm:block">
-          <table className="w-full text-sm" style={{ minWidth: 640 }}>
+          <table className="w-full text-sm" style={{ minWidth: 760 }}>
             <thead>
               <tr className="text-left" style={{ color: THEME.inkSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                 <th className="pb-2 font-medium">Order ID</th>
                 <th className="pb-2 font-medium">Date</th>
                 <th className="pb-2 font-medium">Customer</th>
                 <th className="pb-2 font-medium">Batch</th>
+                <th className="pb-2 font-medium">Area</th>
                 <th className="pb-2 font-medium">Items</th>
                 <th className="pb-2 font-medium text-right">Total</th>
-                <th className="pb-2 font-medium">Payment</th>
+                <th className="pb-2 pl-4 font-medium">Payment</th>
                 <th className="pb-2 font-medium">Delivery</th>
                 <th className="pb-2 font-medium"></th>
               </tr>
             </thead>
             <tbody>
-              {ordersList.map((o) => {
+              {orderGroups.map((g) => (
+                <React.Fragment key={g.plain ? 'all' : (g.area ? g.area.id : 'none')}>
+                {!g.plain && (
+                  <tr>
+                    <td colSpan={10} className="pt-4 pb-2" style={{ borderTop: `1px solid ${THEME.line}` }}>
+                      <div className="flex items-center gap-2">
+                        {g.area ? <AreaChip area={g.area} size="md" /> : <span className="text-sm font-medium" style={{ color: THEME.inkSoft }}>No area</span>}
+                        <span className="text-xs" style={{ color: THEME.inkSoft }}>
+                          {g.orders.length} order{g.orders.length !== 1 ? 's' : ''} · {peso(g.orders.reduce((s, o) => s + (o.items || []).reduce((t, i) => t + i.qty * i.price, 0), 0))}
+                        </span>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              {g.orders.map((o) => {
                 const total = (o.items || []).reduce((s, i) => s + i.qty * i.price, 0);
                 const isCancelled = o.delivery_status === 'Cancelled';
                 return (
@@ -3380,9 +3636,10 @@ function Orders({ orders, setOrders, productByName, catalog, setMeta }) {
                         <span className="text-xs italic" style={{ color: THEME.inkSoft }}>Unassigned</span>
                       )}
                     </td>
+                    <td className="py-2.5"><AreaChip area={areaOf(o)} onClick={(e) => openAreaPicker(e, o)} /></td>
                     <td className="py-2.5" style={{ color: THEME.inkSoft }}>{(o.items || []).length} item{(o.items || []).length !== 1 ? 's' : ''}</td>
                     <td className="py-2.5 text-right font-medium">{peso(total)}</td>
-                    <td className="py-2.5"><Badge color={statusColor(o.payment_status)}>{o.payment_status}</Badge></td>
+                    <td className="py-2.5 pl-4"><Badge color={statusColor(o.payment_status)}>{o.payment_status}</Badge></td>
                     <td className="py-2.5"><Badge color={statusColor(o.delivery_status)}>{o.delivery_status}</Badge></td>
                     <td className="py-2.5 text-right">
                       <button onClick={(e) => { e.stopPropagation(); setSelected(o); }} style={{ color: THEME.inkSoft }} className="p-1.5 hover:opacity-70"><Eye size={15} /></button>
@@ -3390,39 +3647,55 @@ function Orders({ orders, setOrders, productByName, catalog, setMeta }) {
                   </tr>
                 );
               })}
+                </React.Fragment>
+              ))}
             </tbody>
           </table>
           </div>
 
           {/* Mobile: tappable order cards — no sideways scrolling */}
           <div className="sm:hidden space-y-2">
-            {ordersList.map((o) => {
-              const total = (o.items || []).reduce((s, i) => s + i.qty * i.price, 0);
-              const isCancelled = o.delivery_status === 'Cancelled';
-              return (
-                <button key={o.id} onClick={() => setSelected(o)}
-                  className="w-full text-left rounded-xl p-3.5"
-                  style={{ background: THEME.bg, opacity: isCancelled ? 0.55 : 1 }}>
-                  <div className="flex items-baseline justify-between gap-2">
-                    <span className="text-sm font-semibold truncate" style={{ textDecoration: isCancelled ? 'line-through' : 'none' }}>{o.customer}</span>
-                    <span className="font-display text-lg flex-shrink-0" style={{ color: THEME.brand }}>{peso(total)}</span>
+            {orderGroups.map((g) => (
+              <div key={g.plain ? 'all' : (g.area ? g.area.id : 'none')} className="space-y-2">
+                {!g.plain && (
+                  <div className="flex items-center gap-2 pt-3 pb-0.5">
+                    {g.area ? <AreaChip area={g.area} size="md" /> : <span className="text-sm font-medium" style={{ color: THEME.inkSoft }}>No area</span>}
+                    <span className="text-xs" style={{ color: THEME.inkSoft }}>{g.orders.length} order{g.orders.length !== 1 ? 's' : ''}</span>
                   </div>
-                  <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>
-                    {o.id} · {fmtDate(o.date)} · {(o.items || []).length} item{(o.items || []).length !== 1 ? 's' : ''}
-                  </div>
-                  <div className="flex items-center gap-1.5 mt-2 flex-wrap">
-                    {o.delivery_batch && (
-                      <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium"
-                        style={{ background: THEME.brandBg, color: THEME.brand }}>
-                        <Truck size={10} /> {batchLabel(o.delivery_batch)}
-                      </span>
-                    )}
-                    <Badge color={statusColor(o.payment_status)}>{o.payment_status}</Badge>
-                    <Badge color={statusColor(o.delivery_status)}>{o.delivery_status}</Badge>
-                  </div>
-                </button>
-              );
-            })}
+                )}
+                {g.orders.map((o) => {
+                  const total = (o.items || []).reduce((s, i) => s + i.qty * i.price, 0);
+                  const isCancelled = o.delivery_status === 'Cancelled';
+                  const area = areaOf(o);
+                  const tone = area ? areaTone(area.color) : null;
+                  return (
+                    <div key={o.id} role="button" tabIndex={0} onClick={() => setSelected(o)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') setSelected(o); }}
+                      className="w-full text-left rounded-xl p-3.5 cursor-pointer"
+                      style={{ background: THEME.bg, opacity: isCancelled ? 0.55 : 1, borderLeft: tone ? `4px solid ${tone.dot}` : '4px solid transparent' }}>
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className="text-sm font-semibold truncate" style={{ textDecoration: isCancelled ? 'line-through' : 'none' }}>{o.customer}</span>
+                        <span className="font-display text-lg flex-shrink-0" style={{ color: THEME.brand }}>{peso(total)}</span>
+                      </div>
+                      <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>
+                        {o.id} · {fmtDate(o.date)} · {(o.items || []).length} item{(o.items || []).length !== 1 ? 's' : ''}
+                      </div>
+                      <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                        {o.delivery_batch && (
+                          <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium"
+                            style={{ background: THEME.brandBg, color: THEME.brand }}>
+                            <Truck size={10} /> {batchLabel(o.delivery_batch)}
+                          </span>
+                        )}
+                        <AreaChip area={area} onClick={(e) => openAreaPicker(e, o)} />
+                        <Badge color={statusColor(o.payment_status)}>{o.payment_status}</Badge>
+                        <Badge color={statusColor(o.delivery_status)}>{o.delivery_status}</Badge>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
           </div>
           </>
         )}
@@ -3439,14 +3712,53 @@ function Orders({ orders, setOrders, productByName, catalog, setMeta }) {
             onPrint={(mode) => setPrintMode(mode)}
             onUpdate={(patch) => updateOrderStatus(selected.id, patch)}
             onSaveFull={(updated) => saveFullOrder(selected.id, updated)}
+            area={areaOf(selected)}
+            onEditArea={() => openAreaPicker(null, orders[selected.id] || selected)}
           />
         )}
       </Modal>
+
+      <AreaPickerModal
+        open={!!areaFor}
+        onClose={() => setAreaFor(null)}
+        areas={areas}
+        currentId={areaFor && areaById[areaFor.area_id] ? areaFor.area_id : null}
+        title={areaFor ? `Area for ${areaFor.customer}` : 'Area'}
+        subtitle={areaFor && areaFor.delivery_address ? areaFor.delivery_address : 'Where this customer lives'}
+        onPick={(id) => areaFor && assignArea(areaFor, id)}
+        onCreate={createArea}
+        onManage={() => { setAreaFor(null); setShowAreaManager(true); }}
+        extra={areaFor && (() => {
+          const n = untaggedSiblings(areaFor).length;
+          return (
+            <div className="text-xs leading-relaxed" style={{ color: THEME.inkSoft }}>
+              {n > 0 && (
+                <label className="flex items-start gap-2 mb-1.5 cursor-pointer" style={{ color: THEME.ink }}>
+                  <input type="checkbox" checked={alsoOthers} onChange={(e) => setAlsoOthers(e.target.checked)}
+                    style={{ width: 16, height: 16, accentColor: THEME.brand, marginTop: 1 }} />
+                  <span>Also tag {areaFor.customer}'s {n} other untagged order{n !== 1 ? 's' : ''}</span>
+                </label>
+              )}
+              Their next orders will be tagged automatically.
+            </div>
+          );
+        })()}
+      />
+      <AreaManagerModal open={showAreaManager} onClose={() => setShowAreaManager(false)}
+        areas={areas} setMeta={setMeta} orders={orders} setOrders={setOrders} customers={customers} setCustomers={setCustomers} />
+
+      {areaToast && (
+        <div className="fixed inset-x-0 bottom-6 z-50 flex justify-center px-4 pointer-events-none no-print">
+          <div className="px-4 py-2.5 rounded-xl text-sm shadow-lg mn-rise" style={{ background: THEME.ink, color: THEME.bg }}>
+            <Check size={14} className="inline -mt-0.5 mr-1.5" />{areaToast}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint, onUpdate, onSaveFull }) {
+function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint, onUpdate, onSaveFull, area, onEditArea }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(null);
   const [err, setErr] = useState('');
@@ -3644,6 +3956,15 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
             <span className="text-sm">
               <span className="font-semibold">Delivery Batch:</span> {batchLabel(order.delivery_batch)}
             </span>
+          </div>
+        )}
+
+        {/* Area tag — where this customer lives */}
+        {!editing && onEditArea && (
+          <div className="mb-4 flex items-center gap-2 text-sm">
+            <MapPin size={15} style={{ color: THEME.inkSoft }} />
+            <span style={{ color: THEME.inkSoft }}>Area</span>
+            <AreaChip area={area} size="md" onClick={onEditArea} />
           </div>
         )}
 
@@ -3962,54 +4283,346 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
    - Shows progress per customer and overall
    ============================================================ */
 
-function PickupMode({ batch, orders, onBack }) {
-  // Local state: { [orderId]: { [itemIndex]: true } }
-  const [picked, setPicked] = useState({});
+/* ============================================================
+   AREA UI — chip, picker, manager
+   ============================================================ */
 
-  const togglePick = (orderId, itemIdx) => {
-    setPicked(prev => {
-      const orderPicks = prev[orderId] || {};
-      return { ...prev, [orderId]: { ...orderPicks, [itemIdx]: !orderPicks[itemIdx] } };
+// Pastel tag in the area's color. With no area and an onClick, shows a
+// dashed "+ Area" prompt so tagging is one tap away.
+function AreaChip({ area, onClick, size = 'sm' }) {
+  const pad = size === 'xs' ? 'px-1.5 py-0.5 text-[11px]' : size === 'md' ? 'px-2.5 py-1 text-sm' : 'px-2 py-0.5 text-xs';
+  if (!area) {
+    if (!onClick) return null;
+    return (
+      <button type="button" onClick={onClick}
+        className={`inline-flex items-center gap-1 rounded-full font-medium whitespace-nowrap ${pad}`}
+        style={{ border: `1px dashed ${THEME.inkSoft}`, color: THEME.inkSoft, background: 'transparent' }}>
+        <Plus size={10} /> Area
+      </button>
+    );
+  }
+  const t = areaTone(area.color);
+  const inner = (<><span style={{ width: 7, height: 7, borderRadius: '50%', background: t.dot, flexShrink: 0 }} />{area.name}</>);
+  const cls = `inline-flex items-center gap-1.5 rounded-full font-medium whitespace-nowrap ${pad}`;
+  return onClick
+    ? <button type="button" onClick={onClick} className={cls} style={{ background: t.bg, color: t.ink }} title="Change area">{inner}</button>
+    : <span className={cls} style={{ background: t.bg, color: t.ink }}>{inner}</span>;
+}
+
+// Pick (or create) an area for an order. `extra` renders under the list
+// (e.g. "also tag this customer's other orders").
+function AreaPickerModal({ open, onClose, areas, currentId, title, subtitle, onPick, onCreate, onManage, extra }) {
+  const [q, setQ] = useState('');
+  useEffect(() => { if (open) setQ(''); }, [open]);
+  if (!open) return null;
+  const query = q.trim();
+  const shown = (areas || []).filter((a) => !query || a.name.toLowerCase().includes(query.toLowerCase()));
+  const exact = (areas || []).some((a) => a.name.trim().toLowerCase() === query.toLowerCase());
+  return (
+    <Modal open={open} onClose={onClose} maxWidth="max-w-md">
+      <div className="p-5">
+        <div className="flex items-start justify-between gap-3 mb-3">
+          <div className="min-w-0">
+            <div className="font-display text-lg" style={{ color: THEME.ink }}>{title || 'Choose area'}</div>
+            {subtitle && <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>{subtitle}</div>}
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded row-hover" aria-label="Close"><X size={18} /></button>
+        </div>
+        <div className="relative mb-3">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: THEME.inkSoft }} />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search or type a new area…"
+            onKeyDown={(e) => { if (e.key === 'Enter' && query && !exact && onCreate) onPick(onCreate(query)); }}
+            className="w-full pl-8 pr-3 py-2 rounded-lg outline-none text-sm"
+            style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink }} />
+        </div>
+        <div className="space-y-1 max-h-72 overflow-y-auto">
+          {shown.map((a) => {
+            const on = a.id === currentId;
+            return (
+              <button key={a.id} onClick={() => onPick(a.id)}
+                className="w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg text-left row-hover"
+                style={{ background: on ? THEME.brandBg : 'transparent' }}>
+                <AreaChip area={a} size="md" />
+                {on && <Check size={16} style={{ color: THEME.brand }} />}
+              </button>
+            );
+          })}
+          {query && !exact && onCreate && (
+            <button onClick={() => onPick(onCreate(query))}
+              className="w-full flex items-center gap-2 px-2.5 py-2.5 rounded-lg text-left text-sm row-hover" style={{ color: THEME.brand }}>
+              <Plus size={15} /> Create “{query}”
+            </button>
+          )}
+          {!query && (areas || []).length === 0 && (
+            <div className="text-sm py-3 px-1" style={{ color: THEME.inkSoft }}>
+              No areas yet. Type a place your customers live, like “The Bellecourt”, to create the first one.
+            </div>
+          )}
+          {currentId && (
+            <button onClick={() => onPick(null)}
+              className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left text-sm row-hover" style={{ color: THEME.inkSoft }}>
+              <X size={14} /> Remove area
+            </button>
+          )}
+        </div>
+        {extra && <div className="mt-3 pt-3" style={{ borderTop: `1px solid ${THEME.line}` }}>{extra}</div>}
+        {onManage && (
+          <button onClick={onManage} className="text-xs font-medium mt-3" style={{ color: THEME.inkSoft }}>
+            Rename, recolor or delete areas →
+          </button>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+// Rename / recolor / set keywords / delete areas, and bulk-tag untagged
+// orders whose address mentions an area (only when the admin taps it).
+function AreaManagerModal({ open, onClose, areas, setMeta, orders, setOrders, customers, setCustomers }) {
+  const [newName, setNewName] = useState('');
+  if (!open) return null;
+  const list = areas || [];
+  const valid = new Set(list.map((a) => a.id));
+  const now = () => new Date().toISOString();
+  const patchArea = (id, patch) => setMeta((m) => ({
+    ...m, areas: (m.areas || []).map((a) => (a.id === id ? { ...a, ...patch, updated_at: now() } : a)),
+  }));
+  const addArea = () => {
+    const name = newName.trim();
+    if (!name || list.some((a) => a.name.trim().toLowerCase() === name.toLowerCase())) return;
+    setMeta((m) => ({ ...m, areas: [...(m.areas || []), newAreaRecord(m.areas || [], name)] }));
+    setNewName('');
+  };
+  const removeArea = (a) => {
+    const used = Object.values(orders || {}).filter((o) => o.area_id === a.id).length;
+    if (!confirm(`Delete the area “${a.name}”?${used ? ` ${used} order${used !== 1 ? 's' : ''} will lose this tag.` : ''}`)) return;
+    setMeta((m) => ({
+      ...m,
+      areas: (m.areas || []).filter((x) => x.id !== a.id),
+      deletedAreas: { ...(m.deletedAreas || {}), [a.id]: now() },
+    }));
+  };
+  // Untagged orders / customers whose address points to exactly this area.
+  const matchesFor = (a) => ({
+    orders: Object.values(orders || {}).filter((o) => !valid.has(o.area_id) && detectArea(list, o.delivery_address) === a.id),
+    customers: Object.values(customers || {}).filter((c) => !valid.has(c.area_id) && detectArea(list, c.address) === a.id),
+  });
+  const applyMatches = (a) => {
+    const { orders: os, customers: cs } = matchesFor(a);
+    const t = now();
+    if (os.length) setOrders((prev) => {
+      const next = { ...prev };
+      os.forEach((o) => { if (next[o.id]) next[o.id] = { ...next[o.id], area_id: a.id, updated_at: t }; });
+      return next;
+    });
+    if (cs.length && setCustomers) setCustomers((prev) => {
+      const next = { ...prev };
+      cs.forEach((c) => { if (next[c.id]) next[c.id] = { ...next[c.id], area_id: a.id, updated_at: t }; });
+      return next;
     });
   };
+  return (
+    <Modal open={open} onClose={onClose} maxWidth="max-w-lg">
+      <div className="p-5">
+        <div className="flex items-start justify-between gap-3 mb-1">
+          <div className="font-display text-xl" style={{ color: THEME.ink }}>Areas</div>
+          <button onClick={onClose} className="p-1.5 rounded row-hover" aria-label="Close"><X size={18} /></button>
+        </div>
+        <div className="text-xs mb-4" style={{ color: THEME.inkSoft }}>
+          Group customers by where they live. "Also matches" words help spot the area inside an address, e.g. <span style={{ color: THEME.ink }}>Bellecourt, Belle St</span>.
+        </div>
+        <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
+          {list.map((a) => {
+            const t = areaTone(a.color);
+            const m = matchesFor(a);
+            const tagged = Object.values(orders || {}).filter((o) => o.area_id === a.id).length;
+            return (
+              <div key={a.id} className="rounded-xl p-3" style={{ background: THEME.bg, border: `1px solid ${THEME.line}` }}>
+                <div className="flex items-center gap-2">
+                  <span style={{ width: 12, height: 12, borderRadius: '50%', background: t.dot, flexShrink: 0 }} />
+                  <input value={a.name} onChange={(e) => patchArea(a.id, { name: e.target.value })}
+                    className="flex-1 min-w-0 px-2.5 py-1.5 rounded-lg outline-none text-sm font-medium"
+                    style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink }} />
+                  <button onClick={() => removeArea(a)} className="p-1.5 rounded row-hover flex-shrink-0" style={{ color: THEME.red }} aria-label={`Delete ${a.name}`}>
+                    <Trash2 size={15} />
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-1.5 mt-2.5">
+                  {AREA_COLORS.map((c) => {
+                    const tone = THEME.bg === THEME_DARK.bg ? c.dark : c.light;
+                    const on = a.color === c.id;
+                    return (
+                      <button key={c.id} onClick={() => patchArea(a.id, { color: c.id })} aria-label={`Color ${c.id}`}
+                        className="rounded-full flex items-center justify-center"
+                        style={{ width: 26, height: 26, background: tone.bg, border: `2px solid ${on ? tone.dot : 'transparent'}` }}>
+                        <span style={{ width: 10, height: 10, borderRadius: '50%', background: tone.dot }} />
+                      </button>
+                    );
+                  })}
+                </div>
+                <input value={a.keywords || ''} onChange={(e) => patchArea(a.id, { keywords: e.target.value })}
+                  placeholder="Also matches (optional, comma-separated)"
+                  className="w-full mt-2.5 px-2.5 py-1.5 rounded-lg outline-none text-xs"
+                  style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink }} />
+                <div className="flex items-center justify-between gap-2 mt-2 text-xs" style={{ color: THEME.inkSoft }}>
+                  <span>{tagged} order{tagged !== 1 ? 's' : ''} tagged</span>
+                  {m.orders.length + m.customers.length > 0 && (
+                    <button onClick={() => applyMatches(a)} className="font-semibold" style={{ color: THEME.brand }}>
+                      Tag {m.orders.length} untagged order{m.orders.length !== 1 ? 's' : ''} that mention it
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="flex gap-2 mt-4">
+          <Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="New area, e.g. Villa Caceres"
+            onKeyDown={(e) => { if (e.key === 'Enter') addArea(); }} />
+          <Btn variant="primary" onClick={addArea} disabled={!newName.trim()}><Plus size={14} className="inline -mt-0.5" /> Add</Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+}
 
-  // Aggregate totals for supplier-buying reference
+function PickupMode({ batch, orders, onBack, areas = [] }) {
+  // Ticks are kept on this device per batch, so leaving the screen (or the
+  // phone locking) no longer wipes them. Shape: { [orderId]: { [itemKey]: true } }
+  const storeKey = STORAGE_PREFIX + 'pick_' + batch;
+  const [picked, setPicked] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(storeKey) || '{}') || {}; } catch (e) { return {}; }
+  });
+  const [openDone, setOpenDone] = useState({});        // completed cards the admin re-opened
+  const cardRefs = useRef({});
+  useEffect(() => {
+    try { localStorage.setItem(storeKey, JSON.stringify(picked)); } catch (e) {}
+  }, [picked, storeKey]);
+  // Housekeeping: forget tick lists for batches more than two weeks old.
+  useEffect(() => {
+    try {
+      const cutoff = isoLocal(new Date(Date.now() - 14 * 86400000));
+      Object.keys(localStorage).forEach((k) => {
+        if (k.startsWith(STORAGE_PREFIX + 'pick_') && k.slice((STORAGE_PREFIX + 'pick_').length) < cutoff) localStorage.removeItem(k);
+      });
+    } catch (e) {}
+  }, []);
+
+  // Item key survives edits that reorder lines better than a bare index.
+  const itemKey = (it, i) => `${i}|${it.product}`;
+  const isPicked = (o, it, i) => !!(picked[o.id] || {})[itemKey(it, i)];
+  const togglePick = (o, it, i) => setPicked((prev) => {
+    const op = prev[o.id] || {};
+    const k = itemKey(it, i);
+    return { ...prev, [o.id]: { ...op, [k]: !op[k] } };
+  });
+  const setAll = (o, on) => setPicked((prev) => ({
+    ...prev,
+    [o.id]: on ? Object.fromEntries((o.items || []).map((it, i) => [itemKey(it, i), true])) : {},
+  }));
+
+  const statusOf = (o) => {
+    const items = o.items || [];
+    const done = items.filter((it, i) => isPicked(o, it, i)).length;
+    const state = items.length > 0 && done === items.length ? 'done' : done > 0 ? 'partial' : 'todo';
+    return { done, total: items.length, state };
+  };
+
+  // Group customers by area (in the area list's order), untagged last.
+  const areaById = Object.fromEntries((areas || []).map((a) => [a.id, a]));
+  const groups = useMemo(() => {
+    const byKey = {};
+    orders.forEach((o) => {
+      const k = areaById[o.area_id] ? o.area_id : '__none';
+      (byKey[k] = byKey[k] || []).push(o);
+    });
+    const ordered = [...(areas || []).map((a) => a.id).filter((id) => byKey[id]), ...(byKey.__none ? ['__none'] : [])];
+    return ordered.map((k) => ({
+      area: k === '__none' ? null : areaById[k],
+      orders: byKey[k].slice().sort((a, b) => (a.customer || '').localeCompare(b.customer || '')),
+    }));
+  }, [orders, areas]); // eslint-disable-line react-hooks/exhaustive-deps
+  const flat = groups.flatMap((g) => g.orders);
+
   const totalsByProduct = useMemo(() => {
     const m = new Map();
-    orders.forEach(o => (o.items || []).forEach(it => {
-      const prev = m.get(it.product) || 0;
-      m.set(it.product, prev + (Number(it.qty) || 0));
-    }));
+    orders.forEach((o) => (o.items || []).forEach((it) => m.set(it.product, (m.get(it.product) || 0) + (Number(it.qty) || 0))));
     return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
   }, [orders]);
 
-  const totalItems = orders.reduce((s, o) => s + (o.items?.length || 0), 0);
-  const pickedItems = orders.reduce((s, o) => {
-    const op = picked[o.id] || {};
-    return s + (o.items || []).filter((_, i) => op[i]).length;
-  }, 0);
+  const stats = flat.map((o) => ({ o, s: statusOf(o) }));
+  const totalItems = stats.reduce((n, x) => n + x.s.total, 0);
+  const pickedItems = stats.reduce((n, x) => n + x.s.done, 0);
+  const doneCustomers = stats.filter((x) => x.s.state === 'done').length;
+  const allDone = flat.length > 0 && doneCustomers === flat.length;
+  const pct = flat.length ? (doneCustomers / flat.length) * 100 : 0;
+
+  const DONE_BG = THEME.successBg, DONE_INK = THEME.successInk, DONE_DOT = THEME.green;
+  const scrollTo = (id) => {
+    setOpenDone((s) => ({ ...s, [id]: true }));
+    const el = cardRefs.current[id];
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  };
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-5">
-        <div>
-          <button onClick={onBack} className="flex items-center gap-1.5 text-sm mb-2" style={{ color: THEME.inkSoft }}>
-            <ArrowLeft size={14} /> Back to Orders
-          </button>
-          <div className="font-display text-2xl" style={{ color: THEME.brand }}>Pickup Mode</div>
-          <div className="text-sm mt-1" style={{ color: THEME.inkSoft }}>
-            Batch: <span className="font-medium" style={{ color: THEME.ink }}>{batchLabel(batch)}</span> · {orders.length} customer{orders.length !== 1 ? 's' : ''} · {totalItems} item{totalItems !== 1 ? 's' : ''}
-          </div>
-        </div>
-        <div className="text-right">
-          <div className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft, letterSpacing: '0.08em' }}>Picked</div>
-          <div className="font-display text-2xl" style={{ color: pickedItems === totalItems && totalItems > 0 ? '#059669' : THEME.brand }}>
-            {pickedItems}/{totalItems}
-          </div>
+      <div className="mb-5">
+        <button onClick={onBack} className="flex items-center gap-1.5 text-sm mb-2" style={{ color: THEME.inkSoft }}>
+          <ArrowLeft size={14} /> Back to Orders
+        </button>
+        <div className="font-display text-2xl" style={{ color: THEME.brand }}>Pickup Mode</div>
+        <div className="text-sm mt-1" style={{ color: THEME.inkSoft }}>
+          Batch <span className="font-medium" style={{ color: THEME.ink }}>{batchLabel(batch)}</span> · {orders.length} customer{orders.length !== 1 ? 's' : ''} · {totalItems} item{totalItems !== 1 ? 's' : ''}
         </div>
       </div>
 
-      {/* Aggregate totals — handy reference for supplier buying */}
+      {/* ===== Status board: who's complete at a glance ===== */}
+      {flat.length > 0 && (
+        <Card className="p-4 sm:p-5 mb-4 mn-rise" style={allDone ? { background: DONE_BG, borderColor: DONE_DOT } : {}}>
+          <div className="flex items-end justify-between gap-3 mb-2">
+            <div>
+              <div className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft, letterSpacing: '0.08em' }}>Customers complete</div>
+              <div className="font-display text-3xl leading-tight" style={{ color: allDone ? DONE_INK : THEME.ink }}>
+                {doneCustomers}<span className="text-xl" style={{ color: THEME.inkSoft }}> / {flat.length}</span>
+              </div>
+            </div>
+            <div className="text-right text-xs" style={{ color: THEME.inkSoft }}>
+              {allDone ? (
+                <span className="inline-flex items-center gap-1 font-semibold text-sm" style={{ color: DONE_INK }}><CheckCircle size={16} /> Everyone's order is complete</span>
+              ) : (
+                <>Items picked <span className="font-semibold" style={{ color: THEME.ink }}>{pickedItems}/{totalItems}</span></>
+              )}
+            </div>
+          </div>
+          <MrBar pct={pct} color={DONE_DOT} height={8} />
+          <div className="flex flex-wrap gap-1.5 mt-3">
+            {stats.map(({ o, s }) => {
+              const st = s.state === 'done'
+                ? { bg: DONE_BG, ink: DONE_INK, border: 'transparent' }
+                : s.state === 'partial'
+                  ? { bg: THEME.warnBg, ink: THEME.warnInk, border: 'transparent' }
+                  : { bg: 'transparent', ink: THEME.inkSoft, border: THEME.line };
+              return (
+                <button key={o.id} onClick={() => scrollTo(o.id)}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium"
+                  style={{ background: st.bg, color: st.ink, border: `1px solid ${st.border}` }}
+                  title={`${o.customer}: ${s.done} of ${s.total} picked`}>
+                  {s.state === 'done' && <Check size={12} />}
+                  <span className="max-w-[9rem] truncate">{o.customer}</span>
+                  {s.state === 'partial' && <span className="opacity-80">{s.done}/{s.total}</span>}
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex items-center gap-3 mt-3 text-[11px]" style={{ color: THEME.inkSoft }}>
+            <span className="inline-flex items-center gap-1"><span style={{ width: 8, height: 8, borderRadius: '50%', background: DONE_DOT }} /> Complete</span>
+            <span className="inline-flex items-center gap-1"><span style={{ width: 8, height: 8, borderRadius: '50%', background: THEME.amber }} /> In progress</span>
+            <span className="inline-flex items-center gap-1"><span style={{ width: 8, height: 8, borderRadius: '50%', border: `1px solid ${THEME.inkSoft}` }} /> Not started</span>
+          </div>
+        </Card>
+      )}
+
+      {/* Supplier buying reference */}
       {totalsByProduct.length > 0 && (
         <Card className="p-4 mb-5" style={{ background: THEME.brandBg }}>
           <div className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: THEME.brand, letterSpacing: '0.1em' }}>
@@ -4019,7 +4632,7 @@ function PickupMode({ batch, orders, onBack }) {
             {totalsByProduct.map(([prod, qty]) => (
               <span key={prod} className="text-sm">
                 <span style={{ color: THEME.ink }}>{prod}:</span>{' '}
-                <span className="font-semibold" style={{ color: THEME.brand }}>{qty} kg</span>
+                <span className="font-semibold" style={{ color: THEME.brand }}>{Math.round(qty * 100) / 100} kg</span>
               </span>
             ))}
           </div>
@@ -4031,77 +4644,108 @@ function PickupMode({ batch, orders, onBack }) {
           <div style={{ color: THEME.inkSoft }} className="text-sm">No orders in this batch yet.</div>
         </Card>
       ) : (
-        <div className="space-y-4">
-          {orders.map(order => {
-            const items = order.items || [];
-            const orderPicks = picked[order.id] || {};
-            const pickedCount = items.filter((_, i) => orderPicks[i]).length;
-            const allDone = pickedCount === items.length && items.length > 0;
+        <div className="space-y-6">
+          {groups.map((g) => {
+            const gDone = g.orders.filter((o) => statusOf(o).state === 'done').length;
             return (
-              <Card key={order.id} className="p-5" style={{
-                background: allDone ? '#F0FDF4' : THEME.card,
-                borderColor: allDone ? '#86EFAC' : THEME.line,
-              }}>
-                <div className="flex items-center justify-between mb-3 pb-3" style={{ borderBottom: `1px solid ${THEME.line}` }}>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <div className="font-display text-lg" style={{ color: allDone ? '#065F46' : THEME.brand }}>
-                        {order.customer}
-                      </div>
-                      {allDone && (
-                        <CheckCircle size={18} style={{ color: '#059669' }} />
-                      )}
-                    </div>
-                    <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>
-                      {order.id} · {items.length} item{items.length !== 1 ? 's' : ''}
-                    </div>
+              <div key={g.area ? g.area.id : 'none'}>
+                {(areas || []).length > 0 && (
+                  <div className="flex items-center justify-between gap-2 mb-2.5">
+                    {g.area ? <AreaChip area={g.area} size="md" /> : <span className="text-sm font-medium" style={{ color: THEME.inkSoft }}>No area</span>}
+                    <span className="text-xs" style={{ color: gDone === g.orders.length ? DONE_INK : THEME.inkSoft }}>
+                      {gDone}/{g.orders.length} complete
+                    </span>
                   </div>
-                  <div className="text-sm font-semibold px-2.5 py-1 rounded-full"
-                    style={{
-                      background: allDone ? '#D1FAE5' : THEME.brandBg,
-                      color: allDone ? '#065F46' : THEME.brand
-                    }}>
-                    {pickedCount}/{items.length}
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  {items.map((it, i) => {
-                    const isPicked = !!orderPicks[i];
+                )}
+                <div className="space-y-3">
+                  {g.orders.map((order) => {
+                    const items = order.items || [];
+                    const s = statusOf(order);
+                    const done = s.state === 'done';
+                    const collapsed = done && !openDone[order.id];
+                    const label = done ? 'All picked' : s.state === 'partial' ? `${s.done} of ${s.total} picked` : 'Not started';
+                    const pill = done
+                      ? { bg: DONE_BG, ink: DONE_INK }
+                      : s.state === 'partial' ? { bg: THEME.warnBg, ink: THEME.warnInk } : { bg: THEME.bg, ink: THEME.inkSoft };
                     return (
-                      <label key={i}
-                        className="flex items-center gap-3 px-3 py-2.5 rounded-md cursor-pointer"
-                        style={{
-                          background: isPicked ? '#ECFDF5' : 'transparent',
-                          border: `1px solid ${isPicked ? '#A7F3D0' : THEME.line}`,
-                        }}>
-                        <input type="checkbox" checked={isPicked}
-                          onChange={() => togglePick(order.id, i)}
-                          style={{ width: 22, height: 22, accentColor: '#059669', cursor: 'pointer', flexShrink: 0 }} />
-                        <div className="flex-1 flex items-center justify-between gap-3">
-                          <div style={{ textDecoration: isPicked ? 'line-through' : 'none', color: isPicked ? THEME.inkSoft : THEME.ink }}>
-                            <div className="text-sm font-medium">{it.product}</div>
-                            {it.note && (
-                              <div className="text-xs italic mt-0.5" style={{ color: THEME.inkSoft }}>{it.note}</div>
-                            )}
+                      <div key={order.id} ref={(el) => { cardRefs.current[order.id] = el; }} style={{ scrollMarginTop: 90 }}>
+                        <Card className="p-4 sm:p-5" style={{ background: done ? DONE_BG : THEME.card, borderColor: done ? DONE_DOT : THEME.line, transition: 'background-color 0.25s ease' }}>
+                          <div className={`flex items-start justify-between gap-3 ${collapsed ? '' : 'mb-3 pb-3'}`} style={collapsed ? {} : { borderBottom: `1px solid ${THEME.line}` }}>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <div className="font-display text-lg leading-tight" style={{ color: done ? DONE_INK : THEME.brand }}>{order.customer}</div>
+                                {done && <CheckCircle size={18} style={{ color: DONE_DOT }} />}
+                              </div>
+                              <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                                <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: pill.bg, color: pill.ink }}>{label}</span>
+                                <span className="text-xs" style={{ color: THEME.inkSoft }}>{order.id}</span>
+                              </div>
+                            </div>
+                            <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
+                              {collapsed ? (
+                                <button onClick={() => setOpenDone((o) => ({ ...o, [order.id]: true }))}
+                                  className="text-xs font-medium px-3 py-2 rounded-lg" style={{ color: DONE_INK, border: `1px solid ${DONE_DOT}` }}>
+                                  Show items
+                                </button>
+                              ) : done ? (
+                                <button onClick={() => setAll(order, false)}
+                                  className="text-xs font-medium px-3 py-2 rounded-lg" style={{ color: THEME.inkSoft, border: `1px solid ${THEME.line}`, background: THEME.card }}>
+                                  Undo all
+                                </button>
+                              ) : (
+                                <button onClick={() => setAll(order, true)}
+                                  className="inline-flex items-center gap-1 text-sm font-semibold px-3 py-2 rounded-lg"
+                                  style={{ background: DONE_DOT, color: THEME.bg === THEME_DARK.bg ? '#16240F' : 'white' }}>
+                                  <Check size={15} /> Pick all
+                                </button>
+                              )}
+                            </div>
                           </div>
-                          <div className="text-base font-semibold flex-shrink-0"
-                            style={{ color: isPicked ? THEME.inkSoft : THEME.brand }}>
-                            {it.qty} {it.unit}
-                          </div>
-                        </div>
-                      </label>
+
+                          {!collapsed && (
+                            <div className="space-y-2">
+                              {items.map((it, i) => {
+                                const on = isPicked(order, it, i);
+                                return (
+                                  <label key={i} className="flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer"
+                                    style={{ background: on ? THEME.successBg : 'transparent', border: `1px solid ${on ? DONE_DOT : THEME.line}` }}>
+                                    <input type="checkbox" checked={on} onChange={() => togglePick(order, it, i)}
+                                      style={{ width: 22, height: 22, accentColor: DONE_DOT, cursor: 'pointer', flexShrink: 0 }} />
+                                    <div className="flex-1 flex items-center justify-between gap-3 min-w-0">
+                                      <div className="min-w-0" style={{ textDecoration: on ? 'line-through' : 'none', color: on ? THEME.inkSoft : THEME.ink }}>
+                                        <div className="text-sm font-medium">{it.product}</div>
+                                        {it.note && <div className="text-xs italic mt-0.5" style={{ color: THEME.inkSoft }}>{it.note}</div>}
+                                      </div>
+                                      <div className="text-base font-semibold flex-shrink-0" style={{ color: on ? THEME.inkSoft : THEME.brand }}>
+                                        {it.qty} {it.unit}
+                                      </div>
+                                    </div>
+                                  </label>
+                                );
+                              })}
+                              {done && openDone[order.id] && (
+                                <button onClick={() => setOpenDone((o) => ({ ...o, [order.id]: false }))}
+                                  className="text-xs font-medium mt-1" style={{ color: THEME.inkSoft }}>Hide items</button>
+                              )}
+                            </div>
+                          )}
+                        </Card>
+                      </div>
                     );
                   })}
                 </div>
-              </Card>
+              </div>
             );
           })}
         </div>
       )}
 
-      <div className="text-center mt-6 text-xs" style={{ color: THEME.inkSoft }}>
-        💡 Checkboxes here are temporary and reset when you leave this screen.
+      <div className="flex items-center justify-center gap-3 mt-6 text-xs" style={{ color: THEME.inkSoft }}>
+        <span>Ticks are saved on this device for this batch.</span>
+        {pickedItems > 0 && (
+          <button onClick={() => { if (confirm('Clear every tick in this batch?')) { setPicked({}); setOpenDone({}); } }}
+            className="font-medium underline" style={{ color: THEME.inkSoft }}>Clear all</button>
+        )}
       </div>
     </div>
   );
