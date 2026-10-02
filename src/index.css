@@ -143,3 +143,66 @@ button:active { transform: scale(0.95); }
   .mn-grow { transition: none; }
   .mn-spark, .mn-glow, .mn-shimmer { animation: none; }
 }
+
+/* ── Orders workspace (v10) ─────────────────────────────────────────
+   Short, purposeful motion: the detail panel slides in ~240ms and out
+   ~200ms (it unmounts only after the exit finishes), collapsibles open
+   in ~180ms, status badges pop once when they change. No looping motion.
+   Everything is switched off under prefers-reduced-motion.            */
+.mn-btn {
+  transition: transform 0.12s cubic-bezier(0.34, 1.56, 0.64, 1), background-color 0.15s ease,
+    border-color 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+}
+@media (hover: hover) {
+  .mn-btn:hover:not(:disabled) { box-shadow: 0 2px 10px rgba(42, 38, 36, 0.10); }
+}
+
+.mn-row { transition: background-color 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease; }
+
+.mn-panel-in  { animation: mn-panel-in 0.24s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.mn-panel-out { animation: mn-panel-out 0.2s ease-in both; }
+@keyframes mn-panel-in  { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: none; } }
+@keyframes mn-panel-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(24px); } }
+
+.mn-sheet-in  { animation: mn-sheet-in 0.26s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.mn-sheet-out { animation: mn-sheet-out 0.2s ease-in both; }
+@keyframes mn-sheet-in  { from { transform: translateY(28px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes mn-sheet-out { from { transform: none; opacity: 1; } to { transform: translateY(28px); opacity: 0; } }
+
+.mn-backdrop-in  { animation: mn-fade-in 0.22s ease both; }
+.mn-backdrop-out { animation: mn-fade-out 0.2s ease both; }
+@keyframes mn-fade-in  { from { opacity: 0; } to { opacity: 1; } }
+@keyframes mn-fade-out { from { opacity: 1; } to { opacity: 0; } }
+
+.mn-pop-in { animation: mn-pop-in 0.16s ease-out both; }
+@keyframes mn-pop-in { from { opacity: 0; transform: translateY(4px) scale(0.98); } to { opacity: 1; transform: none; } }
+
+/* One-off emphasis when a status badge changes. */
+.mn-pop { display: inline-block; animation: mn-pop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1); }
+@keyframes mn-pop { 0% { transform: scale(1); } 40% { transform: scale(1.14); } 100% { transform: scale(1); } }
+
+/* New value fades up in place (e.g. balance due after a payment change). */
+.mn-swap { animation: mn-swap 0.22s ease-out; }
+@keyframes mn-swap { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+
+/* Height-animated collapsible: wrap content in a single child <div>. */
+.mn-collapse { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.18s ease, opacity 0.18s ease; opacity: 0; }
+.mn-collapse > * { overflow: hidden; min-height: 0; }
+.mn-collapse.open { grid-template-rows: 1fr; opacity: 1; }
+.mn-collapse:not(.open) { visibility: hidden; transition: grid-template-rows 0.18s ease, opacity 0.18s ease, visibility 0s linear 0.18s; }
+
+/* Visible keyboard focus (mouse clicks don't show it). Inputs keep their
+   own border highlight. */
+:where(button, a, [role="button"], [role="menuitem"], [role="menuitemradio"],
+  [tabindex]:not([tabindex="-1"], input, select, textarea)):focus-visible {
+  outline: 2px solid var(--focus-ring, #7A2E33);
+  outline-offset: 2px;
+}
+tr.mn-row:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring, #7A2E33) !important; }
+.mn-side button:focus-visible { outline-color: #F8EEE7; }
+
+@media (prefers-reduced-motion: reduce) {
+  .mn-panel-in, .mn-panel-out, .mn-sheet-in, .mn-sheet-out, .mn-backdrop-in, .mn-backdrop-out,
+  .mn-pop-in, .mn-pop, .mn-swap { animation: none !important; }
+  .mn-collapse, .mn-collapse:not(.open), .mn-row, .mn-btn { transition: none !important; }
+}

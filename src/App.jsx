@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import {
   LayoutDashboard, PlusCircle, ListOrdered, Truck, Wallet, Tag,
   Printer, Trash2, Edit3, Search, X, Check, AlertCircle, TrendingUp,
@@ -6,7 +6,7 @@ import {
   Eye, EyeOff, ArrowLeft, RefreshCw, Download, Upload, HardDrive, Image as ImageIcon,
   Activity, Menu, Store, Moon, Sun, CheckCircle, Inbox, MapPin, Users, MessageCircle,
   Crown, Trophy, Lightbulb, Sparkles, TrendingDown, ArrowUpRight, ArrowDownRight, CalendarDays,
-  Target, Package, Info, Minus, BarChart3,
+  Target, Package, Info, Minus, BarChart3, ChevronLeft, MoreHorizontal, Filter, Scissors,
 } from 'lucide-react';
 import {
   BarChart, Bar, PieChart, Pie, Cell, ResponsiveContainer, XAxis, YAxis,
@@ -53,7 +53,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v9.12 · Areas + Pickup status';
+const APP_VERSION = 'v10.0 · Orders redesign';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -61,6 +61,10 @@ const THEME_LIGHT = {
   accent: '#C9853A', green: '#4F7942', red: '#B23A48', amber: '#D89A3C',
   brandBg: '#F5E6E1', successBg: '#E5EDDE', successInk: '#2f4a2a',
   errorBg: '#FBEAEA', warnBg: '#F7E8C9', warnInk: '#7a5a1a',
+  // Sidebar (v10): deep burgundy with light text and a cream active pill.
+  sideBg: '#6E2A2F', sideInk: '#F8EEE7', sideInkSoft: 'rgba(248,238,231,0.66)',
+  sideActiveBg: '#FBF5EE', sideActiveInk: '#6E2A2F', sideHover: 'rgba(255,255,255,0.08)',
+  sideLine: 'rgba(255,255,255,0.12)', sideOk: '#B9DDA9', sideWarn: '#F3CF86', sideErr: '#F6B2AB',
 };
 const THEME_DARK = {
   // Tuned for dark: warm near-black backgrounds, soft off-white text, and a
@@ -70,6 +74,9 @@ const THEME_DARK = {
   accent: '#E0A45A', green: '#7CA86A', red: '#D9737E', amber: '#E0B062',
   brandBg: '#3A2A2C', successBg: '#27331F', successInk: '#A9C99B',
   errorBg: '#3A2222', warnBg: '#3A3120', warnInk: '#E0C98A',
+  sideBg: '#2B1A1C', sideInk: '#EFE3DB', sideInkSoft: 'rgba(239,227,219,0.6)',
+  sideActiveBg: '#F0E6DE', sideActiveInk: '#5A2328', sideHover: 'rgba(255,255,255,0.07)',
+  sideLine: 'rgba(255,255,255,0.09)', sideOk: '#A9C99B', sideWarn: '#E0C98A', sideErr: '#F0A9A2',
 };
 // THEME is mutated in place when the user switches, so the hundreds of
 // existing `THEME.x` references keep working without any change.
@@ -292,19 +299,19 @@ function DeliveryBatchPicker({ value, onChange, allowUnassign = false }) {
   return (
     <div className="mt-4">
       <div className="flex items-center justify-between mb-1">
-        <span className="text-xs uppercase font-medium tracking-wider" style={{ color: '#6B5F58', letterSpacing: '0.08em' }}>
+        <span className="text-xs uppercase font-medium tracking-wider" style={{ color: THEME.inkSoft, letterSpacing: '0.08em' }}>
           Delivery Batch
         </span>
         {!expanded && (
           <button type="button" onClick={() => setExpanded(true)}
-            className="text-xs underline" style={{ color: '#6B5F58' }}>
+            className="text-xs underline" style={{ color: THEME.inkSoft }}>
             Change
           </button>
         )}
       </div>
       {!expanded ? (
         <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md"
-          style={{ background: value ? '#F5E6E1' : '#FEF3C7', color: value ? '#7A2E33' : '#92400E', border: `1px solid ${value ? '#7A2E33' : '#FCD34D'}` }}>
+          style={{ background: value ? THEME.brandBg : THEME.warnBg, color: value ? THEME.brand : THEME.warnInk, border: `1px solid ${value ? THEME.brand : THEME.amber}` }}>
           <Truck size={14} />
           <span className="text-sm font-semibold">{value ? batchLabel(value) : 'Unassigned'}</span>
         </div>
@@ -312,26 +319,26 @@ function DeliveryBatchPicker({ value, onChange, allowUnassign = false }) {
         <div className="flex flex-wrap gap-2 mt-1">
           <button type="button" onClick={() => { onChange(tue); setExpanded(false); }}
             className="px-3 py-2 text-sm rounded-md inline-flex items-center gap-1.5"
-            style={{ background: value === tue ? '#7A2E33' : 'transparent', color: value === tue ? 'white' : '#2A2624', border: `1px solid ${value === tue ? '#7A2E33' : '#E8DFD2'}` }}>
+            style={{ background: value === tue ? THEME.brand : 'transparent', color: value === tue ? 'white' : THEME.ink, border: `1px solid ${value === tue ? THEME.brand : THEME.line}` }}>
             <Truck size={13} /> Tuesday <span className="opacity-75">({batchLabel(tue).split(' · ')[1]})</span>
           </button>
           <button type="button" onClick={() => { onChange(sat); setExpanded(false); }}
             className="px-3 py-2 text-sm rounded-md inline-flex items-center gap-1.5"
-            style={{ background: value === sat ? '#7A2E33' : 'transparent', color: value === sat ? 'white' : '#2A2624', border: `1px solid ${value === sat ? '#7A2E33' : '#E8DFD2'}` }}>
+            style={{ background: value === sat ? THEME.brand : 'transparent', color: value === sat ? 'white' : THEME.ink, border: `1px solid ${value === sat ? THEME.brand : THEME.line}` }}>
             <Truck size={13} /> Saturday <span className="opacity-75">({batchLabel(sat).split(' · ')[1]})</span>
           </button>
           <input type="date" value={isCustom ? value : ''}
             onChange={(e) => { if (e.target.value) { onChange(e.target.value); setExpanded(false); } }}
             className="px-3 py-2 text-sm rounded-md outline-none"
-            style={{ background: '#FFFEF8', border: `1px solid #E8DFD2`, color: '#2A2624', minWidth: 140, opacity: isCustom ? 1 : 0.6 }} />
+            style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink, minWidth: 140, opacity: isCustom ? 1 : 0.6 }} />
           {allowUnassign && value && (
             <button type="button" onClick={() => { onChange(''); setExpanded(false); }}
-              className="px-3 py-2 text-sm rounded-md" style={{ color: '#6B5F58', border: `1px solid #E8DFD2` }}>
+              className="px-3 py-2 text-sm rounded-md" style={{ color: THEME.inkSoft, border: `1px solid ${THEME.line}` }}>
               Unassign
             </button>
           )}
           <button type="button" onClick={() => setExpanded(false)}
-            className="px-2 py-2 text-xs underline" style={{ color: '#6B5F58' }}>
+            className="px-2 py-2 text-xs underline" style={{ color: THEME.inkSoft }}>
             Done
           </button>
         </div>
@@ -412,11 +419,11 @@ function Input({ value, onChange, placeholder, type = 'text', className = '', ..
   );
 }
 
-function Select({ value, onChange, options, className = '' }) {
+function Select({ value, onChange, options, className = '', ...rest }) {
   return (
     <select value={value ?? ''} onChange={onChange}
       className={`w-full px-3 py-2 rounded-lg outline-none ${className}`}
-      style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink }}>
+      style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink }} {...rest}>
       {options.map((o) => (
         <option key={typeof o === 'string' ? o : o.value} value={typeof o === 'string' ? o : o.value}>
           {typeof o === 'string' ? o : o.label}
@@ -574,6 +581,15 @@ function MainApp() {
   const [backupNagDismissed, setBackupNagDismissed] = useState(false);
   const [daysSinceBackup, setDaysSinceBackup] = useState(0);
   const lastSaveRef = useRef(Date.now());
+  // Orders registers a guard here so leaving with unsaved order edits asks
+  // first. go() is used by every navigation control.
+  const navGuardRef = useRef(null);
+  const registerNavGuard = useRef((fn) => { navGuardRef.current = fn; }).current;
+  const go = (v) => {
+    if (v !== view && navGuardRef.current && !navGuardRef.current()) return;
+    setView(v);
+    setMobileNav(false);
+  };
 
   // Keep the page background and iOS status-bar colour in sync with the theme
   // (covers overscroll area and the notch bar outside React's root).
@@ -584,6 +600,7 @@ function MainApp() {
       // adapt to dark mode (a hardcoded light hover hid text in dark mode).
       document.documentElement.style.setProperty('--row-hover', theme === 'dark' ? '#3A322C' : '#FBF3E8');
       document.documentElement.style.setProperty('--danger-hover', theme === 'dark' ? '#3A2222' : '#FBEAEA');
+      document.documentElement.style.setProperty('--focus-ring', theme === 'dark' ? '#E0A9AD' : '#7A2E33');
       const meta = document.querySelector('meta[name="theme-color"]');
       if (meta) meta.setAttribute('content', theme === 'dark' ? '#1A1614' : '#7A2E33');
     } catch (e) {}
@@ -941,7 +958,7 @@ function MainApp() {
           <img src={LOGO_DATA_URL} alt="" className="w-8 h-8 rounded-full object-cover flex-shrink-0" />
           <span className="font-display text-lg truncate" style={{ color: THEME.brand }}>M&N Meatshop</span>
         </div>
-        <button onClick={() => { setView('new'); }}
+        <button onClick={() => go('new')}
           className="flex items-center justify-center"
           style={{ width: 44, height: 44, color: THEME.brand }} aria-label="New order">
           <PlusCircle size={24} />
@@ -956,21 +973,22 @@ function MainApp() {
 
       <div className="flex">
         <aside
-          className={`fixed lg:sticky top-0 z-50 lg:z-auto w-64 lg:w-60 h-screen lg:h-screen border-r flex flex-col no-print transition-transform duration-300 ${mobileNav ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
-          style={{ borderColor: THEME.line, background: THEME.card }}>
-          <div className="px-6 pb-6 border-b flex flex-col items-center text-center relative" style={{ borderColor: THEME.line, paddingTop: 'max(env(safe-area-inset-top), 24px)' }}>
-            <button onClick={() => setMobileNav(false)} className="lg:hidden absolute right-3 p-2" style={{ color: THEME.inkSoft, top: 'max(env(safe-area-inset-top), 12px)' }} aria-label="Close menu">
+          className={`mn-side fixed lg:sticky top-0 z-50 lg:z-auto w-64 lg:w-60 h-screen lg:h-screen flex flex-col no-print transition-transform duration-300 ${mobileNav ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
+          style={{ background: THEME.sideBg, color: THEME.sideInk }}>
+          <div className="flex-shrink-0 px-6 pb-5 flex flex-col items-center text-center relative" style={{ borderBottom: `1px solid ${THEME.sideLine}`, paddingTop: 'max(env(safe-area-inset-top), 24px)' }}>
+            <button onClick={() => setMobileNav(false)} className="lg:hidden absolute right-3 p-2 rounded-lg" style={{ color: THEME.sideInkSoft, top: 'max(env(safe-area-inset-top), 12px)' }} aria-label="Close menu">
               <X size={20} />
             </button>
-            <img src={LOGO_DATA_URL} alt="M&N Meatshop" className="w-24 h-24 lg:w-28 lg:h-28 rounded-full object-cover mb-3" style={{ boxShadow: '0 2px 10px rgba(122,46,51,0.18)' }} />
-            <div className="font-display text-xl leading-tight" style={{ color: THEME.brand }}>M&N Meatshop</div>
-            <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>Your daily meat choice</div>
+            <img src={LOGO_DATA_URL} alt="M&N Meatshop" className="w-20 h-20 lg:w-24 lg:h-24 [@media(max-height:760px)]:w-14 [@media(max-height:760px)]:h-14 rounded-full object-cover mb-3"
+              style={{ boxShadow: '0 0 0 3px rgba(255,255,255,0.14), 0 6px 18px rgba(0,0,0,0.25)' }} />
+            <div className="font-display text-xl leading-tight" style={{ color: THEME.sideInk }}>M&N Meatshop</div>
+            <div className="text-xs mt-0.5" style={{ color: THEME.sideInkSoft }}>Your daily meat choice</div>
           </div>
-          <nav className="flex-1 py-4 px-3 overflow-y-auto">
+          <nav className="flex-1 min-h-0 py-4 px-3 overflow-y-auto overscroll-contain" aria-label="Main">
             {navGroups.map((group, gi) => (
               <div key={gi} className={gi > 0 ? 'mt-4' : ''}>
                 {group.label && (
-                  <div className="px-3.5 mb-1.5 text-xs font-semibold uppercase" style={{ color: THEME.inkSoft, letterSpacing: '0.1em', opacity: 0.8 }}>
+                  <div className="px-3.5 mb-1.5 text-[11px] font-semibold uppercase" style={{ color: THEME.sideInkSoft, letterSpacing: '0.12em' }}>
                     {group.label}
                   </div>
                 )}
@@ -978,22 +996,23 @@ function MainApp() {
                   const Icon = item.icon;
                   const active = view === item.id;
                   return (
-                    <button key={item.id} onClick={() => { setView(item.id); setMobileNav(false); }}
+                    <button key={item.id} onClick={() => go(item.id)} aria-current={active ? 'page' : undefined}
                       className="w-full flex items-center gap-3 px-3.5 py-3 lg:py-2.5 text-sm text-left rounded-xl mb-0.5 transition-colors"
                       style={{
-                        background: active ? THEME.brand : 'transparent',
-                        color: active ? 'white' : THEME.ink,
+                        background: active ? THEME.sideActiveBg : 'transparent',
+                        color: active ? THEME.sideActiveInk : THEME.sideInk,
                         fontWeight: active ? 600 : 400,
+                        boxShadow: active ? '0 2px 10px rgba(0,0,0,0.18)' : 'none',
                       }}
-                      onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = THEME.brandBg; }}
+                      onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = THEME.sideHover; }}
                       onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = 'transparent'; }}>
-                      <Icon size={17} style={{ opacity: active ? 1 : 0.75, flexShrink: 0 }} />
+                      <Icon size={17} style={{ opacity: active ? 1 : 0.8, flexShrink: 0 }} />
                       <span className="flex-1">{item.label}</span>
                       {item.id === 'requests' && pendingOnline > 0 && (
-                        <span className="flex items-center justify-center text-xs font-semibold rounded-full"
+                        <span className="flex items-center justify-center text-xs font-bold rounded-full"
                           style={{
-                            background: active ? 'white' : THEME.red,
-                            color: active ? THEME.brand : 'white',
+                            background: active ? THEME.sideActiveInk : '#E9B45E',
+                            color: active ? THEME.sideActiveBg : '#3A1F12',
                             minWidth: 20, height: 20, padding: '0 6px',
                           }}>
                           {pendingOnline}
@@ -1005,26 +1024,26 @@ function MainApp() {
               </div>
             ))}
           </nav>
-          <div className="px-6 py-4 border-t" style={{ borderColor: THEME.line }}>
-            <button onClick={() => { setShowBackup(true); setMobileNav(false); }} className="flex items-center gap-2 text-xs mb-2 hover:opacity-70" style={{ color: THEME.inkSoft }}>
+          <div className="flex-shrink-0 px-6 pt-4" style={{ borderTop: `1px solid ${THEME.sideLine}`, paddingBottom: 'max(env(safe-area-inset-bottom), 16px)' }}>
+            <button onClick={() => { setShowBackup(true); setMobileNav(false); }} className="flex items-center gap-2 text-xs mb-2 hover:opacity-80" style={{ color: THEME.sideInkSoft }}>
               <HardDrive size={12} /> Backup & Restore
             </button>
-            <button onClick={async () => { if (confirm('Sign out of M&N Meatshop?')) { await signOut(); } }} className="flex items-center gap-2 text-xs mb-2 hover:opacity-70" style={{ color: THEME.inkSoft }}>
+            <button onClick={async () => { if (confirm('Sign out of M&N Meatshop?')) { await signOut(); } }} className="flex items-center gap-2 text-xs mb-2 hover:opacity-80" style={{ color: THEME.sideInkSoft }}>
               <ArrowLeft size={12} /> Sign Out
             </button>
-            <div className="text-xs flex items-center gap-2" style={{ color: THEME.inkSoft }}>
+            <div className="text-xs flex items-center gap-2" style={{ color: THEME.sideInk }} role="status">
               {saving
                 ? (<><Loader2 size={11} className="animate-spin" /> Syncing…</>)
                 : syncStatus === 'cloud'
-                  ? (<><Check size={11} style={{ color: THEME.green }} /> Saved to cloud</>)
+                  ? (<><Check size={11} style={{ color: THEME.sideOk }} /> Saved to cloud</>)
                   : syncStatus === 'local-only'
-                    ? (<><HardDrive size={11} style={{ color: THEME.amber }} /> Saved on this device</>)
+                    ? (<><HardDrive size={11} style={{ color: THEME.sideWarn }} /> Saved on this device</>)
                     : syncStatus === 'connecting'
                       ? (<><Loader2 size={11} className="animate-spin" /> Connecting…</>)
-                      : (<><AlertCircle size={11} style={{ color: THEME.red }} /> Sync issue</>)}
+                      : (<><AlertCircle size={11} style={{ color: THEME.sideErr }} /> Sync issue</>)}
             </div>
-            <div className="text-xs mt-1 opacity-70" style={{ color: THEME.inkSoft }}>{Object.keys(orders).length} orders · {expenses.length} expenses</div>
-            <div className="text-xs mt-2 px-2 py-1 rounded inline-block" style={{ background: THEME.brandBg, color: THEME.brand, fontWeight: 600 }}>
+            <div className="text-xs mt-1" style={{ color: THEME.sideInkSoft }}>{Object.keys(orders).length} orders · {expenses.length} expenses</div>
+            <div className="text-xs mt-2 px-2 py-1 rounded-md inline-block" style={{ background: 'rgba(255,255,255,0.10)', color: THEME.sideInk, fontWeight: 600 }}>
               {APP_VERSION}
             </div>
           </div>
@@ -1075,7 +1094,8 @@ function MainApp() {
           {view === 'dashboard' && <Dashboard orders={orders} setOrders={setOrders} expenses={expenses} catalog={catalog} setView={setView} privacy={privacy} setPrivacy={setPrivacy} currentUser={currentUser} theme={theme} setTheme={setTheme} />}
           {view === 'new' && <NewOrder catalog={catalog} meta={meta} setMeta={setMeta} orders={orders} setOrders={setOrders} customers={customers} setCustomers={setCustomers} onSaved={() => setView('orders')} />}
           {view === 'requests' && <OrderRequests catalog={catalog} orders={orders} setOrders={setOrders} meta={meta} setMeta={setMeta} customers={customers} setCustomers={setCustomers} />}
-          {view === 'orders' && <Orders orders={orders} setOrders={setOrders} productByName={productByName} catalog={catalog} meta={meta} setMeta={setMeta} customers={customers} setCustomers={setCustomers} />}
+          {view === 'orders' && <Orders orders={orders} setOrders={setOrders} productByName={productByName} catalog={catalog} meta={meta} setMeta={setMeta} customers={customers} setCustomers={setCustomers}
+            onNewOrder={() => go('new')} sync={{ saving, syncStatus }} registerNavGuard={registerNavGuard} />}
           {view === 'pickup' && <Pickup orders={orders} catalog={catalog} />}
           {view === 'salescheck' && <SalesCheck orders={orders} catalog={catalog} privacy={privacy} />}
           {view === 'expenses' && <Expenses expenses={expenses} setExpenses={setExpenses} setMeta={setMeta} />}
@@ -3271,11 +3291,82 @@ function NewOrder({ catalog, meta, setMeta, orders, setOrders, customers, setCus
    ORDERS LIST
    ============================================================ */
 
-function Orders({ orders, setOrders, productByName, catalog, meta, setMeta, customers, setCustomers }) {
+/* ============================================================
+   ORDERS WORKSPACE (v10)
+   ============================================================
+   List + batch bar + filters on the left, order detail in a docked
+   right panel on wide screens (an overlay sheet on smaller ones).
+   Everything here is UI state — business data, calculations, sync and
+   tombstones are untouched and still flow through setOrders/setMeta. */
+
+// Order total, same arithmetic used everywhere else (qty × price per line).
+const ordTotal = (o) => (o.items || []).reduce((s, i) => s + i.qty * i.price, 0);
+// What's still owed, for display only. Partial payments use the recorded
+// amount; a Partial order with no amount recorded is flagged as `unknown`
+// instead of being treated as verified.
+function ordBalance(o) {
+  const total = ordTotal(o);
+  if (o.delivery_status === 'Cancelled') return { total, paid: 0, due: 0, cancelled: true };
+  if (o.payment_status === 'Paid') return { total, paid: total, due: 0 };
+  if (o.payment_status === 'Partial') {
+    const raw = o.amount_paid;
+    if (raw === '' || raw === null || raw === undefined || isNaN(Number(raw))) return { total, paid: null, due: null, unknown: true };
+    const paid = Number(raw);
+    return { total, paid, due: Math.max(0, total - paid) };
+  }
+  return { total, paid: 0, due: total };
+}
+// Numeric part of an order ID, so ORD-1000 sorts after ORD-999.
+const ordIdNum = (id) => { const m = String(id || '').match(/(\d+)/); return m ? Number(m[1]) : 0; };
+// Batch dates are local YYYY-MM-DD; parse at local midnight (never UTC).
+const fmtBatchLong = (iso) => new Date(iso + 'T00:00:00').toLocaleDateString('en-PH', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+const fmtBatchMed = (iso) => new Date(iso + 'T00:00:00').toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+
+function useMediaQuery(query) {
+  const get = () => { try { return window.matchMedia(query).matches; } catch (e) { return false; } };
+  const [matches, setMatches] = useState(get);
+  useEffect(() => {
+    let mq;
+    try { mq = window.matchMedia(query); } catch (e) { return undefined; }
+    const onChange = () => setMatches(mq.matches);
+    onChange();
+    if (mq.addEventListener) mq.addEventListener('change', onChange); else mq.addListener(onChange);
+    return () => { if (mq.removeEventListener) mq.removeEventListener('change', onChange); else mq.removeListener(onChange); };
+  }, [query]);
+  return matches;
+}
+const prefersReducedMotion = () => { try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return false; } };
+
+const ORDER_SORTS = [
+  { id: 'newest', label: 'Newest first' },
+  { id: 'oldest', label: 'Oldest first' },
+  { id: 'customer', label: 'Customer A–Z' },
+  { id: 'total', label: 'Total, highest first' },
+  { id: 'balance', label: 'Balance due, highest first' },
+  { id: 'batch', label: 'Delivery batch' },
+];
+
+function Orders({ orders, setOrders, productByName, catalog, meta, setMeta, customers, setCustomers, onNewOrder, sync, registerNavGuard }) {
+  // ── List state (UI only) ──
   const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState('all');                // payment
+  const [deliveryFilter, setDeliveryFilter] = useState('all');
+  const [batchFilter, setBatchFilter] = useState('all');      // 'all' | 'unassigned' | 'YYYY-MM-DD'
   const [areaFilter, setAreaFilter] = useState('all');        // 'all' | areaId | 'none'
-  const [areaFor, setAreaFor] = useState(null);                // order whose area is being picked
-  const [alsoOthers, setAlsoOthers] = useState(true);          // also tag this customer's untagged orders
+  const [sortBy, setSortBy] = useState('newest');
+  const [pageSize, setPageSize] = useState(() => {
+    try { const n = Number(localStorage.getItem(STORAGE_PREFIX + 'ordersPageSize')); return [25, 50, 100].includes(n) ? n : 25; } catch (e) { return 25; }
+  });
+  const [page, setPage] = useState(1);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [batchMenuOpen, setBatchMenuOpen] = useState(false);
+  const batchMenuRef = useRef(null);
+  const batchBtnRef = useRef(null);
+  const listTopRef = useRef(null);
+
+  // ── Area state (unchanged behaviour from v9.12) ──
+  const [areaFor, setAreaFor] = useState(null);
+  const [alsoOthers, setAlsoOthers] = useState(true);
   const [showAreaManager, setShowAreaManager] = useState(false);
   const [areaToast, setAreaToast] = useState('');
   const [groupByArea, setGroupByArea] = useState(() => {
@@ -3284,36 +3375,268 @@ function Orders({ orders, setOrders, productByName, catalog, meta, setMeta, cust
   const areas = (meta && meta.areas) || [];
   const areaById = useMemo(() => Object.fromEntries(areas.map((a) => [a.id, a])), [areas]);
   const areaOf = (o) => areaById[o.area_id] || null;
-  const [filter, setFilter] = useState('all');
-  const [deliveryFilter, setDeliveryFilter] = useState('all');
-  const [batchFilter, setBatchFilter] = useState('all');
-  const [batchExport, setBatchExport] = useState(false);
-  const [selected, setSelected] = useState(null);
+
+  // ── Detail state ──
+  const [selectedId, setSelectedId] = useState(null);
+  const [closing, setClosing] = useState(false);
+  const dirtyRef = useRef(false);
+  const openerRef = useRef(null);
+  const closeTimer = useRef(null);
+  const [flashId, setFlashId] = useState(null);
+  const flashTimer = useRef(null);
   const [printMode, setPrintMode] = useState(null);
   const [pickupMode, setPickupMode] = useState(false);
+  const [batchExport, setBatchExport] = useState(false);
+  const scrollRef = useRef(0);
+  const restoreScroll = useRef(false);
+  // Docked side panel only when the list keeps a comfortable width beside it.
+  const docked = useMediaQuery('(min-width: 1360px)');
+  const roomy = useMediaQuery('(min-width: 1400px)');
+  const phone = !useMediaQuery('(min-width: 768px)');
+  const selectedOrder = selectedId ? orders[selectedId] || null : null;
 
-  const ordersList = useMemo(() => {
+  // ── Unsaved-edit protection ──
+  const confirmDiscard = () => {
+    if (!dirtyRef.current) return true;
+    if (!window.confirm('You have unsaved changes to this order. Discard them?')) return false;
+    dirtyRef.current = false;
+    return true;
+  };
+  useEffect(() => {
+    if (!registerNavGuard) return undefined;
+    registerNavGuard(confirmDiscard);
+    return () => registerNavGuard(null);
+  }, [registerNavGuard]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const onBeforeUnload = (e) => { if (dirtyRef.current) { e.preventDefault(); e.returnValue = ''; } };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, []);
+  // If the open order disappears (deleted on another device), close the panel.
+  useEffect(() => {
+    if (selectedId && !orders[selectedId]) { dirtyRef.current = false; setSelectedId(null); setClosing(false); }
+  }, [orders, selectedId]);
+
+  const openOrder = (id, el) => {
+    if (id === selectedId && !closing) return;
+    if (!confirmDiscard()) return;
+    clearTimeout(closeTimer.current);
+    setClosing(false);
+    if (!selectedId) openerRef.current = el || document.activeElement;
+    setSelectedId(id);
+  };
+  const requestClose = () => {
+    if (!selectedId || closing) return;
+    if (!confirmDiscard()) return;
+    const finish = () => {
+      setSelectedId(null);
+      setClosing(false);
+      const el = openerRef.current;
+      openerRef.current = null;
+      if (el && document.contains(el)) { try { el.focus({ preventScroll: true }); } catch (e) { /* ignore */ } }
+    };
+    if (prefersReducedMotion()) { finish(); return; }
+    setClosing(true);
+    closeTimer.current = setTimeout(finish, 210);
+  };
+  useEffect(() => () => { clearTimeout(closeTimer.current); clearTimeout(flashTimer.current); }, []);
+  // Escape closes the detail (unless a dialog or menu on top of it is open).
+  useEffect(() => {
+    if (!selectedId) return undefined;
+    const onKey = (e) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      if (areaFor || showAreaManager || batchMenuOpen) return;
+      requestClose();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  });
+
+  // ── Leaving to Invoice / Supplier Copy / Pickup / Export and coming back ──
+  const leaveTo = (fn) => {
+    if (!confirmDiscard()) return;
+    scrollRef.current = window.scrollY;
+    restoreScroll.current = true;
+    fn();
+    window.scrollTo(0, 0);
+  };
+  useLayoutEffect(() => {
+    if (!printMode && !pickupMode && !batchExport && restoreScroll.current) {
+      restoreScroll.current = false;
+      window.scrollTo(0, scrollRef.current);
+    }
+  }, [printMode, pickupMode, batchExport]);
+
+  // ── Batches ──
+  const todayIso = today();
+  const batchInfo = useMemo(() => {
+    const counts = {};
+    let unassigned = 0, all = 0;
+    Object.values(orders).forEach((o) => {
+      if (o.delivery_status === 'Cancelled') return;
+      all += 1;
+      if (o.delivery_batch) counts[o.delivery_batch] = (counts[o.delivery_batch] || 0) + 1;
+      else unassigned += 1;
+    });
+    // Next Tuesday and Saturday are always offered, even with no orders yet.
+    [nextTuesday(), nextSaturday()].forEach((b) => { if (!(b in counts)) counts[b] = 0; });
+    if (batchFilter !== 'all' && batchFilter !== 'unassigned' && !(batchFilter in counts)) counts[batchFilter] = 0;
+    return { counts, asc: Object.keys(counts).sort(), unassigned, all };
+  }, [orders, batchFilter]);
+  const isBatch = batchFilter !== 'all' && batchFilter !== 'unassigned';
+  let prevBatch, nextBatch;
+  if (isBatch) {
+    const i = batchInfo.asc.indexOf(batchFilter);
+    prevBatch = batchInfo.asc[i - 1];
+    nextBatch = batchInfo.asc[i + 1];
+  } else {
+    nextBatch = batchInfo.asc.find((b) => b >= todayIso);
+    prevBatch = [...batchInfo.asc].reverse().find((b) => b < todayIso);
+  }
+  const selectBatch = (b) => { setBatchFilter(b); setBatchMenuOpen(false); };
+  useEffect(() => {
+    if (!batchMenuOpen) return undefined;
+    const onDown = (e) => { if (batchMenuRef.current && !batchMenuRef.current.contains(e.target)) setBatchMenuOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('touchstart', onDown);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('touchstart', onDown); };
+  }, [batchMenuOpen]);
+
+  // ── Filtering (same rules as before) ──
+  const filtered = useMemo(() => {
     let list = Object.values(orders);
-    if (filter !== 'all') list = list.filter(o => o.payment_status === filter);
-    if (deliveryFilter !== 'all') list = list.filter(o => (o.delivery_status || 'Pending') === deliveryFilter);
-    if (batchFilter !== 'all') {
-      if (batchFilter === 'unassigned') list = list.filter(o => !o.delivery_batch);
-      else list = list.filter(o => o.delivery_batch === batchFilter);
-    }
-    if (areaFilter === 'none') list = list.filter(o => !areaById[o.area_id]);
-    else if (areaFilter !== 'all') list = list.filter(o => o.area_id === areaFilter);
+    if (filter !== 'all') list = list.filter((o) => o.payment_status === filter);
+    if (deliveryFilter !== 'all') list = list.filter((o) => (o.delivery_status || 'Pending') === deliveryFilter);
+    if (batchFilter === 'unassigned') list = list.filter((o) => !o.delivery_batch);
+    else if (batchFilter !== 'all') list = list.filter((o) => o.delivery_batch === batchFilter);
+    if (areaFilter === 'none') list = list.filter((o) => !areaById[o.area_id]);
+    else if (areaFilter !== 'all') list = list.filter((o) => o.area_id === areaFilter);
     if (search.trim()) {
-      const q = search.toLowerCase();
-      list = list.filter(o =>
-        o.id.toLowerCase().includes(q) ||
+      const q = search.trim().toLowerCase();
+      list = list.filter((o) =>
+        (o.id || '').toLowerCase().includes(q) ||
         (o.customer || '').toLowerCase().includes(q) ||
-        (o.items || []).some(i => i.product.toLowerCase().includes(q))
-      );
+        (o.items || []).some((i) => (i.product || '').toLowerCase().includes(q)));
     }
-    return list.sort((a, b) => (b.id || '').localeCompare(a.id || ''));
+    return list;
   }, [orders, search, filter, deliveryFilter, batchFilter, areaFilter, areaById]);
 
-  // ── Area tagging ──
+  // Grouping by area only makes sense inside one delivery batch.
+  const grouped = groupByArea && areas.length > 0 && isBatch;
+  const sorted = useMemo(() => {
+    const byNewest = (a, b) => (ordIdNum(b.id) - ordIdNum(a.id)) || (b.date || '').localeCompare(a.date || '');
+    const byCustomer = (a, b) => (a.customer || '').localeCompare(b.customer || '', undefined, { sensitivity: 'base' }) || byNewest(a, b);
+    const dueOf = (o) => { const b = ordBalance(o); return b.cancelled ? -1 : b.unknown ? b.total : b.due; };
+    const cmps = {
+      newest: byNewest,
+      oldest: (a, b) => -byNewest(a, b),
+      customer: byCustomer,
+      total: (a, b) => (ordTotal(b) - ordTotal(a)) || byNewest(a, b),
+      balance: (a, b) => (dueOf(b) - dueOf(a)) || byNewest(a, b),
+      batch: (a, b) => (a.delivery_batch || '9999-99-99').localeCompare(b.delivery_batch || '9999-99-99') || byCustomer(a, b),
+    };
+    const list = filtered.slice();
+    if (grouped) {
+      // Within an area, the default "newest" reads better alphabetically (as in v9.12).
+      const within = sortBy === 'newest' ? byCustomer : (cmps[sortBy] || byNewest);
+      const rank = Object.fromEntries(areas.map((a, i) => [a.id, i]));
+      const r = (o) => (areaById[o.area_id] ? rank[o.area_id] : 1e6);
+      list.sort((a, b) => (r(a) - r(b)) || within(a, b));
+    } else {
+      list.sort(cmps[sortBy] || byNewest);
+    }
+    return list;
+  }, [filtered, sortBy, grouped, areas, areaById]);
+
+  // ── Pagination ──
+  const totalCount = sorted.length;
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+  const curPage = Math.min(page, totalPages);
+  const pageItems = sorted.slice((curPage - 1) * pageSize, curPage * pageSize);
+  useEffect(() => { setPage(1); }, [search, filter, deliveryFilter, batchFilter, areaFilter, sortBy, pageSize, groupByArea]);
+  useEffect(() => { if (page > totalPages) setPage(totalPages); }, [page, totalPages]);
+  const goPage = (p) => {
+    setPage(p);
+    const el = listTopRef.current;
+    if (el && el.getBoundingClientRect().top < 0) el.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth', block: 'start' });
+  };
+  const changePageSize = (n) => {
+    setPageSize(n);
+    try { localStorage.setItem(STORAGE_PREFIX + 'ordersPageSize', String(n)); } catch (e) { /* ignore */ }
+  };
+
+  // Group stats across the whole filtered list (not only this page).
+  const groupStats = useMemo(() => {
+    const s = {};
+    if (!grouped) return s;
+    sorted.forEach((o) => {
+      const k = areaById[o.area_id] ? o.area_id : '__none';
+      s[k] = s[k] || { count: 0, value: 0 };
+      s[k].count += 1;
+      if (o.delivery_status !== 'Cancelled') s[k].value += ordTotal(o);
+    });
+    return s;
+  }, [grouped, sorted, areaById]);
+  const pageGroups = useMemo(() => {
+    if (!grouped) return [{ key: 'all', area: null, orders: pageItems, plain: true }];
+    const out = [];
+    pageItems.forEach((o) => {
+      const a = areaById[o.area_id] || null;
+      const k = a ? a.id : '__none';
+      const last = out[out.length - 1];
+      if (last && last.key === k) last.orders.push(o); else out.push({ key: k, area: a, orders: [o] });
+    });
+    return out;
+  }, [grouped, pageItems, areaById]);
+
+  // ── Summary for the current view ──
+  const summary = useMemo(() => {
+    let pending = 0, withBalance = 0, needsAmount = 0, value = 0, cancelled = 0;
+    filtered.forEach((o) => {
+      if (o.delivery_status === 'Cancelled') { cancelled += 1; return; }
+      value += ordTotal(o);
+      if ((o.delivery_status || 'Pending') !== 'Delivered') pending += 1;
+      const b = ordBalance(o);
+      if (b.unknown) needsAmount += 1;
+      else if (b.due > 0.004) withBalance += 1;
+    });
+    return { count: filtered.length, pending, withBalance, needsAmount, value, cancelled };
+  }, [filtered]);
+
+  // ── Active filter chips ──
+  const chips = [
+    filter !== 'all' && { key: 'pay', label: filter, clear: () => setFilter('all') },
+    deliveryFilter !== 'all' && { key: 'del', label: deliveryFilter === 'Pending' ? 'Pending delivery' : deliveryFilter, clear: () => setDeliveryFilter('all') },
+    areaFilter !== 'all' && { key: 'area', label: areaFilter === 'none' ? 'No area' : (areaById[areaFilter] ? areaById[areaFilter].name : 'Area'), area: areaById[areaFilter] || null, clear: () => setAreaFilter('all') },
+  ].filter(Boolean);
+  const clearAll = () => { setFilter('all'); setDeliveryFilter('all'); setAreaFilter('all'); setSearch(''); };
+
+  // ── Order updates (same data changes as before, now via functional updates) ──
+  const flash = (id) => {
+    setFlashId(id);
+    clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => setFlashId(null), 900);
+  };
+  const updateOrderStatus = (id, patch) => {
+    setOrders((prev) => (prev[id] ? { ...prev, [id]: { ...prev[id], ...patch, updated_at: new Date().toISOString() } } : prev));
+    flash(id);
+  };
+  const saveFullOrder = (id, updatedOrder) => {
+    setOrders((prev) => ({ ...prev, [id]: updatedOrder }));
+    flash(id);
+  };
+  const deleteOrder = (id) => {
+    if (!confirm('Are you sure you want to delete this order? This action cannot be undone.')) return;
+    setOrders((prev) => { const next = { ...prev }; delete next[id]; return next; });
+    // Tombstone so the deletion survives multi-device merging.
+    setMeta((m) => ({ ...m, deletedOrders: { ...(m.deletedOrders || {}), [id]: new Date().toISOString() } }));
+    dirtyRef.current = false;
+    clearTimeout(closeTimer.current);
+    setClosing(false);
+    setSelectedId(null);
+  };
+
+  // ── Area tagging (unchanged from v9.12) ──
   const nowIso = () => new Date().toISOString();
   const createArea = (name) => {
     const existing = areas.find((a) => a.name.trim().toLowerCase() === name.trim().toLowerCase());
@@ -3322,7 +3645,6 @@ function Orders({ orders, setOrders, productByName, catalog, meta, setMeta, cust
     setMeta((m) => ({ ...m, areas: [...(m.areas || []), rec] }));
     return rec.id;
   };
-  // Other orders from the same customer that have no area yet.
   const untaggedSiblings = (order) => Object.values(orders).filter((o) =>
     o.id !== order.id && !areaById[o.area_id] && sameCustomer(o, order.customer, order.phone));
   const assignArea = (order, areaId) => {
@@ -3333,7 +3655,6 @@ function Orders({ orders, setOrders, productByName, catalog, meta, setMeta, cust
       [order, ...siblings].forEach((o) => { if (next[o.id]) next[o.id] = { ...next[o.id], area_id: areaId || '', updated_at: t }; });
       return next;
     });
-    // Remember it on the saved customer so their next order is tagged automatically.
     if (setCustomers) {
       const match = findCustomerMatch(customers, order.customer, order.phone);
       if (match) {
@@ -3349,374 +3670,519 @@ function Orders({ orders, setOrders, productByName, catalog, meta, setMeta, cust
         } }));
       }
     }
-    setSelected((sel) => (sel && sel.id === order.id ? { ...sel, area_id: areaId || '' } : sel));
     setAreaFor(null);
+    flash(order.id);
     if (siblings.length) {
       setAreaToast(`Also tagged ${siblings.length} other order${siblings.length !== 1 ? 's' : ''} from ${order.customer}.`);
       setTimeout(() => setAreaToast(''), 3500);
     }
   };
   const openAreaPicker = (e, order) => { if (e) e.stopPropagation(); setAlsoOthers(true); setAreaFor(order); };
-  const toggleGroup = () => setGroupByArea((v) => {
-    try { localStorage.setItem(STORAGE_PREFIX + 'groupByArea', v ? '0' : '1'); } catch (e) {}
-    return !v;
-  });
-  // Grouping only makes sense inside one delivery batch.
-  const grouped = groupByArea && areas.length > 0 && batchFilter !== 'all' && batchFilter !== 'unassigned';
-  const orderGroups = useMemo(() => {
-    if (!grouped) return [{ area: null, orders: ordersList, plain: true }];
-    const byKey = {};
-    ordersList.forEach((o) => { const k = areaById[o.area_id] ? o.area_id : '__none'; (byKey[k] = byKey[k] || []).push(o); });
-    const keys = [...areas.map((a) => a.id).filter((id) => byKey[id]), ...(byKey.__none ? ['__none'] : [])];
-    return keys.map((k) => ({
-      area: k === '__none' ? null : areaById[k],
-      orders: byKey[k].slice().sort((a, b) => (a.customer || '').localeCompare(b.customer || '')),
-    }));
-  }, [grouped, ordersList, areas, areaById]);
-
-  // Available batches — derived from existing orders' delivery_batch, plus the next 2 Tuesdays and Saturdays.
-  const availableBatches = useMemo(() => {
-    const set = new Set();
-    const todayIso = today();
-    let prev = '';   // most recent past batch that still has orders
-    Object.values(orders).forEach(o => {
-      if (!o.delivery_batch || o.delivery_status === 'Cancelled') return;
-      if (o.delivery_batch >= todayIso) {
-        set.add(o.delivery_batch);                 // today + upcoming
-      } else if (o.delivery_batch > prev) {
-        prev = o.delivery_batch;                   // track the latest past batch
-      }
-    });
-    // Include the previous batch (one back) so you can still review it,
-    // plus next Tue and next Sat as choices even with zero orders.
-    if (prev) set.add(prev);
-    set.add(nextTuesday());
-    set.add(nextSaturday());
-    return Array.from(set).sort();
-  }, [orders]);
-
-  const deleteOrder = (id) => {
-    if (!confirm('Are you sure you want to delete this order? This action cannot be undone.')) return;
-    const next = { ...orders };
-    delete next[id];
-    setOrders(next);
-    // Tombstone so the deletion survives multi-device merging (otherwise the
-    // cloud copy would just bring the order back on the next sync).
-    setMeta((m) => ({ ...m, deletedOrders: { ...(m.deletedOrders || {}), [id]: new Date().toISOString() } }));
-    setSelected(null);
+  const setGroup = (on) => {
+    setGroupByArea(on);
+    try { localStorage.setItem(STORAGE_PREFIX + 'groupByArea', on ? '1' : '0'); } catch (e) { /* ignore */ }
   };
 
-  const updateOrderStatus = (id, patch) => {
-    setOrders({ ...orders, [id]: { ...orders[id], ...patch, updated_at: new Date().toISOString() } });
-    if (selected && selected.id === id) setSelected({ ...selected, ...patch });
-  };
-
-  const saveFullOrder = (id, updatedOrder) => {
-    setOrders({ ...orders, [id]: updatedOrder });
-    setSelected(updatedOrder);
-  };
-
-  if (printMode && selected) {
-    return <PrintableView order={selected} mode={printMode} onBack={() => setPrintMode(null)} />;
+  // ── Full-screen sub-views (state above is kept, so you return to the same place) ──
+  if (printMode && selectedOrder) {
+    return <PrintableView order={selectedOrder} mode={printMode} onBack={() => setPrintMode(null)} />;
   }
-
-  if (pickupMode) {
+  if (pickupMode && isBatch) {
     const batchOrders = Object.values(orders)
-      .filter(o => o.delivery_batch === batchFilter && o.delivery_status !== 'Cancelled')
+      .filter((o) => o.delivery_batch === batchFilter && o.delivery_status !== 'Cancelled')
       .sort((a, b) => (a.customer || '').localeCompare(b.customer || ''));
     return <PickupMode batch={batchFilter} orders={batchOrders} areas={areas} onBack={() => setPickupMode(false)} />;
   }
-
-  if (batchExport && batchFilter !== 'all' && batchFilter !== 'unassigned') {
+  if (batchExport && isBatch) {
     const batchOrders = Object.values(orders)
-      .filter(o => o.delivery_batch === batchFilter && o.delivery_status !== 'Cancelled')
+      .filter((o) => o.delivery_batch === batchFilter && o.delivery_status !== 'Cancelled')
       .sort((a, b) => (a.customer || '').localeCompare(b.customer || ''));
     return <BatchExportView batchOrders={batchOrders} batch={batchFilter} onBack={() => setBatchExport(false)} />;
   }
 
+  const panelOpenDocked = docked && !!selectedOrder;
+  const showBatchCol = !isBatch && !panelOpenDocked;
+  const colCount = showBatchCol ? 6 : 5;
+  const anyOrders = Object.keys(orders).length > 0;
+  const batchCenterLabel = batchFilter === 'all' ? 'All orders'
+    : batchFilter === 'unassigned' ? 'No batch set'
+      : (phone ? fmtBatchMed(batchFilter) : fmtBatchLong(batchFilter));
+  const batchWhen = isBatch ? (batchFilter === todayIso ? 'Today' : batchFilter > todayIso ? 'Upcoming batch' : 'Past batch') : '';
+  const upcoming = batchInfo.asc.filter((b) => b >= todayIso);
+  const past = batchInfo.asc.filter((b) => b < todayIso).reverse();
+
+  // Small building blocks used by both the table and the phone cards.
+  const payDue = (o) => {
+    const b = ordBalance(o);
+    if (b.cancelled) return null;
+    if (b.unknown) return <div className="text-[11px] mt-1 font-medium" style={{ color: THEME.warnInk }}>Amount paid not recorded</div>;
+    if (b.due > 0.004 && o.payment_status === 'Partial') return <div className="text-[11px] mt-1 font-medium" style={{ color: THEME.red }}>{peso(b.due)} due</div>;
+    return null;
+  };
+  // Status pills: text + colour (never colour alone). Amber uses the darker
+  // warning ink so "Pending"/"Partial" stay readable.
+  const pillTone = (status) => {
+    const c = statusColor(status);
+    if (c === 'green') return { background: THEME.successBg, color: THEME.green };
+    if (c === 'red') return { background: THEME.errorBg, color: THEME.red };
+    if (c === 'amber') return { background: THEME.warnBg, color: THEME.warnInk };
+    return { background: THEME.line, color: THEME.inkSoft };
+  };
+  const statusBadges = (o, nowrap) => {
+    const pay = o.payment_status || 'Unpaid';
+    const del = o.delivery_status || 'Pending';
+    const cls = `inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${flashId === o.id ? 'mn-pop' : ''}`;
+    return (
+      <div className={`flex gap-1.5 ${nowrap ? 'flex-nowrap' : 'flex-wrap'}`}>
+        <span key={'p' + pay} className={cls} style={pillTone(pay)}>{pay}</span>
+        <span key={'d' + del} className={cls} style={pillTone(del)}>{del}</span>
+      </div>
+    );
+  };
+  const batchTag = (iso) => (iso ? (
+    <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium whitespace-nowrap" style={{ background: THEME.brandBg, color: THEME.brand }}>
+      <Truck size={10} /> {batchLabel(iso)}
+    </span>
+  ) : <span className="text-xs italic" style={{ color: THEME.inkSoft }}>No batch</span>);
+  const rowKey = (e, o) => { if (e.target !== e.currentTarget) return; if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openOrder(o.id, e.currentTarget); } };
+  const segBtn = (on) => ({
+    background: on ? THEME.brand : 'transparent', color: on ? 'white' : THEME.ink,
+    border: `1px solid ${on ? THEME.brand : THEME.line}`,
+  });
+
+  const detail = selectedOrder && (
+    <OrderDetail
+      key={selectedOrder.id}
+      order={selectedOrder}
+      catalog={catalog}
+      productByName={productByName}
+      onClose={requestClose}
+      onDelete={() => deleteOrder(selectedOrder.id)}
+      onPrint={(mode) => leaveTo(() => setPrintMode(mode))}
+      onUpdate={(patch) => updateOrderStatus(selectedOrder.id, patch)}
+      onSaveFull={(updated) => saveFullOrder(selectedOrder.id, updated)}
+      area={areaOf(selectedOrder)}
+      onEditArea={() => openAreaPicker(null, selectedOrder)}
+      onDirtyChange={(d) => { dirtyRef.current = d; }}
+      sync={sync}
+      narrow={phone}
+    />
+  );
+
   return (
-    <div>
-      <Header title="Orders" subtitle={(() => {
-        const all = Object.values(orders);
-        const cancelled = all.filter(o => o.delivery_status === 'Cancelled').length;
-        const active = all.length - cancelled;
-        return cancelled > 0
-          ? `${active} active · ${cancelled} cancelled · showing ${ordersList.length}`
-          : `${ordersList.length} order${ordersList.length !== 1 ? 's' : ''}`;
-      })()} />
+    <div className={panelOpenDocked ? 'flex items-start gap-6' : ''}>
+      <div className="flex-1 min-w-0">
+        {/* ===== Header ===== */}
+        <div className="flex items-center justify-between gap-3 mb-5 no-print">
+          <h1 className="font-display text-3xl sm:text-4xl leading-tight" style={{ color: THEME.brand }}>Orders</h1>
+          <button onClick={onNewOrder}
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold flex-shrink-0 mn-btn"
+            style={{ background: THEME.brand, color: 'white', boxShadow: '0 2px 8px rgba(122,46,51,0.18)' }}>
+            <PlusCircle size={17} /> New order
+          </button>
+        </div>
 
-      <Card className="p-5">
-        <div className="mb-4">
-          <div className="relative mb-3">
-            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: THEME.inkSoft }} />
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by order ID, customer, or product…"
-              className="w-full pl-9 pr-3 py-2 rounded-lg outline-none text-sm"
-              style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink }} />
-          </div>
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft, letterSpacing: '0.06em' }}>Payment</span>
-              <div className="flex flex-wrap gap-1">
-                {['all', 'Paid', 'Unpaid', 'Partial'].map((f) => (
-                  <button key={f} onClick={() => setFilter(f)}
-                    className="px-3 py-1.5 text-sm rounded-lg"
-                    style={{ background: filter === f ? THEME.brand : 'transparent', color: filter === f ? 'white' : THEME.ink, border: `1px solid ${filter === f ? THEME.brand : THEME.line}` }}>
-                    {f === 'all' ? 'All' : f}
-                  </button>
-                ))}
+        {/* ===== Batch bar ===== */}
+        <div className="flex items-stretch gap-2 mb-4 no-print">
+          <div className="flex-1 min-w-0 flex items-center rounded-xl" style={{ background: THEME.card, border: `1px solid ${THEME.line}` }}>
+            <button onClick={() => prevBatch && selectBatch(prevBatch)} disabled={!prevBatch}
+              className="flex items-center gap-1 px-3 py-3 text-sm rounded-l-xl flex-shrink-0 mn-btn disabled:opacity-35"
+              style={{ color: THEME.ink }} aria-label={prevBatch ? `Previous batch, ${fmtBatchMed(prevBatch)}` : 'No earlier batch'}>
+              <ChevronLeft size={18} /> <span className="hidden sm:inline">Previous</span>
+            </button>
+            <div className="flex-1 min-w-0 text-center px-1">
+              <div className="font-display text-lg sm:text-xl leading-tight truncate" style={{ color: batchFilter === 'all' ? THEME.ink : THEME.brand }} aria-live="polite">
+                {batchCenterLabel}
               </div>
+              {batchWhen && <div className="text-[11px] uppercase tracking-wider" style={{ color: THEME.inkSoft, letterSpacing: '0.08em' }}>{batchWhen}</div>}
             </div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft, letterSpacing: '0.06em' }}>Delivery</span>
-              <div className="flex flex-wrap gap-1">
-                {['all', 'Pending', 'Delivered', 'Cancelled'].map((f) => (
-                  <button key={f} onClick={() => setDeliveryFilter(f)}
-                    className="px-3 py-1.5 text-sm rounded-lg"
-                    style={{ background: deliveryFilter === f ? THEME.accent : 'transparent', color: deliveryFilter === f ? 'white' : THEME.ink, border: `1px solid ${deliveryFilter === f ? THEME.accent : THEME.line}` }}>
-                    {f === 'all' ? 'All' : f}
-                  </button>
-                ))}
-              </div>
-            </div>
+            <button onClick={() => nextBatch && selectBatch(nextBatch)} disabled={!nextBatch}
+              className="flex items-center gap-1 px-3 py-3 text-sm rounded-r-xl flex-shrink-0 mn-btn disabled:opacity-35"
+              style={{ color: THEME.ink }} aria-label={nextBatch ? `Next batch, ${fmtBatchMed(nextBatch)}` : 'No later batch'}>
+              <span className="hidden sm:inline">Next</span> <ChevronRight size={18} />
+            </button>
           </div>
-
-          {/* Batch filter row + Pickup Mode entry */}
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 mt-2.5 pt-2.5" style={{ borderTop: `1px solid ${THEME.line}` }}>
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft, letterSpacing: '0.06em' }}>Batch</span>
-              <div className="flex gap-1 flex-wrap">
-                <button onClick={() => setBatchFilter('all')}
-                  className="px-3 py-1.5 text-sm rounded-md"
-                  style={{ background: batchFilter === 'all' ? THEME.brand : 'transparent', color: batchFilter === 'all' ? 'white' : THEME.ink, border: `1px solid ${batchFilter === 'all' ? THEME.brand : THEME.line}` }}>All</button>
-                {availableBatches.map((b) => {
-                  const count = Object.values(orders).filter(o => o.delivery_batch === b && o.delivery_status !== 'Cancelled').length;
-                  return (
-                    <button key={b} onClick={() => setBatchFilter(b)}
-                      className="px-3 py-1.5 text-sm rounded-md inline-flex items-center gap-1.5"
-                      style={{ background: batchFilter === b ? THEME.brand : 'transparent', color: batchFilter === b ? 'white' : THEME.ink, border: `1px solid ${batchFilter === b ? THEME.brand : THEME.line}` }}>
-                      {batchLabel(b)} <span className="text-xs opacity-75">({count})</span>
+          <div className="relative flex-shrink-0" ref={batchMenuRef}
+            onKeyDown={(e) => { if (e.key === 'Escape' && batchMenuOpen) { e.preventDefault(); setBatchMenuOpen(false); if (batchBtnRef.current) batchBtnRef.current.focus(); } }}>
+            <button ref={batchBtnRef} onClick={() => setBatchMenuOpen((v) => !v)}
+              className="h-full flex items-center gap-2 px-3.5 rounded-xl text-sm font-medium mn-btn"
+              style={{ background: batchFilter === 'all' ? THEME.brandBg : THEME.card, border: `1px solid ${batchFilter === 'all' ? THEME.brandBg : THEME.line}`, color: THEME.ink }}
+              aria-haspopup="true" aria-expanded={batchMenuOpen}>
+              <CalendarDays size={16} /> <span>{phone ? 'Dates' : 'All dates'}</span> <ChevronDown size={14} />
+            </button>
+            {batchMenuOpen && (
+              <div className="absolute right-0 top-full mt-2 z-30 w-72 max-w-[calc(100vw-2rem)] rounded-xl p-1.5 mn-pop-in"
+                style={{ background: THEME.card, border: `1px solid ${THEME.line}`, boxShadow: '0 12px 32px rgba(42,38,36,0.16)' }}
+                role="menu" aria-label="Choose delivery batch">
+                <div className="max-h-[60vh] overflow-y-auto">
+                  {[
+                    { id: 'all', label: 'All orders', sub: 'Every date', n: batchInfo.all },
+                    { id: 'unassigned', label: 'No batch set', sub: 'Orders waiting for a delivery day', n: batchInfo.unassigned },
+                  ].map((it) => (
+                    <button key={it.id} role="menuitemradio" aria-checked={batchFilter === it.id} onClick={() => selectBatch(it.id)}
+                      className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-left row-hover"
+                      style={{ background: batchFilter === it.id ? THEME.brandBg : 'transparent' }}>
+                      <span className="min-w-0">
+                        <span className="block text-sm font-medium" style={{ color: THEME.ink }}>{it.label}</span>
+                        <span className="block text-xs" style={{ color: THEME.inkSoft }}>{it.sub}</span>
+                      </span>
+                      <span className="text-xs tabular-nums" style={{ color: THEME.inkSoft }}>{it.n}</span>
                     </button>
-                  );
-                })}
-                {(() => {
-                  const unassignedCount = Object.values(orders).filter(o => !o.delivery_batch && o.delivery_status !== 'Cancelled').length;
-                  if (unassignedCount === 0) return null;
-                  return (
-                    <button onClick={() => setBatchFilter('unassigned')}
-                      className="px-3 py-1.5 text-sm rounded-md inline-flex items-center gap-1.5"
-                      style={{ background: batchFilter === 'unassigned' ? THEME.red : 'transparent', color: batchFilter === 'unassigned' ? 'white' : THEME.red, border: `1px solid ${THEME.red}` }}>
-                      Unassigned <span className="text-xs opacity-75">({unassignedCount})</span>
-                    </button>
-                  );
-                })()}
-              </div>
-            </div>
-            {/* Pickup Mode button — only shows when a specific batch is selected */}
-            {batchFilter !== 'all' && batchFilter !== 'unassigned' && (
-              <>
-              <Btn variant="primary" size="sm" onClick={() => setPickupMode(true)}>
-                <Check size={14} className="inline -mt-0.5 mr-1" /> Pickup Mode
-              </Btn>
-              <Btn variant="secondary" size="sm" onClick={() => setBatchExport(true)}>
-                <ImageIcon size={14} className="inline -mt-0.5 mr-1" /> Export Docs
-              </Btn>
-              </>
-            )}
-          </div>
-
-          {/* Area filter row — counts follow the batch you're looking at */}
-          <div className="flex flex-wrap items-center gap-2 mt-2.5 pt-2.5" style={{ borderTop: `1px solid ${THEME.line}` }}>
-            <span className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft, letterSpacing: '0.06em' }}>Area</span>
-            {areas.length === 0 ? (
-              <button onClick={() => setShowAreaManager(true)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg"
-                style={{ border: `1px dashed ${THEME.inkSoft}`, color: THEME.inkSoft }}>
-                <MapPin size={13} /> Set up areas to color-code where customers live
-              </button>
-            ) : (() => {
-              const inScope = Object.values(orders).filter((o) => o.delivery_status !== 'Cancelled' &&
-                (batchFilter === 'all' ? true : batchFilter === 'unassigned' ? !o.delivery_batch : o.delivery_batch === batchFilter));
-              const noneCount = inScope.filter((o) => !areaById[o.area_id]).length;
-              const pillStyle = (on) => ({ border: `1px solid ${on ? THEME.brand : THEME.line}`, background: on ? THEME.brandBg : 'transparent' });
-              return (
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <button onClick={() => setAreaFilter('all')} className="px-3 py-1.5 text-sm rounded-lg"
-                    style={{ background: areaFilter === 'all' ? THEME.brand : 'transparent', color: areaFilter === 'all' ? 'white' : THEME.ink, border: `1px solid ${areaFilter === 'all' ? THEME.brand : THEME.line}` }}>All</button>
-                  {areas.map((a) => {
-                    const n = inScope.filter((o) => o.area_id === a.id).length;
-                    const on = areaFilter === a.id;
-                    return (
-                      <button key={a.id} onClick={() => setAreaFilter(on ? 'all' : a.id)}
-                        className="inline-flex items-center gap-1.5 pl-1 pr-2 py-1 rounded-lg" style={pillStyle(on)} aria-pressed={on}>
-                        <AreaChip area={a} />
-                        <span className="text-xs" style={{ color: THEME.inkSoft }}>{n}</span>
-                      </button>
-                    );
-                  })}
-                  {noneCount > 0 && (
-                    <button onClick={() => setAreaFilter(areaFilter === 'none' ? 'all' : 'none')}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs" style={{ ...pillStyle(areaFilter === 'none'), color: THEME.inkSoft }}>
-                      No area <span>{noneCount}</span>
-                    </button>
-                  )}
-                  <button onClick={() => setShowAreaManager(true)} className="text-xs font-medium px-2 py-1" style={{ color: THEME.inkSoft }}>
-                    Manage
-                  </button>
+                  ))}
+                  {[['Upcoming', upcoming], ['Past batches', past]].map(([title, list]) => list.length > 0 && (
+                    <div key={title} className="mt-1.5 pt-1.5" style={{ borderTop: `1px solid ${THEME.line}` }}>
+                      <div className="px-3 py-1 text-[11px] uppercase tracking-wider font-semibold" style={{ color: THEME.inkSoft, letterSpacing: '0.08em' }}>{title}</div>
+                      {list.map((b) => (
+                        <button key={b} role="menuitemradio" aria-checked={batchFilter === b} onClick={() => selectBatch(b)}
+                          className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-left text-sm row-hover"
+                          style={{ background: batchFilter === b ? THEME.brandBg : 'transparent', color: THEME.ink }}>
+                          <span>{fmtBatchMed(b)}{b === todayIso && <span className="ml-1.5 text-[11px] font-semibold" style={{ color: THEME.green }}>Today</span>}</span>
+                          <span className="text-xs tabular-nums" style={{ color: THEME.inkSoft }}>{batchInfo.counts[b]}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ))}
                 </div>
-              );
-            })()}
+              </div>
+            )}
           </div>
         </div>
 
-        {ordersList.length === 0 ? (
-          <EmptyHint>No orders match. Try clearing filters.</EmptyHint>
-        ) : (
-          <>
-          {/* Filtered summary — what am I looking at, and what's it worth */}
-          <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
-            <div className="text-xs" style={{ color: THEME.inkSoft }}>
-              {ordersList.length} order{ordersList.length !== 1 ? 's' : ''} · {peso(ordersList.reduce((s, o) => s + (o.items || []).reduce((t, i) => t + i.qty * i.price, 0), 0))} total value
+        {/* ===== Summary + batch tools ===== */}
+        <div className="flex items-center justify-between gap-3 flex-wrap mb-4 no-print">
+          <div className="flex items-baseline flex-wrap gap-x-3 gap-y-1 text-sm" style={{ color: THEME.inkSoft }}>
+            <span><span className="font-display text-xl" style={{ color: THEME.brand }}>{summary.count}</span> order{summary.count !== 1 ? 's' : ''}</span>
+            <span aria-hidden="true" style={{ color: THEME.line }}>|</span>
+            <span><span className="font-display text-xl" style={{ color: THEME.brand }}>{summary.pending}</span> pending delivery</span>
+            <span aria-hidden="true" style={{ color: THEME.line }}>|</span>
+            <span><span className="font-display text-xl" style={{ color: THEME.brand }}>{summary.withBalance}</span> with balance</span>
+            {summary.needsAmount > 0 && (
+              <button onClick={() => setFilter('Partial')} className="text-xs font-semibold px-2 py-0.5 rounded-full"
+                style={{ background: THEME.warnBg, color: THEME.warnInk }} title="Partial payments with no amount recorded">
+                {summary.needsAmount} partial need amount
+              </button>
+            )}
+            <span className="text-xs">· {peso(summary.value)} total{summary.cancelled ? ` · ${summary.cancelled} cancelled` : ''}</span>
+          </div>
+          {isBatch && (
+            <div className="flex gap-2">
+              <Btn variant="primary" size="sm" onClick={() => leaveTo(() => setPickupMode(true))}>
+                <Check size={14} className="inline -mt-0.5 mr-1" /> Pickup Mode
+              </Btn>
+              <Btn variant="secondary" size="sm" onClick={() => leaveTo(() => setBatchExport(true))}>
+                <ImageIcon size={14} className="inline -mt-0.5 mr-1" /> Export Docs
+              </Btn>
             </div>
-            {areas.length > 0 && batchFilter !== 'all' && batchFilter !== 'unassigned' && (
-              <button onClick={toggleGroup} className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full"
-                style={{ background: groupByArea ? THEME.brandBg : 'transparent', color: groupByArea ? THEME.brand : THEME.inkSoft, border: `1px solid ${groupByArea ? THEME.brandBg : THEME.line}` }}
-                aria-pressed={groupByArea}>
-                <MapPin size={12} /> Group by area
+          )}
+        </div>
+
+        {/* ===== Search + Filters ===== */}
+        <div className="flex gap-2 mb-2 no-print">
+          <div className="relative flex-1 min-w-0">
+            <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: THEME.inkSoft }} />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search customer, order ID, or product…"
+              aria-label="Search orders"
+              className="w-full pl-10 pr-9 py-2.5 rounded-xl outline-none text-sm"
+              style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink }} />
+            {search && (
+              <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg row-hover" aria-label="Clear search">
+                <X size={14} style={{ color: THEME.inkSoft }} />
               </button>
             )}
           </div>
+          <button onClick={() => setFiltersOpen((v) => !v)} aria-expanded={filtersOpen} aria-controls="orders-filters"
+            className="flex items-center gap-2 px-3.5 rounded-xl text-sm font-medium flex-shrink-0 mn-btn"
+            style={{ background: filtersOpen ? THEME.brandBg : THEME.card, border: `1px solid ${filtersOpen ? THEME.brandBg : THEME.line}`, color: THEME.ink }}>
+            <Filter size={15} /> <span>Filters</span>
+            {chips.length > 0 && <span className="text-[11px] font-bold rounded-full px-1.5" style={{ background: THEME.brand, color: 'white' }}>{chips.length}</span>}
+            <ChevronDown size={14} style={{ transition: 'transform 0.18s ease', transform: filtersOpen ? 'rotate(180deg)' : 'none' }} />
+          </button>
+        </div>
 
-          {/* Desktop / tablet: table */}
-          <div className="overflow-x-auto -mx-1 hidden sm:block">
-          <table className="w-full text-sm" style={{ minWidth: 760 }}>
-            <thead>
-              <tr className="text-left" style={{ color: THEME.inkSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                <th className="pb-2 font-medium">Order ID</th>
-                <th className="pb-2 font-medium">Date</th>
-                <th className="pb-2 font-medium">Customer</th>
-                <th className="pb-2 font-medium">Batch</th>
-                <th className="pb-2 font-medium">Area</th>
-                <th className="pb-2 font-medium">Items</th>
-                <th className="pb-2 font-medium text-right">Total</th>
-                <th className="pb-2 pl-4 font-medium">Payment</th>
-                <th className="pb-2 font-medium">Delivery</th>
-                <th className="pb-2 font-medium"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {orderGroups.map((g) => (
-                <React.Fragment key={g.plain ? 'all' : (g.area ? g.area.id : 'none')}>
-                {!g.plain && (
-                  <tr>
-                    <td colSpan={10} className="pt-4 pb-2" style={{ borderTop: `1px solid ${THEME.line}` }}>
-                      <div className="flex items-center gap-2">
-                        {g.area ? <AreaChip area={g.area} size="md" /> : <span className="text-sm font-medium" style={{ color: THEME.inkSoft }}>No area</span>}
-                        <span className="text-xs" style={{ color: THEME.inkSoft }}>
-                          {g.orders.length} order{g.orders.length !== 1 ? 's' : ''} · {peso(g.orders.reduce((s, o) => s + (o.items || []).reduce((t, i) => t + i.qty * i.price, 0), 0))}
-                        </span>
-                      </div>
-                    </td>
-                  </tr>
-                )}
-              {g.orders.map((o) => {
-                const total = (o.items || []).reduce((s, i) => s + i.qty * i.price, 0);
-                const isCancelled = o.delivery_status === 'Cancelled';
-                return (
-                  <tr key={o.id} style={{ borderTop: `1px solid ${THEME.line}`, opacity: isCancelled ? 0.5 : 1 }} className="row-hover cursor-pointer" onClick={() => setSelected(o)}>
-                    <td className="py-2.5 font-medium" style={{ textDecoration: isCancelled ? 'line-through' : 'none' }}>{o.id}</td>
-                    <td className="py-2.5" style={{ color: THEME.inkSoft }}>{fmtDate(o.date)}</td>
-                    <td className="py-2.5" style={{ textDecoration: isCancelled ? 'line-through' : 'none' }}>{o.customer}</td>
-                    <td className="py-2.5">
-                      {o.delivery_batch ? (
-                        <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium"
-                          style={{ background: THEME.brandBg, color: THEME.brand }}>
-                          <Truck size={10} /> {batchLabel(o.delivery_batch)}
-                        </span>
-                      ) : (
-                        <span className="text-xs italic" style={{ color: THEME.inkSoft }}>Unassigned</span>
-                      )}
-                    </td>
-                    <td className="py-2.5"><AreaChip area={areaOf(o)} onClick={(e) => openAreaPicker(e, o)} /></td>
-                    <td className="py-2.5" style={{ color: THEME.inkSoft }}>{(o.items || []).length} item{(o.items || []).length !== 1 ? 's' : ''}</td>
-                    <td className="py-2.5 text-right font-medium">{peso(total)}</td>
-                    <td className="py-2.5 pl-4"><Badge color={statusColor(o.payment_status)}>{o.payment_status}</Badge></td>
-                    <td className="py-2.5"><Badge color={statusColor(o.delivery_status)}>{o.delivery_status}</Badge></td>
-                    <td className="py-2.5 text-right">
-                      <button onClick={(e) => { e.stopPropagation(); setSelected(o); }} style={{ color: THEME.inkSoft }} className="p-1.5 hover:opacity-70"><Eye size={15} /></button>
-                    </td>
-                  </tr>
-                );
-              })}
-                </React.Fragment>
-              ))}
-            </tbody>
-          </table>
-          </div>
-
-          {/* Mobile: tappable order cards — no sideways scrolling */}
-          <div className="sm:hidden space-y-2">
-            {orderGroups.map((g) => (
-              <div key={g.plain ? 'all' : (g.area ? g.area.id : 'none')} className="space-y-2">
-                {!g.plain && (
-                  <div className="flex items-center gap-2 pt-3 pb-0.5">
-                    {g.area ? <AreaChip area={g.area} size="md" /> : <span className="text-sm font-medium" style={{ color: THEME.inkSoft }}>No area</span>}
-                    <span className="text-xs" style={{ color: THEME.inkSoft }}>{g.orders.length} order{g.orders.length !== 1 ? 's' : ''}</span>
-                  </div>
-                )}
-                {g.orders.map((o) => {
-                  const total = (o.items || []).reduce((s, i) => s + i.qty * i.price, 0);
-                  const isCancelled = o.delivery_status === 'Cancelled';
-                  const area = areaOf(o);
-                  const tone = area ? areaTone(area.color) : null;
-                  return (
-                    <div key={o.id} role="button" tabIndex={0} onClick={() => setSelected(o)}
-                      onKeyDown={(e) => { if (e.key === 'Enter') setSelected(o); }}
-                      className="w-full text-left rounded-xl p-3.5 cursor-pointer"
-                      style={{ background: THEME.bg, opacity: isCancelled ? 0.55 : 1, borderLeft: tone ? `4px solid ${tone.dot}` : '4px solid transparent' }}>
-                      <div className="flex items-baseline justify-between gap-2">
-                        <span className="text-sm font-semibold truncate" style={{ textDecoration: isCancelled ? 'line-through' : 'none' }}>{o.customer}</span>
-                        <span className="font-display text-lg flex-shrink-0" style={{ color: THEME.brand }}>{peso(total)}</span>
-                      </div>
-                      <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>
-                        {o.id} · {fmtDate(o.date)} · {(o.items || []).length} item{(o.items || []).length !== 1 ? 's' : ''}
-                      </div>
-                      <div className="flex items-center gap-1.5 mt-2 flex-wrap">
-                        {o.delivery_batch && (
-                          <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium"
-                            style={{ background: THEME.brandBg, color: THEME.brand }}>
-                            <Truck size={10} /> {batchLabel(o.delivery_batch)}
-                          </span>
-                        )}
-                        <AreaChip area={area} onClick={(e) => openAreaPicker(e, o)} />
-                        <Badge color={statusColor(o.payment_status)}>{o.payment_status}</Badge>
-                        <Badge color={statusColor(o.delivery_status)}>{o.delivery_status}</Badge>
-                      </div>
-                    </div>
-                  );
-                })}
+        <div id="orders-filters" className={`mn-collapse no-print ${filtersOpen ? 'open' : ''}`} aria-hidden={!filtersOpen}>
+          <div>
+            <div className="rounded-xl p-4 mt-1 mb-2 space-y-3.5" style={{ background: THEME.card, border: `1px solid ${THEME.line}` }}>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs uppercase tracking-wider w-20" style={{ color: THEME.inkSoft, letterSpacing: '0.06em' }}>Payment</span>
+                {['all', 'Paid', 'Unpaid', 'Partial'].map((f) => (
+                  <button key={f} tabIndex={filtersOpen ? 0 : -1} onClick={() => setFilter(f)} aria-pressed={filter === f}
+                    className="px-3 py-1.5 text-sm rounded-lg mn-btn" style={segBtn(filter === f)}>{f === 'all' ? 'All' : f}</button>
+                ))}
               </div>
-            ))}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs uppercase tracking-wider w-20" style={{ color: THEME.inkSoft, letterSpacing: '0.06em' }}>Delivery</span>
+                {['all', 'Pending', 'Delivered', 'Cancelled'].map((f) => (
+                  <button key={f} tabIndex={filtersOpen ? 0 : -1} onClick={() => setDeliveryFilter(f)} aria-pressed={deliveryFilter === f}
+                    className="px-3 py-1.5 text-sm rounded-lg mn-btn" style={segBtn(deliveryFilter === f)}>{f === 'all' ? 'All' : f}</button>
+                ))}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs uppercase tracking-wider w-20" style={{ color: THEME.inkSoft, letterSpacing: '0.06em' }}>Area</span>
+                {areas.length === 0 ? (
+                  <button tabIndex={filtersOpen ? 0 : -1} onClick={() => setShowAreaManager(true)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg"
+                    style={{ border: `1px dashed ${THEME.inkSoft}`, color: THEME.inkSoft }}>
+                    <MapPin size={13} /> Set up areas
+                  </button>
+                ) : (() => {
+                  const inScope = Object.values(orders).filter((o) => o.delivery_status !== 'Cancelled' &&
+                    (batchFilter === 'all' ? true : batchFilter === 'unassigned' ? !o.delivery_batch : o.delivery_batch === batchFilter));
+                  const noneCount = inScope.filter((o) => !areaById[o.area_id]).length;
+                  return (
+                    <>
+                      <button tabIndex={filtersOpen ? 0 : -1} onClick={() => setAreaFilter('all')} aria-pressed={areaFilter === 'all'}
+                        className="px-3 py-1.5 text-sm rounded-lg mn-btn" style={segBtn(areaFilter === 'all')}>All</button>
+                      {areas.map((a) => {
+                        const on = areaFilter === a.id;
+                        return (
+                          <button key={a.id} tabIndex={filtersOpen ? 0 : -1} onClick={() => setAreaFilter(on ? 'all' : a.id)} aria-pressed={on}
+                            className="inline-flex items-center gap-1.5 pl-1 pr-2 py-1 rounded-lg"
+                            style={{ border: `1px solid ${on ? THEME.brand : THEME.line}`, background: on ? THEME.brandBg : 'transparent' }}>
+                            <AreaChip area={a} />
+                            <span className="text-xs" style={{ color: THEME.inkSoft }}>{inScope.filter((o) => o.area_id === a.id).length}</span>
+                          </button>
+                        );
+                      })}
+                      <button tabIndex={filtersOpen ? 0 : -1} onClick={() => setAreaFilter(areaFilter === 'none' ? 'all' : 'none')} aria-pressed={areaFilter === 'none'}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs"
+                        style={{ border: `1px solid ${areaFilter === 'none' ? THEME.brand : THEME.line}`, background: areaFilter === 'none' ? THEME.brandBg : 'transparent', color: THEME.inkSoft }}>
+                        No area <span>{noneCount}</span>
+                      </button>
+                      <button tabIndex={filtersOpen ? 0 : -1} onClick={() => setShowAreaManager(true)} className="text-xs font-medium px-2 py-1" style={{ color: THEME.inkSoft }}>Manage areas</button>
+                    </>
+                  );
+                })()}
+              </div>
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-3 pt-3" style={{ borderTop: `1px solid ${THEME.line}` }}>
+                <label className="flex items-center gap-2 text-sm" style={{ color: THEME.ink }}>
+                  <span className="text-xs uppercase tracking-wider w-20" style={{ color: THEME.inkSoft, letterSpacing: '0.06em' }}>Sort</span>
+                  <select tabIndex={filtersOpen ? 0 : -1} value={sortBy} onChange={(e) => setSortBy(e.target.value)} aria-label="Sort orders"
+                    className="px-3 py-1.5 rounded-lg outline-none text-sm"
+                    style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink }}>
+                    {ORDER_SORTS.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+                  </select>
+                </label>
+                {areas.length > 0 && (
+                  <label className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: THEME.ink }}>
+                    <input tabIndex={filtersOpen ? 0 : -1} type="checkbox" checked={groupByArea} onChange={(e) => setGroup(e.target.checked)}
+                      style={{ width: 16, height: 16, accentColor: THEME.brand }} />
+                    Group by area <span className="text-xs" style={{ color: THEME.inkSoft }}>(when a batch is selected)</span>
+                  </label>
+                )}
+              </div>
+            </div>
           </div>
+        </div>
+
+        {chips.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 mb-3 no-print">
+            {chips.map((c) => {
+              const tone = c.area ? areaTone(c.area.color) : null;
+              return (
+                <span key={c.key} className="inline-flex items-center gap-1.5 pl-3 pr-1 py-1 rounded-lg text-sm mn-pop-in"
+                  style={{ background: tone ? tone.bg : THEME.brandBg, color: tone ? tone.ink : THEME.brand }}>
+                  {tone && <span style={{ width: 7, height: 7, borderRadius: '50%', background: tone.dot }} />}
+                  {c.label}
+                  <button onClick={c.clear} className="p-1 rounded-md row-hover" aria-label={`Remove filter ${c.label}`}><X size={13} /></button>
+                </span>
+              );
+            })}
+            <button onClick={clearAll} className="text-sm font-medium px-2 py-1" style={{ color: THEME.inkSoft }}>Clear all</button>
+          </div>
+        )}
+
+        {/* ===== List ===== */}
+        <div ref={listTopRef} style={{ scrollMarginTop: 80 }} />
+        {totalCount === 0 ? (
+          <Card className="px-6 py-12 text-center">
+            <div className="font-display text-xl mb-1" style={{ color: THEME.ink }}>{anyOrders ? 'No orders match' : 'No orders yet'}</div>
+            <div className="text-sm mb-5" style={{ color: THEME.inkSoft }}>
+              {anyOrders
+                ? (isBatch || batchFilter === 'unassigned' ? 'Nothing in this view with these filters.' : 'Try a different search or remove a filter.')
+                : 'Orders you create or accept from the online shop appear here.'}
+            </div>
+            <div className="flex flex-wrap justify-center gap-2">
+              {(chips.length > 0 || search) && <Btn variant="secondary" onClick={clearAll}>Clear filters</Btn>}
+              {batchFilter !== 'all' && <Btn variant="secondary" onClick={() => selectBatch('all')}>Show all dates</Btn>}
+              {!anyOrders && <Btn variant="primary" onClick={onNewOrder}><PlusCircle size={15} className="inline -mt-0.5 mr-1.5" />New order</Btn>}
+            </div>
+          </Card>
+        ) : (
+          <>
+            {/* Tablet / desktop table */}
+            <div className="hidden md:block rounded-xl overflow-hidden" style={{ background: THEME.card, border: `1px solid ${THEME.line}` }}>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left" style={{ color: THEME.inkSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                    <th className="px-4 py-3 font-medium" aria-sort={sortBy === 'customer' ? 'ascending' : 'none'}>
+                      <button onClick={() => setSortBy(sortBy === 'customer' ? 'newest' : 'customer')} className="uppercase tracking-wider inline-flex items-center gap-1">
+                        Customer {sortBy === 'customer' && <ChevronDown size={12} />}
+                      </button>
+                    </th>
+                    {showBatchCol && <th className="px-2 py-3 font-medium">Batch</th>}
+                    <th className="px-2 py-3 font-medium">Area</th>
+                    <th className="px-2 py-3 font-medium text-right" aria-sort={sortBy === 'total' ? 'descending' : 'none'}>
+                      <button onClick={() => setSortBy(sortBy === 'total' ? 'newest' : 'total')} className="uppercase tracking-wider inline-flex items-center gap-1">
+                        Total {sortBy === 'total' && <ChevronDown size={12} />}
+                      </button>
+                    </th>
+                    <th className="px-4 py-3 font-medium">Status</th>
+                    <th className="w-8" aria-hidden="true"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pageGroups.map((g) => (
+                    <React.Fragment key={g.key}>
+                      {!g.plain && (
+                        <tr>
+                          <td colSpan={colCount} className="px-4 pt-4 pb-2" style={{ borderTop: `1px solid ${THEME.line}`, background: THEME.bg }}>
+                            <div className="flex items-center gap-2">
+                              {g.area ? <AreaChip area={g.area} size="md" /> : <span className="text-sm font-medium" style={{ color: THEME.inkSoft }}>No area</span>}
+                              {groupStats[g.key] && (
+                                <span className="text-xs" style={{ color: THEME.inkSoft }}>
+                                  {groupStats[g.key].count} order{groupStats[g.key].count !== 1 ? 's' : ''} · {peso(groupStats[g.key].value)}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                      {g.orders.map((o) => {
+                        const sel = o.id === selectedId;
+                        const cancelled = o.delivery_status === 'Cancelled';
+                        const n = (o.items || []).length;
+                        return (
+                          <tr key={o.id} tabIndex={0} aria-selected={sel} aria-label={`${o.customer || 'Order'}, ${o.id}`}
+                            onClick={(e) => openOrder(o.id, e.currentTarget)} onKeyDown={(e) => rowKey(e, o)}
+                            className={`mn-row cursor-pointer ${sel ? '' : 'row-hover'}`}
+                            style={{ borderTop: `1px solid ${THEME.line}`, background: sel ? THEME.brandBg : 'transparent', boxShadow: sel ? `inset 3px 0 0 ${THEME.brand}` : 'none' }}>
+                            <td className="px-4 py-3 align-top" style={{ opacity: cancelled ? 0.55 : 1 }}>
+                              <div className="font-semibold break-words" style={{ color: THEME.ink, textDecoration: cancelled ? 'line-through' : 'none' }}>{o.customer || '—'}</div>
+                              <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>{o.id} · {fmtDateShort(o.date)} · {n} item{n !== 1 ? 's' : ''}</div>
+                            </td>
+                            {showBatchCol && <td className="px-2 py-3 align-top" style={{ opacity: cancelled ? 0.55 : 1 }}>{batchTag(o.delivery_batch)}</td>}
+                            <td className="px-2 py-3 align-top">
+                              <AreaChip area={areaOf(o)} variant="dot" onClick={(e) => openAreaPicker(e, o)} />
+                            </td>
+                            <td className="px-2 py-3 align-top text-right font-semibold tabular-nums whitespace-nowrap" style={{ color: THEME.ink, opacity: cancelled ? 0.55 : 1 }}>
+                              {peso(ordTotal(o))}
+                            </td>
+                            <td className="px-4 py-3 align-top">{statusBadges(o, !panelOpenDocked || roomy)}{payDue(o)}</td>
+                            <td className="pr-3 py-3 align-top" aria-hidden="true"><ChevronRight size={16} style={{ color: THEME.inkSoft, marginTop: 2 }} /></td>
+                          </tr>
+                        );
+                      })}
+                    </React.Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Phone cards */}
+            <div className="md:hidden space-y-2">
+              {pageGroups.map((g) => (
+                <div key={g.key} className="space-y-2">
+                  {!g.plain && (
+                    <div className="flex items-center gap-2 pt-3 pb-0.5">
+                      {g.area ? <AreaChip area={g.area} size="md" /> : <span className="text-sm font-medium" style={{ color: THEME.inkSoft }}>No area</span>}
+                      {groupStats[g.key] && <span className="text-xs" style={{ color: THEME.inkSoft }}>{groupStats[g.key].count} order{groupStats[g.key].count !== 1 ? 's' : ''}</span>}
+                    </div>
+                  )}
+                  {g.orders.map((o) => {
+                    const sel = o.id === selectedId;
+                    const cancelled = o.delivery_status === 'Cancelled';
+                    const area = areaOf(o);
+                    const tone = area ? areaTone(area.color) : null;
+                    const n = (o.items || []).length;
+                    return (
+                      <div key={o.id} role="button" tabIndex={0} aria-label={`${o.customer || 'Order'}, ${o.id}`}
+                        onClick={(e) => openOrder(o.id, e.currentTarget)} onKeyDown={(e) => rowKey(e, o)}
+                        className="mn-row rounded-xl p-3.5 cursor-pointer"
+                        style={{
+                          background: sel ? THEME.brandBg : THEME.card,
+                          borderTop: `1px solid ${sel ? THEME.brand : THEME.line}`,
+                          borderRight: `1px solid ${sel ? THEME.brand : THEME.line}`,
+                          borderBottom: `1px solid ${sel ? THEME.brand : THEME.line}`,
+                          borderLeft: `4px solid ${tone ? tone.dot : (sel ? THEME.brand : THEME.line)}`,
+                        }}>
+                        <div className="flex items-start justify-between gap-2" style={{ opacity: cancelled ? 0.6 : 1 }}>
+                          <span className="text-sm font-semibold break-words min-w-0" style={{ color: THEME.ink, textDecoration: cancelled ? 'line-through' : 'none' }}>{o.customer || '—'}</span>
+                          <span className="font-display text-lg leading-none flex-shrink-0" style={{ color: THEME.brand }}>{peso(ordTotal(o))}</span>
+                        </div>
+                        <div className="text-xs mt-1" style={{ color: THEME.inkSoft }}>{o.id} · {fmtDateShort(o.date)} · {n} item{n !== 1 ? 's' : ''}</div>
+                        <div className="flex items-center gap-1.5 mt-2.5 flex-wrap">
+                          {o.delivery_batch && batchTag(o.delivery_batch)}
+                          <AreaChip area={area} onClick={(e) => openAreaPicker(e, o)} />
+                          {statusBadges(o)}
+                        </div>
+                        {payDue(o)}
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+
+            {/* Pagination */}
+            <div className="flex items-center justify-between gap-3 flex-wrap mt-4 no-print">
+              <div className="text-sm" style={{ color: THEME.inkSoft }}>
+                {(curPage - 1) * pageSize + 1}–{Math.min(curPage * pageSize, totalCount)} of {totalCount} order{totalCount !== 1 ? 's' : ''}
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="flex items-center gap-1.5 text-xs" style={{ color: THEME.inkSoft }}>
+                  <span className="hidden sm:inline">Rows</span>
+                  <select value={pageSize} onChange={(e) => changePageSize(Number(e.target.value))} aria-label="Orders per page"
+                    className="px-2 py-1.5 rounded-lg outline-none text-sm"
+                    style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink }}>
+                    {[25, 50, 100].map((n) => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                </label>
+                {totalPages > 1 && (
+                  <nav className="flex items-center gap-1" aria-label="Pagination">
+                    <button onClick={() => goPage(curPage - 1)} disabled={curPage === 1} aria-label="Previous page"
+                      className="w-9 h-9 flex items-center justify-center rounded-lg disabled:opacity-35 mn-btn"
+                      style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink }}><ChevronLeft size={16} /></button>
+                    {phone ? (
+                      <span className="text-sm px-2" style={{ color: THEME.ink }}>{curPage} / {totalPages}</span>
+                    ) : (() => {
+                      const pages = [];
+                      for (let p = 1; p <= totalPages; p++) {
+                        if (p === 1 || p === totalPages || Math.abs(p - curPage) <= 1) pages.push(p);
+                        else if (pages[pages.length - 1] !== '…') pages.push('…');
+                      }
+                      return pages.map((p, i) => p === '…'
+                        ? <span key={`e${i}`} className="px-1 text-sm" style={{ color: THEME.inkSoft }}>…</span>
+                        : (
+                          <button key={p} onClick={() => goPage(p)} aria-current={p === curPage ? 'page' : undefined}
+                            className="min-w-9 h-9 px-2.5 rounded-lg text-sm mn-btn"
+                            style={{ background: p === curPage ? THEME.brand : THEME.card, color: p === curPage ? 'white' : THEME.ink, border: `1px solid ${p === curPage ? THEME.brand : THEME.line}` }}>
+                            {p}
+                          </button>
+                        ));
+                    })()}
+                    <button onClick={() => goPage(curPage + 1)} disabled={curPage === totalPages} aria-label="Next page"
+                      className="w-9 h-9 flex items-center justify-center rounded-lg disabled:opacity-35 mn-btn"
+                      style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink }}><ChevronRight size={16} /></button>
+                  </nav>
+                )}
+              </div>
+            </div>
           </>
         )}
-      </Card>
+      </div>
 
-      <Modal open={!!selected} onClose={() => setSelected(null)} maxWidth="max-w-3xl">
-        {selected && (
-          <OrderDetail
-            order={selected}
-            catalog={catalog}
-            productByName={productByName}
-            onClose={() => setSelected(null)}
-            onDelete={() => deleteOrder(selected.id)}
-            onPrint={(mode) => setPrintMode(mode)}
-            onUpdate={(patch) => updateOrderStatus(selected.id, patch)}
-            onSaveFull={(updated) => saveFullOrder(selected.id, updated)}
-            area={areaOf(selected)}
-            onEditArea={() => openAreaPicker(null, orders[selected.id] || selected)}
-          />
-        )}
-      </Modal>
+      {/* ===== Detail: docked panel on wide screens ===== */}
+      {panelOpenDocked && (
+        <aside aria-label="Order details"
+          className={`no-print flex-shrink-0 sticky top-4 w-[460px] 2xl:w-[500px] rounded-2xl overflow-hidden flex flex-col ${closing ? 'mn-panel-out' : 'mn-panel-in'}`}
+          style={{ height: 'calc(100vh - 2rem)', background: THEME.card, border: `1px solid ${THEME.line}`, boxShadow: '0 10px 30px rgba(42,38,36,0.08)' }}>
+          {detail}
+        </aside>
+      )}
+      {/* ===== Detail: overlay sheet on tablets and phones ===== */}
+      {!docked && selectedOrder && (
+        <OrderDetailOverlay closing={closing} phone={phone} onDismiss={requestClose}>{detail}</OrderDetailOverlay>
+      )}
 
       <AreaPickerModal
         open={!!areaFor}
@@ -3749,7 +4215,7 @@ function Orders({ orders, setOrders, productByName, catalog, meta, setMeta, cust
 
       {areaToast && (
         <div className="fixed inset-x-0 bottom-6 z-50 flex justify-center px-4 pointer-events-none no-print">
-          <div className="px-4 py-2.5 rounded-xl text-sm shadow-lg mn-rise" style={{ background: THEME.ink, color: THEME.bg }}>
+          <div className="px-4 py-2.5 rounded-xl text-sm shadow-lg mn-rise" style={{ background: THEME.ink, color: THEME.bg }} role="status">
             <Check size={14} className="inline -mt-0.5 mr-1.5" />{areaToast}
           </div>
         </div>
@@ -3758,15 +4224,135 @@ function Orders({ orders, setOrders, productByName, catalog, meta, setMeta, cust
   );
 }
 
-function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint, onUpdate, onSaveFull, area, onEditArea }) {
+// Overlay wrapper for the detail on screens narrower than 1360px: a right-side
+// drawer on tablets, a full-screen sheet on phones. Modal: traps focus, locks
+// page scroll, Escape/backdrop close (handled by the parent's guarded close).
+function OrderDetailOverlay({ closing, phone, onDismiss, children }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (el) {
+      const target = el.querySelector('[data-autofocus]') || el;
+      try { target.focus({ preventScroll: true }); } catch (e) { /* ignore */ }
+    }
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+  const onKeyDown = (e) => {
+    if (e.key !== 'Tab' || !ref.current) return;
+    const nodes = Array.from(ref.current.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'))
+      .filter((n) => !n.disabled && n.offsetParent !== null);
+    if (!nodes.length) return;
+    const first = nodes[0], last = nodes[nodes.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  };
+  return (
+    <div className="fixed inset-0 z-[45] no-print">
+      <div className={`absolute inset-0 ${closing ? 'mn-backdrop-out' : 'mn-backdrop-in'}`} style={{ background: 'rgba(30,20,18,0.5)' }} onClick={onDismiss} />
+      <div ref={ref} role="dialog" aria-modal="true" aria-label="Order details" tabIndex={-1} onKeyDown={onKeyDown}
+        className={`absolute flex flex-col outline-none ${phone
+          ? `inset-0 ${closing ? 'mn-sheet-out' : 'mn-sheet-in'}`
+          : `top-0 right-0 bottom-0 w-full max-w-[560px] ${closing ? 'mn-panel-out' : 'mn-panel-in'}`}`}
+        style={{ background: THEME.card, boxShadow: '-12px 0 40px rgba(0,0,0,0.18)' }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// "⋯" menu for less frequent actions. Destructive items sit at the bottom.
+function OrderMoreMenu({ order, onCancelOrder, onRestore, onDelete }) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+  const btnRef = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('touchstart', onDown);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('touchstart', onDown); };
+  }, [open]);
+  const cancelled = order.delivery_status === 'Cancelled';
+  const run = (fn) => { setOpen(false); fn(); };
+  return (
+    <div className="relative" ref={wrapRef}
+      onKeyDown={(e) => { if (e.key === 'Escape' && open) { e.preventDefault(); setOpen(false); if (btnRef.current) btnRef.current.focus(); } }}>
+      <button ref={btnRef} onClick={() => setOpen((v) => !v)} aria-haspopup="true" aria-expanded={open} aria-label="More actions"
+        className="h-full w-12 flex items-center justify-center rounded-xl mn-btn"
+        style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink, minHeight: 46 }}>
+        <MoreHorizontal size={18} />
+      </button>
+      {open && (
+        <div role="menu" className="absolute right-0 bottom-full mb-2 w-56 rounded-xl p-1.5 z-10 mn-pop-in"
+          style={{ background: THEME.card, border: `1px solid ${THEME.line}`, boxShadow: '0 12px 32px rgba(42,38,36,0.18)' }}>
+          {cancelled ? (
+            <button role="menuitem" onClick={() => run(onRestore)} className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-left row-hover" style={{ color: THEME.ink }}>
+              <RefreshCw size={15} /> Restore order
+            </button>
+          ) : (
+            <button role="menuitem" onClick={() => run(onCancelOrder)} className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-left row-hover" style={{ color: THEME.ink }}>
+              <X size={15} /> Cancel order
+            </button>
+          )}
+          <div className="my-1" style={{ borderTop: `1px solid ${THEME.line}` }} />
+          <button role="menuitem" onClick={() => run(onDelete)} className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-left danger-hover" style={{ color: THEME.red }}>
+            <Trash2 size={15} /> Delete order
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Order detail — used in the docked right panel (wide screens) and in the
+// overlay sheet (tablets / phones). Header and footer stay put; only the
+// body scrolls. All data changes go through the same onUpdate / onSaveFull /
+// onDelete callbacks as before, with the same fields.
+function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint, onUpdate, onSaveFull, area, onEditArea, onDirtyChange, sync, narrow }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(null);
+  const [draftBase, setDraftBase] = useState('');
   const [err, setErr] = useState('');
-  const [showMore, setShowMore] = useState(false);
+  const [finOpen, setFinOpen] = useState(false);
+  const bodyRef = useRef(null);
+  const titleRef = useRef(null);
+  const editBtnRef = useRef(null);
+  const mountedRef = useRef(false);
+
+  // ── Save feedback, driven by the app's real persistence state ──
+  // 'pending' → we changed something; 'saving' → the app's cloud save is in
+  // flight; 'done' → it finished, and syncStatus says where it landed.
+  const [syncPhase, setSyncPhase] = useState('idle');
+  const sawSaving = useRef(false);
+  const isSaving = !!(sync && sync.saving);
+  const syncStatus = sync ? sync.syncStatus : null;
+  const markChanged = () => { sawSaving.current = false; setSyncPhase('pending'); };
+  useEffect(() => {
+    if (syncPhase !== 'pending' && syncPhase !== 'saving') return;
+    if (isSaving) { sawSaving.current = true; if (syncPhase === 'pending') setSyncPhase('saving'); }
+    else if (sawSaving.current) setSyncPhase('done');
+  }, [isSaving, syncPhase]);
+  useEffect(() => {
+    // Never saw a save start — say nothing rather than guess.
+    if (syncPhase !== 'pending') return undefined;
+    const t = setTimeout(() => setSyncPhase((p) => (p === 'pending' ? 'idle' : p)), 2500);
+    return () => clearTimeout(t);
+  }, [syncPhase]);
+  useEffect(() => {
+    // A confirmed cloud save fades out; a "this device only" warning stays.
+    if (syncPhase !== 'done' || syncStatus !== 'cloud') return undefined;
+    const t = setTimeout(() => setSyncPhase('idle'), 3500);
+    return () => clearTimeout(t);
+  }, [syncPhase, syncStatus]);
+
+  const update = (patch) => { onUpdate(patch); markChanged(); };
+  const saveFull = (o) => { onSaveFull(o); markChanged(); };
 
   const startEdit = () => {
     const d = orderDetails(order);
-    setDraft({
+    const initial = {
       date: order.date || today(),
       customer: order.customer || '',
       phone: order.phone || '',
@@ -3779,12 +4365,29 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
       internal_notes: d.internalNotes || '',
       amount_paid: order.amount_paid ?? '',
       items: (order.items || []).map((it) => ({ ...it })),
-    });
+    };
+    setDraft(initial);
+    setDraftBase(JSON.stringify(initial));
     setErr('');
     setEditing(true);
   };
 
-  const cancelEdit = () => { setEditing(false); setDraft(null); setErr(''); };
+  const cancelEdit = () => { setEditing(false); setDraft(null); setDraftBase(''); setErr(''); };
+
+  // Unsaved-change tracking for the parent's close / switch / navigate guard.
+  const dirty = editing && !!draft && JSON.stringify(draft) !== draftBase;
+  useEffect(() => {
+    if (onDirtyChange) onDirtyChange(dirty);
+  }, [dirty]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => { if (onDirtyChange) onDirtyChange(false); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keep keyboard focus somewhere sensible when switching view ↔ edit.
+  useEffect(() => {
+    if (!mountedRef.current) { mountedRef.current = true; return; }
+    if (bodyRef.current) bodyRef.current.scrollTop = 0;
+    const el = editing ? titleRef.current : editBtnRef.current;
+    if (el) { try { el.focus({ preventScroll: true }); } catch (e) { /* ignore */ } }
+  }, [editing]);
 
   const dUpdateItem = (idx, patch) => {
     setDraft({ ...draft, items: draft.items.map((it, i) => i === idx ? { ...it, ...patch } : it) });
@@ -3862,12 +4465,21 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
       edited_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
-    onSaveFull(updated);
+    saveFull(updated);
     setEditing(false);
     setDraft(null);
+    setDraftBase('');
   };
 
+  const cancelOrder = () => {
+    if (!confirm('Are you sure you want to cancel this order?')) return;
+    const reason = prompt('Optional — type a reason (e.g. "customer changed mind"):', '');
+    update({ delivery_status: 'Cancelled', cancel_reason: (reason || '').trim() });
+  };
+  const restoreOrder = () => update({ delivery_status: 'Pending', cancel_reason: '' });
+
   const view = editing ? draft : order;
+  const cancelled = order.delivery_status === 'Cancelled';
   // Always reflect the current supplier cost from the catalog.
   const vCost = (it) => {
     const p = productByName[it.product];
@@ -3878,394 +4490,467 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
   const cost = (view.items || []).reduce((s, i) => s + (Number(i.qty) || 0) * vCost(i), 0);
   const profit = total - cost;
 
+  // Balance shown in the panel (display only; same rules as the list).
+  const bal = (() => {
+    if ((editing ? draft.delivery_status : order.delivery_status) === 'Cancelled') return { cancelled: true };
+    const ps = view.payment_status;
+    if (ps === 'Paid') return { paid: total, due: 0 };
+    if (ps === 'Partial') {
+      const raw = view.amount_paid;
+      if (raw === '' || raw === null || raw === undefined || isNaN(Number(raw))) return { unknown: true };
+      const paid = Number(raw);
+      return { paid, due: Math.max(0, total - paid) };
+    }
+    return { paid: 0, due: total };
+  })();
+
+  const d = orderDetails(order);
+  const items = order.items || [];
+  const ink = THEME.ink, soft = THEME.inkSoft, line = THEME.line;
+  const sectionTitle = (text, extra) => (
+    <div className="flex items-center justify-between gap-2 mb-2.5">
+      <h3 className="text-xs uppercase font-semibold" style={{ color: soft, letterSpacing: '0.09em' }}>{text}</h3>
+      {extra}
+    </div>
+  );
+  const fieldCls = 'w-full px-3 py-2.5 rounded-lg outline-none text-sm';
+  const fieldStyle = { background: THEME.card, border: `1px solid ${line}`, color: ink, fontFamily: 'DM Sans, sans-serif' };
+  const footBtn = 'inline-flex items-center justify-center gap-1.5 px-3.5 rounded-xl text-sm font-semibold whitespace-nowrap mn-btn';
+  const footH = { minHeight: 46 };
+
+  const feedback = syncPhase === 'idle' ? null
+    : (syncPhase === 'pending' || syncPhase === 'saving')
+      ? { icon: <Loader2 size={13} className="animate-spin" />, text: 'Saving…', bg: THEME.ink, fg: THEME.bg }
+      : syncStatus === 'cloud'
+        ? { icon: <Check size={13} />, text: 'Saved to cloud', bg: THEME.successBg, fg: THEME.successInk }
+        : syncStatus === 'local-only'
+          ? { icon: <HardDrive size={13} />, text: 'Saved on this device only — not synced to the cloud yet', bg: THEME.warnBg, fg: THEME.warnInk }
+          : { icon: <AlertCircle size={13} />, text: 'Saved on this device — cloud sync not confirmed', bg: THEME.warnBg, fg: THEME.warnInk };
+
   return (
-    <div>
-      <div className="px-6 py-4 flex items-center justify-between" style={{ borderBottom: `1px solid ${THEME.line}` }}>
-        <div>
-          <div className="font-display text-2xl" style={{ color: THEME.brand }}>{order.id}</div>
-          <div className="text-sm" style={{ color: THEME.inkSoft }}>
-            {editing ? 'Editing order' : `${fmtDate(order.date)} · ${order.customer}${order.phone ? ` · ${order.phone}` : ''}`}
+    <div className="flex flex-col flex-1 min-h-0 h-full" style={{ background: THEME.card }}>
+      {/* ===== Header ===== */}
+      <div className="flex-shrink-0 px-5 sm:px-6 pb-4" style={{ borderBottom: `1px solid ${line}`, paddingTop: narrow ? 'max(env(safe-area-inset-top), 16px)' : 20 }}>
+        <div className="flex items-start gap-3">
+          <div className="flex-1 min-w-0">
+            <h2 ref={titleRef} tabIndex={-1} className="font-display text-[26px] leading-tight break-words outline-none" style={{ color: THEME.brand }}>
+              {editing ? (draft.customer.trim() || 'Customer') : (order.customer || '—')}
+            </h2>
+            <div className="text-sm mt-1" style={{ color: soft }}>
+              <span className="font-medium" style={{ color: THEME.brand }}>{order.id}</span>
+              {editing ? ' · Editing order' : (order.date ? ` · Ordered ${fmtDate(order.date)}` : '')}
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            {!editing && (
+              <button ref={editBtnRef} onClick={startEdit}
+                className="inline-flex items-center gap-1.5 px-3 h-10 rounded-lg text-sm font-medium mn-btn"
+                style={{ border: `1px solid ${line}`, color: ink, background: THEME.card }}>
+                <Edit3 size={14} /> Edit
+              </button>
+            )}
+            <button data-autofocus onClick={onClose} aria-label="Close order details"
+              className="w-10 h-10 flex items-center justify-center rounded-lg row-hover" style={{ color: ink }}>
+              <X size={20} />
+            </button>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          {!editing && (
-            <Btn variant="secondary" size="sm" onClick={startEdit}><Edit3 size={14} className="inline -mt-0.5 mr-1" /> Edit</Btn>
-          )}
-          <button onClick={onClose} className="p-2 rounded row-hover"><X size={18} /></button>
-        </div>
+        {!editing && (
+          <div className="flex flex-wrap items-center gap-2 mt-3">
+            {order.delivery_batch ? (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-sm font-medium" style={{ background: THEME.brandBg, color: THEME.brand }}>
+                <CalendarDays size={14} /> {fmtBatchMed(order.delivery_batch)}
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-sm font-medium" style={{ background: THEME.warnBg, color: THEME.warnInk }}>
+                <CalendarDays size={14} /> No batch set
+              </span>
+            )}
+            {onEditArea && <AreaChip area={area} size="md" onClick={onEditArea} />}
+            {cancelled && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-sm font-semibold" style={{ background: THEME.errorBg, color: THEME.red }}>
+                <X size={13} /> Cancelled
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
-      <div className="px-6 py-5">
-        {/* ===== Cancelled banner ===== */}
-        {!editing && order.delivery_status === 'Cancelled' && (
-          <div className="mb-5 px-4 py-3 rounded-md flex items-start gap-2" style={{ background: '#F5DDE0', color: THEME.red }}>
+      {/* ===== Body (scrolls) ===== */}
+      <div ref={bodyRef} className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-5 sm:px-6 py-5 space-y-6">
+        {!editing && cancelled && (
+          <div className="px-4 py-3 rounded-xl flex items-start gap-2.5" style={{ background: THEME.errorBg, color: THEME.red }}>
             <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
             <div className="text-sm">
               <span className="font-semibold">This order is cancelled.</span> It's excluded from sales, profit, and pickup totals but kept here for your records.
-              {order.cancel_reason ? <div className="mt-1" style={{ color: THEME.ink }}>Reason: {order.cancel_reason}</div> : null}
+              {order.cancel_reason ? <div className="mt-1 break-words" style={{ color: ink }}>Reason: {order.cancel_reason}</div> : null}
             </div>
           </div>
         )}
 
-        {/* ===== Edit mode: customer + date ===== */}
-        {editing && (
-          <>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
-            <div><Label>Date</Label><Input type="date" value={draft.date} onChange={(e) => setDraft({ ...draft, date: e.target.value })} /></div>
-            <div><Label>Customer Name</Label><Input value={draft.customer} onChange={(e) => setDraft({ ...draft, customer: e.target.value })} /></div>
-            <div><Label>Phone</Label><Input value={draft.phone} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} placeholder="optional" /></div>
-          </div>
-          <div className="mb-5">
-            <DeliveryBatchPicker
-              value={draft.delivery_batch}
-              onChange={(v) => setDraft({ ...draft, delivery_batch: v })}
-              allowUnassign
-            />
-          </div>
-          </>
-        )}
-
-        {/* Quick batch-set banner — shows in view mode when order has no batch yet */}
-        {!editing && !order.delivery_batch && order.delivery_status !== 'Cancelled' && (
-          <div className="mb-5 px-4 py-3 rounded-md flex items-center justify-between gap-3 flex-wrap"
-            style={{ background: '#FEF3C7', color: '#92400E', border: '1px solid #FCD34D' }}>
-            <div className="flex items-center gap-2 text-sm">
-              <AlertCircle size={16} className="flex-shrink-0" />
+        {/* Quick batch-set — view mode, no batch yet */}
+        {!editing && !order.delivery_batch && !cancelled && (
+          <div className="px-4 py-3 rounded-xl" style={{ background: THEME.warnBg, color: THEME.warnInk, border: `1px solid ${THEME.amber}` }}>
+            <div className="flex items-start gap-2 text-sm">
+              <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
               <span>No delivery batch yet. Set one so it shows up in the right pickup list.</span>
             </div>
-            <div className="flex gap-2 flex-wrap">
-              <button onClick={() => onSaveFull({ ...order, delivery_batch: nextTuesday() })}
-                className="px-3 py-1.5 text-xs font-semibold rounded-md inline-flex items-center gap-1"
-                style={{ background: THEME.brand, color: 'white' }}>
-                <Truck size={12} /> Tuesday ({batchLabel(nextTuesday()).split(' · ')[1]})
-              </button>
-              <button onClick={() => onSaveFull({ ...order, delivery_batch: nextSaturday() })}
-                className="px-3 py-1.5 text-xs font-semibold rounded-md inline-flex items-center gap-1"
-                style={{ background: THEME.brand, color: 'white' }}>
-                <Truck size={12} /> Saturday ({batchLabel(nextSaturday()).split(' · ')[1]})
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Batch info — shows in view mode when batch is set */}
-        {!editing && order.delivery_batch && (
-          <div className="mb-4 px-4 py-2.5 rounded-md flex items-center gap-2"
-            style={{ background: THEME.brandBg, color: THEME.brand }}>
-            <Truck size={15} className="flex-shrink-0" />
-            <span className="text-sm">
-              <span className="font-semibold">Delivery Batch:</span> {batchLabel(order.delivery_batch)}
-            </span>
-          </div>
-        )}
-
-        {/* Area tag — where this customer lives */}
-        {!editing && onEditArea && (
-          <div className="mb-4 flex items-center gap-2 text-sm">
-            <MapPin size={15} style={{ color: THEME.inkSoft }} />
-            <span style={{ color: THEME.inkSoft }}>Area</span>
-            <AreaChip area={area} size="md" onClick={onEditArea} />
-          </div>
-        )}
-
-        {/* ===== Items ===== */}
-        {!editing && (
-          <div className="flex items-center justify-between mb-2">
-            <Label>Items</Label>
-            <span className="text-xs font-medium" style={{ color: THEME.inkSoft }}>
-              {(order.items || []).length} line{(order.items || []).length !== 1 ? 's' : ''}
-            </span>
-          </div>
-        )}
-        {!editing ? (
-          <>
-          {/* Desktop / tablet: table */}
-          <table className="w-full text-sm mb-4 hidden sm:table">
-            <thead>
-              <tr style={{ color: THEME.inkSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                <th className="text-left pb-2 font-medium pr-2" style={{ width: 28 }}>#</th>
-                <th className="text-left pb-2 font-medium">Product</th>
-                <th className="text-right pb-2 font-medium">Qty</th>
-                <th className="text-left pb-2 font-medium pl-4">Notes / Cut</th>
-                <th className="text-right pb-2 font-medium">Unit Price</th>
-                <th className="text-right pb-2 font-medium">Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(order.items || []).map((it, i) => (
-                <tr key={i} style={{ borderTop: `1px solid ${THEME.line}` }}>
-                  <td className="py-2.5 pr-2 tabular-nums" style={{ color: THEME.inkSoft }}>{i + 1}</td>
-                  <td className="py-2.5">{it.product}</td>
-                  <td className="py-2.5 text-right whitespace-nowrap">{it.qty} {it.unit}</td>
-                  <td className="py-2.5 pl-4" style={{ color: it.note ? THEME.ink : THEME.inkSoft }}>{it.note || '—'}</td>
-                  <td className="py-2.5 text-right whitespace-nowrap">{peso(it.price)}</td>
-                  <td className="py-2.5 text-right font-medium whitespace-nowrap">{peso(it.qty * it.price)}</td>
-                </tr>
+            <div className="flex gap-2 flex-wrap mt-2.5">
+              {[['Tuesday', nextTuesday()], ['Saturday', nextSaturday()]].map(([label, iso]) => (
+                <button key={label} onClick={() => saveFull({ ...order, delivery_batch: iso, updated_at: new Date().toISOString() })}
+                  className="px-3 py-2 text-xs font-semibold rounded-lg inline-flex items-center gap-1.5 mn-btn"
+                  style={{ background: THEME.brand, color: 'white' }}>
+                  <Truck size={12} /> {label} ({batchLabel(iso).split(' · ')[1]})
+                </button>
               ))}
-            </tbody>
-          </table>
-          {/* Mobile: stacked item cards */}
-          <div className="sm:hidden space-y-2 mb-4">
-            {(order.items || []).map((it, i) => (
-              <div key={i} className="rounded-lg p-3" style={{ background: THEME.bg }}>
-                <div className="flex justify-between gap-2">
-                  <div className="font-medium min-w-0" style={{ color: THEME.ink }}>
-                    <span style={{ color: THEME.inkSoft }}>{i + 1}. </span>{it.product}
-                  </div>
-                  <div className="font-medium whitespace-nowrap flex-shrink-0">{peso(it.qty * it.price)}</div>
-                </div>
-                <div className="text-sm mt-1" style={{ color: THEME.inkSoft }}>
-                  {it.qty} {it.unit} × {peso(it.price)}
-                </div>
-                {it.note && <div className="text-sm mt-0.5" style={{ color: THEME.brand }}>Cut: {it.note}</div>}
-              </div>
-            ))}
-          </div>
-          </>
-        ) : (
-          <div className="mb-4">
-            <div className="flex items-center justify-between mb-3">
-              <Label>Order Items</Label>
-              <Btn variant="secondary" size="sm" onClick={dAddItem}><Plus size={13} className="inline -mt-0.5" /> Add item</Btn>
             </div>
+          </div>
+        )}
 
-            {/* Order-level wholesale toggle — for sudden pricing changes on an
-                existing order. Cascades to all lines; per-line checkboxes can
-                still override individual items. */}
-            {(() => {
-              const allWholesale = draft.items.length > 0 && draft.items.every((it) => it.wholesale);
-              return (
-                <label className="flex items-start gap-3 mb-4 p-3 rounded-md cursor-pointer"
-                  style={{ background: allWholesale ? THEME.brandBg : 'transparent', border: `1px solid ${allWholesale ? THEME.brand : THEME.line}` }}>
-                  <input type="checkbox" checked={allWholesale}
-                    onChange={(e) => dToggleAllWholesale(e.target.checked)}
-                    className="mt-0.5" style={{ width: 18, height: 18, accentColor: THEME.brand }} />
-                  <div className="text-sm">
-                    <span className="font-medium" style={{ color: allWholesale ? THEME.brand : THEME.ink }}>
-                      Wholesale order (business client)
-                    </span>
-                    <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>
-                      Switch this order to wholesale pricing. Per-line checkbox below can override individual items.
+        {/* ===== Balance ===== */}
+        {bal.cancelled ? (
+          <div className="rounded-2xl px-4 py-4 sm:px-5" style={{ background: THEME.bg, border: `1px solid ${line}` }}>
+            <div className="text-xs uppercase font-medium" style={{ color: soft, letterSpacing: '0.08em' }}>Order total</div>
+            <div className="font-display text-3xl leading-none mt-1.5 tabular-nums" style={{ color: soft, textDecoration: 'line-through' }}>{peso(total)}</div>
+            <div className="text-xs mt-2" style={{ color: soft }}>Cancelled — nothing to collect.</div>
+          </div>
+        ) : (
+          <div className={`rounded-2xl overflow-hidden ${narrow ? '' : 'flex items-stretch'}`}
+            style={{ background: bal.unknown ? THEME.warnBg : (bal.due > 0.004 ? THEME.brandBg : THEME.successBg) }}>
+            <div className="flex-1 min-w-0 px-4 sm:px-5 py-4">
+              <div className="text-xs uppercase font-medium" style={{ color: bal.unknown ? THEME.warnInk : soft, letterSpacing: '0.08em' }}>Balance due</div>
+              {bal.unknown ? (
+                <>
+                  <div className="font-display text-4xl leading-none mt-2" style={{ color: THEME.warnInk }}>—</div>
+                  <div className="text-xs mt-2 font-medium" style={{ color: THEME.warnInk }}>Partial payment, but the amount paid isn't recorded yet.</div>
+                </>
+              ) : (
+                <>
+                  <div key={`${bal.due}`} className="font-display text-4xl leading-none mt-2 tabular-nums mn-swap"
+                    style={{ color: bal.due > 0.004 ? THEME.brand : THEME.green }}>{peso(bal.due)}</div>
+                  {bal.due <= 0.004 && (
+                    <div className="text-xs mt-2 font-semibold inline-flex items-center gap-1" style={{ color: THEME.green }}>
+                      <CheckCircle size={13} /> Paid in full
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+            <div className={narrow ? 'grid grid-cols-2' : 'flex'} style={narrow ? { borderTop: `1px solid ${line}` } : undefined}>
+              {[['Total', peso(total)], ['Paid', bal.unknown ? '—' : peso(bal.paid)]].map(([k, v], i) => (
+                <div key={k} className="px-4 sm:px-5 py-3 flex flex-col justify-center" style={{ borderLeft: (!narrow || i) ? `1px solid ${line}` : 'none' }}>
+                  <div className="text-xs uppercase font-medium" style={{ color: soft, letterSpacing: '0.08em' }}>{k}</div>
+                  <div className="font-display text-xl tabular-nums mt-1 whitespace-nowrap" style={{ color: ink }}>{v}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ===== VIEW MODE ===== */}
+        {!editing && (
+          <>
+            <section>
+              {sectionTitle(`Items (${items.length})`)}
+              <ul style={{ borderTop: `1px solid ${line}` }}>
+                {items.map((it, i) => (
+                  <li key={i} className="py-3 grid gap-x-4 items-baseline"
+                    style={{ gridTemplateColumns: narrow ? 'minmax(0,1fr) auto' : 'minmax(0,1fr) auto auto auto', borderBottom: `1px solid ${line}` }}>
+                    <div className="min-w-0">
+                      <div className="font-medium break-words" style={{ color: ink }}>
+                        {it.product}
+                        {it.wholesale && <span className="ml-1.5 align-middle text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded" style={{ background: THEME.brandBg, color: THEME.brand, letterSpacing: '0.05em' }}>Wholesale</span>}
+                      </div>
+                      {narrow && <div className="text-xs mt-0.5 tabular-nums" style={{ color: soft }}>{it.qty} {it.unit} × {peso(it.price)}</div>}
+                      {it.note && (
+                        <div className="text-sm mt-1 flex items-start gap-1.5" style={{ color: THEME.brand }}>
+                          <Scissors size={13} className="mt-1 flex-shrink-0" />
+                          <span className="min-w-0 break-words whitespace-pre-wrap">{it.note}</span>
+                        </div>
+                      )}
+                    </div>
+                    {!narrow && <div className="text-sm tabular-nums text-right whitespace-nowrap" style={{ color: soft }}>{it.qty} {it.unit}</div>}
+                    {!narrow && <div className="text-sm tabular-nums text-right whitespace-nowrap" style={{ color: soft }}>{peso(it.price)}</div>}
+                    <div className="font-semibold tabular-nums text-right whitespace-nowrap" style={{ color: ink }}>{peso(it.qty * it.price)}</div>
+                  </li>
+                ))}
+                <li className="py-2.5 flex items-center justify-between text-sm" style={{ borderBottom: `1px solid ${line}` }}>
+                  <span style={{ color: soft }}>Order total</span>
+                  <span className="font-semibold tabular-nums" style={{ color: ink }}>{peso(total)}</span>
+                </li>
+              </ul>
+            </section>
+
+            {d.customerNote && (
+              <section className="rounded-xl px-4 py-3" style={{ background: THEME.bg, borderLeft: `3px solid ${THEME.accent}` }}>
+                <div className="text-xs uppercase font-semibold mb-1" style={{ color: soft, letterSpacing: '0.09em' }}>Customer note</div>
+                <div className="text-sm break-words whitespace-pre-wrap" style={{ color: ink }}>{d.customerNote}</div>
+              </section>
+            )}
+
+            <section>
+              {sectionTitle('Payment & delivery', <span className="text-[11px]" style={{ color: soft }}>Changes save right away</span>)}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>Payment status</Label>
+                  <Select aria-label="Payment status" value={order.payment_status}
+                    onChange={(e) => update({ payment_status: e.target.value })} options={PAYMENT_STATUSES} />
+                </div>
+                <div>
+                  <Label>Payment method</Label>
+                  <Select aria-label="Payment method" value={order.payment_method || 'Gcash'}
+                    onChange={(e) => update({ payment_method: e.target.value })} options={PAYMENT_METHODS} />
+                </div>
+                <div className="col-span-2">
+                  <Label>Delivery status</Label>
+                  <Select aria-label="Delivery status" value={order.delivery_status}
+                    onChange={(e) => update({ delivery_status: e.target.value })} options={DELIVERY_STATUSES} />
+                </div>
+              </div>
+              {order.payment_status === 'Partial' && (
+                <div className="mt-3 rounded-xl p-3" style={{ background: THEME.bg }}>
+                  <Label>Amount paid so far (₱)</Label>
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <div className="w-40">
+                      <Input type="number" step="0.01" min="0" inputMode="decimal" aria-label="Amount paid so far"
+                        value={order.amount_paid ?? ''}
+                        onChange={(e) => { const v = e.target.value; update({ amount_paid: v === '' ? '' : Number(v) }); }}
+                        placeholder="0.00" />
+                    </div>
+                    <div className="text-sm" style={{ color: soft }}>
+                      Balance: <span className="font-semibold" style={{ color: THEME.red }}>
+                        {peso(Math.max(0, total - (Number(order.amount_paid) || 0)))}
+                      </span> of {peso(total)}
                     </div>
                   </div>
-                </label>
+                </div>
+              )}
+            </section>
+
+            <section className="rounded-xl" style={{ border: `1px solid ${line}` }}>
+              <button onClick={() => setFinOpen((v) => !v)} aria-expanded={finOpen} aria-controls={`fin-${order.id}`}
+                className="w-full flex items-center justify-between gap-2 px-4 py-3 rounded-xl text-sm font-medium row-hover" style={{ color: ink }}>
+                <span className="inline-flex items-center gap-2"><BarChart3 size={15} style={{ color: soft }} /> Financial breakdown</span>
+                <ChevronDown size={16} style={{ color: soft, transition: 'transform 0.18s ease', transform: finOpen ? 'rotate(180deg)' : 'none' }} />
+              </button>
+              <div id={`fin-${order.id}`} className={`mn-collapse ${finOpen ? 'open' : ''}`} aria-hidden={!finOpen}>
+                <div>
+                  <div className="grid grid-cols-3 gap-2 px-4 pb-4 pt-1">
+                    <div><div className="text-xs uppercase tracking-wider" style={{ color: soft }}>Sales</div><div className="font-display text-lg" style={{ color: THEME.brand }}>{peso(total)}</div></div>
+                    <div><div className="text-xs uppercase tracking-wider" style={{ color: soft }}>Cost</div><div className="font-display text-lg" style={{ color: soft }}>{peso(cost)}</div></div>
+                    <div><div className="text-xs uppercase tracking-wider" style={{ color: soft }}>Profit</div><div className="font-display text-lg" style={{ color: THEME.green }}>{peso(profit)}</div></div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {(() => {
+              const rows = [
+                order.phone && ['Contact', order.phone],
+                d.contactMethod && ['Contact method', d.contactMethod],
+                d.address && ['Delivery address', d.address],
+                d.preferredDate && ['Preferred date', d.preferredDate],
+                d.preferredTime && ['Preferred time', d.preferredTime],
+                d.source && ['Source', d.source],
+                d.onlineRef && ['Online ref', d.onlineRef],
+              ].filter(Boolean);
+              if (rows.length === 0 && !d.internalNotes) return null;
+              return (
+                <section>
+                  {sectionTitle('Customer & delivery')}
+                  <dl className="rounded-xl px-4 py-3 text-sm space-y-2" style={{ background: THEME.bg }}>
+                    {rows.map(([k, v]) => (
+                      <div key={k} className="grid gap-3" style={{ gridTemplateColumns: '7.5rem minmax(0,1fr)' }}>
+                        <dt className="text-xs uppercase pt-0.5" style={{ color: soft, letterSpacing: '0.04em' }}>{k}</dt>
+                        <dd className="min-w-0 break-words" style={{ color: ink }}>{v}</dd>
+                      </div>
+                    ))}
+                    {d.internalNotes && (
+                      <div className="grid gap-3 pt-2" style={{ gridTemplateColumns: '7.5rem minmax(0,1fr)', borderTop: rows.length ? `1px solid ${line}` : 'none' }}>
+                        <dt className="text-xs uppercase pt-0.5 flex items-start gap-1" style={{ color: soft, letterSpacing: '0.04em' }}><EyeOff size={11} className="mt-0.5" />Internal notes</dt>
+                        <dd className="min-w-0 break-words whitespace-pre-wrap" style={{ color: ink }}>{d.internalNotes}</dd>
+                      </div>
+                    )}
+                  </dl>
+                </section>
               );
             })()}
+          </>
+        )}
 
-            <div className="space-y-3">
-              {draft.items.map((it, idx) => {
-                const lt = (Number(it.qty) || 0) * (it.price || 0);
-                const p = productByName[it.product];
+        {/* ===== EDIT MODE ===== */}
+        {editing && (
+          <>
+            <section>
+              {sectionTitle('Customer')}
+              <div className="space-y-3">
+                <div><Label>Customer name</Label><Input aria-label="Customer name" value={draft.customer} onChange={(e) => setDraft({ ...draft, customer: e.target.value })} /></div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div><Label>Phone</Label><Input aria-label="Phone" value={draft.phone} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} placeholder="optional" /></div>
+                  <div><Label>Order date</Label><Input aria-label="Order date" type="date" value={draft.date} onChange={(e) => setDraft({ ...draft, date: e.target.value })} /></div>
+                </div>
+              </div>
+              <DeliveryBatchPicker value={draft.delivery_batch} onChange={(v) => setDraft({ ...draft, delivery_batch: v })} allowUnassign />
+            </section>
+
+            <section>
+              {sectionTitle(`Items (${draft.items.length})`,
+                <button onClick={dAddItem} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium mn-btn"
+                  style={{ border: `1px solid ${line}`, color: ink, background: THEME.card }}><Plus size={14} /> Add item</button>)}
+
+              {/* Order-level wholesale toggle — cascades to all lines; per-line
+                  checkboxes below can still override individual items. */}
+              {(() => {
+                const allWholesale = draft.items.length > 0 && draft.items.every((it) => it.wholesale);
                 return (
-                  <div key={idx} className="grid grid-cols-2 sm:grid-cols-12 gap-3 items-start pb-3 sm:pb-0 border-b sm:border-b-0" style={{ borderColor: THEME.line }}>
-                    <div className="col-span-2 sm:col-span-4">
-                      <Label>Product</Label>
-                      <select value={it.product} onChange={(e) => dChangeProduct(idx, e.target.value)}
-                        className="w-full px-3 py-2 rounded-lg outline-none text-sm"
-                        style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink }}>
-                        <option value="">— Select product —</option>
-                        {['Pork', 'Chicken', 'Beef'].map((group) => (
-                          <optgroup key={group} label={group}>
-                            {catalog.filter(c => c.group === group).map(c => (<option key={c.name} value={c.name}>{c.name}</option>))}
-                          </optgroup>
-                        ))}
-                      </select>
+                  <label className="flex items-start gap-3 mb-3 p-3 rounded-xl cursor-pointer"
+                    style={{ background: allWholesale ? THEME.brandBg : 'transparent', border: `1px solid ${allWholesale ? THEME.brand : line}` }}>
+                    <input type="checkbox" checked={allWholesale} onChange={(e) => dToggleAllWholesale(e.target.checked)}
+                      className="mt-0.5" style={{ width: 18, height: 18, accentColor: THEME.brand }} />
+                    <div className="text-sm">
+                      <span className="font-medium" style={{ color: allWholesale ? THEME.brand : ink }}>Wholesale order (business client)</span>
+                      <div className="text-xs mt-0.5" style={{ color: soft }}>Switch this order to wholesale pricing. Per-line checkbox below can override individual items.</div>
                     </div>
-                    <div className="col-span-1 sm:col-span-2">
-                      <Label>Qty</Label>
-                      <Input type="number" step="0.01" min="0" value={it.qty} onChange={(e) => dUpdateItem(idx, { qty: e.target.value })} />
-                    </div>
-                    <div className="col-span-1 sm:col-span-3">
-                      <Label>Notes / Special Cut</Label>
-                      <Input value={it.note || ''} onChange={(e) => dUpdateItem(idx, { note: e.target.value })} placeholder="e.g. thin slice" />
-                    </div>
-                    <div className="col-span-1 sm:col-span-2">
-                      <Label>Line</Label>
-                      <div className="px-2 py-2 text-sm font-medium">
-                        {lt > 0 ? peso(lt) : '—'}
-                        {p && it.wholesale && (
-                          <span className="block text-xs font-normal mt-0.5" style={{ color: THEME.brand }}>@ {peso(it.price)}/kg</span>
+                  </label>
+                );
+              })()}
+
+              <div className="space-y-2.5">
+                {draft.items.map((it, idx) => {
+                  const lt = (Number(it.qty) || 0) * (it.price || 0);
+                  const p = productByName[it.product];
+                  return (
+                    <div key={idx} className="rounded-xl p-3 space-y-2.5" style={{ background: THEME.bg, border: `1px solid ${line}` }}>
+                      <div className="flex items-end gap-2">
+                        <div className="flex-1 min-w-0">
+                          <Label>Product</Label>
+                          <select value={it.product} onChange={(e) => dChangeProduct(idx, e.target.value)} aria-label={`Product, line ${idx + 1}`}
+                            className={fieldCls} style={fieldStyle}>
+                            <option value="">— Select product —</option>
+                            {['Pork', 'Chicken', 'Beef'].map((group) => (
+                              <optgroup key={group} label={group}>
+                                {catalog.filter(c => c.group === group).map(c => (<option key={c.name} value={c.name}>{c.name}</option>))}
+                              </optgroup>
+                            ))}
+                          </select>
+                        </div>
+                        {draft.items.length > 1 && (
+                          <button onClick={() => dRemoveItem(idx)} aria-label={`Remove line ${idx + 1}${it.product ? `, ${it.product}` : ''}`}
+                            className="w-10 h-10 flex items-center justify-center rounded-lg danger-hover flex-shrink-0" style={{ color: THEME.red }}>
+                            <Trash2 size={15} />
+                          </button>
                         )}
                       </div>
-                      {p && (
-                        <label className="flex items-center gap-1.5 mt-1 cursor-pointer">
-                          <input type="checkbox" checked={!!it.wholesale}
-                            onChange={(e) => dToggleLineWholesale(idx, e.target.checked)}
-                            style={{ width: 13, height: 13, accentColor: THEME.brand }} />
-                          <span className="text-xs" style={{ color: it.wholesale ? THEME.brand : THEME.inkSoft }}>Wholesale</span>
-                        </label>
-                      )}
+                      <div className="grid gap-2" style={{ gridTemplateColumns: '6.5rem minmax(0,1fr)' }}>
+                        <div><Label>Qty</Label><Input aria-label={`Quantity, line ${idx + 1}`} type="number" step="0.01" min="0" inputMode="decimal" value={it.qty} onChange={(e) => dUpdateItem(idx, { qty: e.target.value })} /></div>
+                        <div><Label>Cut / note</Label><Input aria-label={`Cut or note, line ${idx + 1}`} value={it.note || ''} onChange={(e) => dUpdateItem(idx, { note: e.target.value })} placeholder="e.g. thin slice" /></div>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 text-sm">
+                        {p ? (
+                          <label className="flex items-center gap-1.5 cursor-pointer">
+                            <input type="checkbox" checked={!!it.wholesale} onChange={(e) => dToggleLineWholesale(idx, e.target.checked)}
+                              style={{ width: 15, height: 15, accentColor: THEME.brand }} />
+                            <span className="text-xs" style={{ color: it.wholesale ? THEME.brand : soft }}>Wholesale</span>
+                          </label>
+                        ) : <span />}
+                        <span className="text-right">
+                          <span className="font-semibold tabular-nums" style={{ color: ink }}>{lt > 0 ? peso(lt) : '—'}</span>
+                          {p && it.wholesale && <span className="block text-xs" style={{ color: THEME.brand }}>@ {peso(it.price)}/kg</span>}
+                        </span>
+                      </div>
                     </div>
-                    <div className="col-span-1 sm:col-span-1 flex items-end justify-end sm:block">
-                      <span className="hidden sm:block"><Label>&nbsp;</Label></span>
-                      {draft.items.length > 1 && (
-                        <button onClick={() => dRemoveItem(idx)} className="p-2 rounded danger-hover" style={{ color: THEME.red }}><X size={14} /></button>
-                      )}
+                  );
+                })}
+              </div>
+              <div className="text-xs mt-2" style={{ color: soft }}>Note: changing a product re-prices that line to the product's current price.</div>
+            </section>
+
+            <section className="rounded-xl" style={{ border: `1px solid ${line}` }}>
+              <div className="px-4 pt-3 text-sm font-medium inline-flex items-center gap-2" style={{ color: ink }}><BarChart3 size={15} style={{ color: soft }} /> Financial breakdown</div>
+              <div className="grid grid-cols-3 gap-2 px-4 pb-4 pt-2">
+                <div><div className="text-xs uppercase tracking-wider" style={{ color: soft }}>Sales</div><div className="font-display text-lg" style={{ color: THEME.brand }}>{peso(total)}</div></div>
+                <div><div className="text-xs uppercase tracking-wider" style={{ color: soft }}>Cost</div><div className="font-display text-lg" style={{ color: soft }}>{peso(cost)}</div></div>
+                <div><div className="text-xs uppercase tracking-wider" style={{ color: soft }}>Profit</div><div className="font-display text-lg" style={{ color: THEME.green }}>{peso(profit)}</div></div>
+              </div>
+            </section>
+
+            <section>
+              {sectionTitle('Payment & delivery')}
+              <div className="grid grid-cols-2 gap-3">
+                <div><Label>Payment status</Label><Select aria-label="Payment status" value={draft.payment_status} onChange={(e) => setDraft({ ...draft, payment_status: e.target.value })} options={PAYMENT_STATUSES} /></div>
+                <div><Label>Payment method</Label><Select aria-label="Payment method" value={draft.payment_method} onChange={(e) => setDraft({ ...draft, payment_method: e.target.value })} options={PAYMENT_METHODS} /></div>
+                <div className="col-span-2"><Label>Delivery status</Label><Select aria-label="Delivery status" value={draft.delivery_status} onChange={(e) => setDraft({ ...draft, delivery_status: e.target.value })} options={DELIVERY_STATUSES} /></div>
+              </div>
+              {draft.payment_status === 'Partial' && (
+                <div className="mt-3 rounded-xl p-3" style={{ background: THEME.bg }}>
+                  <Label>Amount paid so far (₱)</Label>
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <div className="w-40">
+                      <Input type="number" step="0.01" min="0" inputMode="decimal" aria-label="Amount paid so far"
+                        value={draft.amount_paid ?? ''} onChange={(e) => setDraft({ ...draft, amount_paid: e.target.value })} placeholder="0.00" />
+                    </div>
+                    <div className="text-sm" style={{ color: soft }}>
+                      Balance: <span className="font-semibold" style={{ color: THEME.red }}>{peso(Math.max(0, total - (Number(draft.amount_paid) || 0)))}</span> of {peso(total)}
                     </div>
                   </div>
-                );
-              })}
-            </div>
-            <div className="text-xs mt-2" style={{ color: THEME.inkSoft }}>
-              Note: changing a product re-prices that line to the product's current price.
-            </div>
-          </div>
-        )}
+                </div>
+              )}
+            </section>
 
-        <div className="grid grid-cols-3 gap-2 sm:gap-4 mb-5 py-3" style={{ borderTop: `1px solid ${THEME.line}`, borderBottom: `1px solid ${THEME.line}` }}>
-          <div><div className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft }}>Sales</div><div className="font-display text-lg" style={{ color: THEME.brand }}>{peso(total)}</div></div>
-          <div><div className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft }}>Cost</div><div className="font-display text-lg" style={{ color: THEME.inkSoft }}>{peso(cost)}</div></div>
-          <div><div className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft }}>Profit</div><div className="font-display text-lg" style={{ color: THEME.green }}>{peso(profit)}</div></div>
-        </div>
-
-        {/* ===== Status fields ===== */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
-          <div>
-            <Label>Payment Status</Label>
-            <Select
-              value={editing ? draft.payment_status : order.payment_status}
-              onChange={(e) => editing ? setDraft({ ...draft, payment_status: e.target.value }) : onUpdate({ payment_status: e.target.value })}
-              options={PAYMENT_STATUSES} />
-          </div>
-          <div>
-            <Label>Payment Method</Label>
-            <Select
-              value={editing ? draft.payment_method : (order.payment_method || 'Gcash')}
-              onChange={(e) => editing ? setDraft({ ...draft, payment_method: e.target.value }) : onUpdate({ payment_method: e.target.value })}
-              options={PAYMENT_METHODS} />
-          </div>
-          <div>
-            <Label>Delivery</Label>
-            <Select
-              value={editing ? draft.delivery_status : order.delivery_status}
-              onChange={(e) => editing ? setDraft({ ...draft, delivery_status: e.target.value }) : onUpdate({ delivery_status: e.target.value })}
-              options={DELIVERY_STATUSES} />
-          </div>
-        </div>
-
-        {/* ===== Partial payment amount ===== */}
-        {((editing ? draft.payment_status : order.payment_status) === 'Partial') && (
-          <div className="mb-5 -mt-2">
-            <Label>Amount Paid So Far (₱)</Label>
-            <div className="flex items-center gap-3">
-              <div className="w-48">
-                <Input type="number" step="0.01" min="0"
-                  value={editing ? (draft.amount_paid ?? '') : (order.amount_paid ?? '')}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    editing ? setDraft({ ...draft, amount_paid: v }) : onUpdate({ amount_paid: v === '' ? '' : Number(v) });
-                  }}
-                  placeholder="0.00" />
+            <section className="space-y-3">
+              {sectionTitle('Delivery & notes')}
+              <div><Label>Delivery address</Label><Input aria-label="Delivery address" value={draft.delivery_address} onChange={(e) => setDraft({ ...draft, delivery_address: e.target.value })} placeholder="House / street / subdivision, barangay" /></div>
+              <div>
+                <Label>Customer note</Label>
+                <textarea value={draft.customer_note} onChange={(e) => setDraft({ ...draft, customer_note: e.target.value })} rows={2} aria-label="Customer note"
+                  className={fieldCls} style={fieldStyle} placeholder="Shows on the customer's order summary" />
               </div>
-              <div className="text-sm" style={{ color: THEME.inkSoft }}>
-                Balance: <span className="font-medium" style={{ color: THEME.red }}>
-                  {peso(Math.max(0, total - (Number(editing ? draft.amount_paid : order.amount_paid) || 0)))}
-                </span> of {peso(total)}
+              <div>
+                <Label>Internal notes</Label>
+                <textarea value={draft.internal_notes} onChange={(e) => setDraft({ ...draft, internal_notes: e.target.value })} rows={2} aria-label="Internal notes"
+                  className={fieldCls} style={fieldStyle} placeholder="Admin only — never shown to the customer or supplier" />
               </div>
-            </div>
-          </div>
-        )}
-        {editing ? (
-          <div className="mb-5 space-y-3">
-            <div>
-              <Label>Delivery Address</Label>
-              <Input value={draft.delivery_address} onChange={(e) => setDraft({ ...draft, delivery_address: e.target.value })} placeholder="House / street / subdivision, barangay" />
-            </div>
-            <div>
-              <Label>Customer Note</Label>
-              <textarea value={draft.customer_note} onChange={(e) => setDraft({ ...draft, customer_note: e.target.value })} rows={2}
-                className="w-full px-3 py-2 rounded-lg outline-none text-sm"
-                style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink, fontFamily: 'DM Sans' }}
-                placeholder="Shows on the customer's order summary" />
-            </div>
-            <div>
-              <Label>Internal Notes</Label>
-              <textarea value={draft.internal_notes} onChange={(e) => setDraft({ ...draft, internal_notes: e.target.value })} rows={2}
-                className="w-full px-3 py-2 rounded-lg outline-none text-sm"
-                style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink, fontFamily: 'DM Sans' }}
-                placeholder="Admin only — never shown to the customer or supplier" />
-            </div>
-          </div>
-        ) : (() => {
-          const d = orderDetails(order);
-          const rows = [
-            d.source && ['Source', d.source],
-            d.onlineRef && ['Online Ref', d.onlineRef],
-            d.contactMethod && ['Contact Method', d.contactMethod],
-            d.address && ['Delivery Address', d.address],
-            d.preferredDate && ['Preferred Date', d.preferredDate],
-            d.preferredTime && ['Preferred Time', d.preferredTime],
-            d.paymentMethod && ['Payment Method', d.paymentMethod],
-            d.customerNote && ['Customer Note', d.customerNote],
-          ].filter(Boolean);
-          if (rows.length === 0 && !d.internalNotes) return null;
-          return (
-            <div className="mb-5">
-              <Label>Order Details</Label>
-              <div className="rounded-lg p-3 text-sm space-y-1.5" style={{ background: THEME.bg }}>
-                {rows.map(([k, v]) => (
-                  <div key={k} className="flex items-baseline gap-3">
-                    <span className="text-xs uppercase tracking-wider flex-shrink-0" style={{ color: THEME.inkSoft, minWidth: 116, letterSpacing: '0.04em' }}>{k}</span>
-                    <span className="min-w-0" style={{ color: THEME.ink }}>{v}</span>
-                  </div>
-                ))}
-                {d.internalNotes && (
-                  <div className="flex items-start gap-3 pt-1.5 mt-1.5" style={{ borderTop: `1px solid ${THEME.line}` }}>
-                    <span className="text-xs uppercase tracking-wider flex-shrink-0 flex items-center gap-1" style={{ color: THEME.inkSoft, minWidth: 116, letterSpacing: '0.04em' }}><EyeOff size={11} />Internal Notes</span>
-                    <span className="min-w-0" style={{ color: THEME.ink }}>{d.internalNotes}</span>
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-        })()}
+            </section>
 
-        {err && (
-          <div className="px-4 py-3 rounded-md flex items-start gap-2 text-sm mb-4" style={{ background: '#F5DDE0', color: THEME.red }}>
-            <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />{err}
-          </div>
-        )}
-
-        {/* ===== Actions ===== */}
-        {editing ? (
-          <div className="flex items-center justify-end gap-2">
-            <Btn variant="secondary" onClick={cancelEdit}>Cancel</Btn>
-            <Btn variant="primary" onClick={saveEdit}><Save size={14} className="inline -mt-0.5 mr-1" /> Save Changes</Btn>
-          </div>
-        ) : (
-          <div>
-            {/* Primary actions — easy to tap, no destructive button among them */}
-            <div className="grid grid-cols-2 gap-2">
-              <Btn variant="secondary" size="lg" onClick={() => { onClose(); }}><Save size={15} className="inline -mt-0.5 mr-1" /> Save</Btn>
-              <Btn variant="primary" size="lg" onClick={() => onPrint('invoice')}><Receipt size={15} className="inline -mt-0.5 mr-1" /> Invoice</Btn>
-            </div>
-            <Btn variant="secondary" size="lg" onClick={() => onPrint('supplier')} className="w-full mt-2">
-              <FileText size={15} className="inline -mt-0.5 mr-1" /> Supplier Copy
-            </Btn>
-
-            {/* Destructive actions tucked away so they can't be tapped by accident */}
-            <button onClick={() => setShowMore((s) => !s)}
-              className="flex items-center gap-1 text-xs font-medium mt-4 mx-auto" style={{ color: THEME.inkSoft }}>
-              {showMore ? <ChevronUp size={13} /> : <ChevronDown size={13} />} More actions
-            </button>
-            {showMore && (
-              <div className="mt-2 pt-3 flex flex-wrap gap-2 justify-center" style={{ borderTop: `1px solid ${THEME.line}` }}>
-                {order.delivery_status === 'Cancelled' ? (
-                  <Btn variant="secondary" size="sm" onClick={() => onUpdate({ delivery_status: 'Pending', cancel_reason: '' })}>
-                    <RefreshCw size={14} className="inline -mt-0.5 mr-1" /> Restore Order
-                  </Btn>
-                ) : (
-                  <Btn variant="secondary" size="sm" onClick={() => {
-                    if (!confirm('Are you sure you want to cancel this order?')) return;
-                    const reason = prompt('Optional — type a reason (e.g. "customer changed mind"):', '');
-                    onUpdate({ delivery_status: 'Cancelled', cancel_reason: (reason || '').trim() });
-                  }}>
-                    <X size={14} className="inline -mt-0.5 mr-1" /> Cancel Order
-                  </Btn>
-                )}
-                <Btn variant="danger" size="sm" onClick={onDelete}><Trash2 size={14} className="inline -mt-0.5 mr-1" /> Delete Order</Btn>
+            {err && (
+              <div className="px-4 py-3 rounded-xl flex items-start gap-2 text-sm" role="alert" style={{ background: THEME.errorBg, color: THEME.red }}>
+                <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />{err}
               </div>
             )}
+          </>
+        )}
+      </div>
+
+      {/* ===== Footer (stays put) ===== */}
+      <div className="flex-shrink-0 relative px-4 sm:px-5 pt-3" style={{ borderTop: `1px solid ${line}`, background: THEME.card, paddingBottom: narrow ? 'max(env(safe-area-inset-bottom), 12px)' : 14 }}>
+        <div className="absolute inset-x-0 bottom-full flex justify-center px-4 pb-2 pointer-events-none" role="status" aria-live="polite">
+          {feedback && (
+            <span key={feedback.text} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium shadow-md mn-pop-in"
+              style={{ background: feedback.bg, color: feedback.fg }}>
+              {feedback.icon} {feedback.text}
+            </span>
+          )}
+        </div>
+        {editing ? (
+          <div className="grid grid-cols-2 gap-2">
+            <button onClick={cancelEdit} className={footBtn} style={{ ...footH, background: THEME.card, color: ink, border: `1px solid ${line}` }}>Cancel</button>
+            <button onClick={saveEdit} className={footBtn} style={{ ...footH, background: THEME.brand, color: 'white', border: `1px solid ${THEME.brand}` }}>
+              <Save size={15} /> Save changes
+            </button>
+          </div>
+        ) : (
+          <div className={narrow ? 'grid gap-2' : 'flex gap-2'} style={narrow ? { gridTemplateColumns: '1fr 1fr auto' } : undefined}>
+            <button onClick={onClose} className={`${footBtn} ${narrow ? '' : 'flex-1 min-w-[96px]'}`}
+              style={{ ...footH, background: THEME.brand, color: 'white', border: `1px solid ${THEME.brand}`, gridColumn: narrow ? '1 / -1' : undefined }}>
+              <Check size={16} /> Done
+            </button>
+            <button onClick={() => onPrint('invoice')} className={footBtn} style={{ ...footH, background: THEME.card, color: ink, border: `1px solid ${line}` }}>
+              <Receipt size={15} /> Invoice
+            </button>
+            <button onClick={() => onPrint('supplier')} className={footBtn} style={{ ...footH, background: THEME.card, color: ink, border: `1px solid ${line}` }}>
+              <FileText size={15} /> Supplier copy
+            </button>
+            <OrderMoreMenu order={order} onCancelOrder={cancelOrder} onRestore={restoreOrder} onDelete={onDelete} />
           </div>
         )}
       </div>
@@ -4289,12 +4974,20 @@ function OrderDetail({ order, catalog, productByName, onClose, onDelete, onPrint
 
 // Pastel tag in the area's color. With no area and an onClick, shows a
 // dashed "+ Area" prompt so tagging is one tap away.
-function AreaChip({ area, onClick, size = 'sm' }) {
+function AreaChip({ area, onClick, size = 'sm', variant = 'pill' }) {
   const pad = size === 'xs' ? 'px-1.5 py-0.5 text-[11px]' : size === 'md' ? 'px-2.5 py-1 text-sm' : 'px-2 py-0.5 text-xs';
+  if (area && variant === 'dot') {
+    const t = areaTone(area.color);
+    const inner = (<><span style={{ width: 8, height: 8, borderRadius: '50%', background: t.dot, flexShrink: 0 }} /><span className={`min-w-0 text-left ${(area.name || '').length > 18 ? 'break-words' : 'whitespace-nowrap'}`}>{area.name}</span></>);
+    const cls = 'inline-flex items-center gap-2 text-sm max-w-full rounded-md';
+    return onClick
+      ? <button type="button" onClick={onClick} className={`${cls} px-1 -mx-1 py-0.5 row-hover`} style={{ color: THEME.ink }} title="Change area" aria-label={`Area: ${area.name}. Change area`}>{inner}</button>
+      : <span className={cls} style={{ color: THEME.ink }}>{inner}</span>;
+  }
   if (!area) {
     if (!onClick) return null;
     return (
-      <button type="button" onClick={onClick}
+      <button type="button" onClick={onClick} aria-label="Set area"
         className={`inline-flex items-center gap-1 rounded-full font-medium whitespace-nowrap ${pad}`}
         style={{ border: `1px dashed ${THEME.inkSoft}`, color: THEME.inkSoft, background: 'transparent' }}>
         <Plus size={10} /> Area
