@@ -206,3 +206,31 @@ tr.mn-row:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus
   .mn-pop-in, .mn-pop, .mn-swap { animation: none !important; }
   .mn-collapse, .mn-collapse:not(.open), .mn-row, .mn-btn { transition: none !important; }
 }
+
+/* ── Price List (v10.1) — scoped to .pl-root and the product editor ── */
+.pl-root .pl-btn, .pl-btn {
+  transition: transform 0.12s cubic-bezier(0.34, 1.56, 0.64, 1), background-color 0.15s ease,
+    border-color 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease, color 0.15s ease;
+}
+@media (hover: hover) {
+  .pl-btn:hover:not(:disabled) { box-shadow: 0 2px 10px rgba(42, 38, 36, 0.10); }
+}
+.pl-root .pl-row { transition: background-color 0.2s ease; }
+.pl-root .pl-tab { position: relative; transition: color 0.18s ease; white-space: nowrap; }
+.pl-root .pl-underline {
+  position: absolute; bottom: 0; height: 2px; border-radius: 2px;
+  transition: left 0.18s cubic-bezier(0.22, 1, 0.36, 1), width 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+}
+/* 16px on phones so iOS never zooms into a field; 14px from tablet up. */
+.pl-input { font-size: 16px; }
+@media (min-width: 640px) { .pl-input { font-size: 14px; } }
+.pl-input:focus { border-color: var(--focus-ring, #7A2E33) !important; box-shadow: 0 0 0 3px rgba(122, 46, 51, 0.12); }
+/* Brief highlight on the product that was just saved. */
+.pl-root .pl-flash { animation: pl-flash 1.4s ease-out; }
+@keyframes pl-flash { 0%, 25% { background-color: rgba(201, 133, 58, 0.24); } 100% { background-color: transparent; } }
+.pl-toast { animation: mn-pop-in 0.16s ease-out both; }
+@media (prefers-reduced-motion: reduce) {
+  .pl-btn, .pl-root .pl-row, .pl-root .pl-tab, .pl-root .pl-underline { transition: none !important; }
+  .pl-root .pl-flash { animation: none; outline: 2px solid rgba(201, 133, 58, 0.6); outline-offset: -2px; }
+  .pl-toast { animation: none; }
+}

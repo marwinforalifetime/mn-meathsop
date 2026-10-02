@@ -7,6 +7,7 @@ import {
   Activity, Menu, Store, Moon, Sun, CheckCircle, Inbox, MapPin, Users, MessageCircle,
   Crown, Trophy, Lightbulb, Sparkles, TrendingDown, ArrowUpRight, ArrowDownRight, CalendarDays,
   Target, Package, Info, Minus, BarChart3, ChevronLeft, MoreHorizontal, Filter, Scissors,
+  ArrowUp, ArrowDown, ArrowUpDown,
 } from 'lucide-react';
 import {
   BarChart, Bar, PieChart, Pie, Cell, ResponsiveContainer, XAxis, YAxis,
@@ -53,7 +54,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v10.0 · Orders redesign';
+const APP_VERSION = 'v10.1 · Price List redesign';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -1099,7 +1100,8 @@ function MainApp() {
           {view === 'pickup' && <Pickup orders={orders} catalog={catalog} />}
           {view === 'salescheck' && <SalesCheck orders={orders} catalog={catalog} privacy={privacy} />}
           {view === 'expenses' && <Expenses expenses={expenses} setExpenses={setExpenses} setMeta={setMeta} />}
-          {view === 'products' && <Products catalog={catalog} setCatalog={setCatalog} priceHistory={priceHistory} setPriceHistory={setPriceHistory} />}
+          {view === 'products' && <Products catalog={catalog} setCatalog={setCatalog} priceHistory={priceHistory} setPriceHistory={setPriceHistory}
+            sync={{ saving, syncStatus }} registerNavGuard={registerNavGuard} />}
           {view === 'restaurantquote' && <RestaurantQuote catalog={catalog} setCatalog={setCatalog} qtys={quoteQtys} setQtys={setQuoteQtys} />}
           {view === 'profitcheck' && <QuoteProfitCheck catalog={catalog} privacy={privacy} qtys={quoteQtys} setQtys={setQuoteQtys} />}
           {view === 'supplierprices' && <SupplierPrices priceHistory={priceHistory} setPriceHistory={setPriceHistory} catalog={catalog} setCatalog={setCatalog} privacy={privacy} />}
@@ -7570,155 +7572,1004 @@ function SupplierPayments({ payments, setPayments, privacy }) {
    PRODUCTS / PRICE LIST
    ============================================================ */
 
-function Products({ catalog, setCatalog, priceHistory, setPriceHistory }) {
-  const [editing, setEditing] = useState(null);
+/* ============================================================
+   PRICE LIST (v10.1)
+   ============================================================
+   Responsive by the space the list actually has (not by device name):
+   a comparison table when there's room, accordion rows otherwise.
+   Products have no ids, so every write locates its product by object
+   identity first and by name second — never by a filtered row index.
+   Formulas are unchanged: profit = price − cost; margin = profit ÷ price
+   × 100 when price > 0. Wholesale still comes from rqPricing().        */
+const PL_GROUPS = ['Pork', 'Chicken', 'Beef'];
+const PL_UNITS = ['kg', 'pack', 'pcs'];
+const PL_TABLE_MIN = 820; // px of list width needed for the table layout
+const plUnit = (u) => (u === 'pcs' ? 'pc' : (u || 'kg'));
+const plNum = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+const plStats = (p) => {
+  const price = plNum(p.price), cost = plNum(p.cost);
+  const profit = price - cost;
+  return { price, cost, profit, margin: price > 0 ? (profit / price) * 100 : null };
+};
+const plMoney = (n) => (n < 0 ? '−' + peso(Math.abs(n)) : peso(n));
+const plPct = (m) => (m === null || !Number.isFinite(m) ? '—' : `${m < 0 ? '−' : ''}${Math.abs(m).toFixed(1)}%`);
+const plStr = (v) => (v === undefined || v === null ? '' : String(v));
+// Find a product in the live catalog: same object first, then same name.
+const plLocate = (list, ref, name) => {
+  let i = ref ? list.indexOf(ref) : -1;
+  if (i < 0 && name !== undefined) i = list.findIndex((p) => p.name === name);
+  return i;
+};
 
-  const updateProduct = (idx, patch) => setCatalog(catalog.map((p, i) => i === idx ? { ...p, ...patch } : p));
-  const addProduct = () => setEditing({ idx: catalog.length, isNew: true, data: { name: '', unit: 'kg', cost: 0, price: 0, group: 'Pork' } });
-  const saveEdit = () => {
-    if (!editing) return;
-    if (!editing.data.name.trim()) return;
-    if (editing.isNew) {
-      setCatalog([...catalog, editing.data]);
+function Products({ catalog, setCatalog, priceHistory, setPriceHistory, sync, registerNavGuard }) {
+  const [query, setQuery] = useState('');
+  const [cat, setCat] = useState('All');
+  const [expanded, setExpanded] = useState(null);       // row key
+  const [reorder, setReorder] = useState(false);
+  const stashedQuery = useRef('');
+  const [editor, setEditor] = useState(null);           // { isNew, ref, origName, snapshot, base, draft }
+  const [editorClosing, setEditorClosing] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const [touched, setTouched] = useState({});
+  const [flashKey, setFlashKey] = useState(null);
+  const [announce, setAnnounce] = useState('');
+  const rootRef = useRef(null);
+  const openerRef = useRef(null);
+  const savingRef = useRef(false);
+  const dirtyRef = useRef(false);
+  const closeTimer = useRef(null);
+  const flashTimer = useRef(null);
+  const pendingFocus = useRef(null);
+  const phone = !useMediaQuery('(min-width: 640px)');
+
+  // ── Layout from the list's real width (sidebar, Split View, rotation) ──
+  const [wide, setWide] = useState(() => { try { return window.innerWidth >= 1180; } catch (e) { return false; } });
+  useLayoutEffect(() => {
+    const el = rootRef.current;
+    if (!el) return undefined;
+    const measure = () => setWide(el.getBoundingClientRect().width >= PL_TABLE_MIN);
+    measure();
+    if (typeof ResizeObserver === 'undefined') { window.addEventListener('resize', measure); return () => window.removeEventListener('resize', measure); }
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // ── Rows with stable keys (name + occurrence, so duplicates stay distinct) ──
+  const rows = useMemo(() => {
+    const seen = {};
+    return catalog.map((p, i) => {
+      const nm = p.name || '';
+      seen[nm] = (seen[nm] || 0) + 1;
+      return { p, i, key: nm + '#' + seen[nm] };
+    });
+  }, [catalog]);
+  const groupsPresent = useMemo(() => {
+    const extra = [];
+    catalog.forEach((p) => { if (p.group && !PL_GROUPS.includes(p.group) && !extra.includes(p.group)) extra.push(p.group); });
+    return [...PL_GROUPS, ...extra];
+  }, [catalog]);
+  const q = reorder ? '' : query.trim().toLowerCase();
+  const matchesQuery = (p) => !q || (p.name || '').toLowerCase().includes(q);
+  const searched = rows.filter((r) => matchesQuery(r.p));
+  const counts = { All: searched.length };
+  groupsPresent.forEach((g) => { counts[g] = searched.filter((r) => r.p.group === g).length; });
+  const visible = searched.filter((r) => cat === 'All' || r.p.group === cat);
+  const sections = (cat === 'All' ? groupsPresent : [cat])
+    .map((g) => ({ group: g, rows: visible.filter((r) => r.p.group === g) }))
+    .filter((s) => s.rows.length > 0);
+  const groupSize = (g) => rows.filter((r) => r.p.group === g).length;
+
+  // Latest supplier-cost change per product (read-only, from Supplier Prices history).
+  const lastChange = useMemo(() => {
+    const m = {};
+    [...(priceHistory || [])]
+      .sort((a, b) => ((b.date || '').localeCompare(a.date || '')) || (b.id || '').localeCompare(a.id || ''))
+      .forEach((h) => { if (h && h.product && !m[h.product]) m[h.product] = h; });
+    return m;
+  }, [priceHistory]);
+
+  // ── Truthful save feedback (driven by the app's real persistence state) ──
+  const [fb, setFb] = useState(null); // { label, phase: 'pending' | 'saving' | 'done' }
+  const sawSaving = useRef(false);
+  const isSaving = !!(sync && sync.saving);
+  const syncStatus = sync ? sync.syncStatus : null;
+  const notify = (label) => { sawSaving.current = false; setFb({ label, phase: 'pending', t: Date.now() }); };
+  useEffect(() => {
+    if (!fb || (fb.phase !== 'pending' && fb.phase !== 'saving')) return;
+    if (isSaving) { sawSaving.current = true; if (fb.phase === 'pending') setFb((f) => f && { ...f, phase: 'saving' }); }
+    else if (sawSaving.current) setFb((f) => f && { ...f, phase: 'done' });
+  }, [isSaving, fb]);
+  useEffect(() => {
+    if (!fb) return undefined;
+    if (fb.phase === 'pending') { const t = setTimeout(() => setFb((f) => (f && f.phase === 'pending' && f.t === fb.t ? null : f)), 2500); return () => clearTimeout(t); }
+    if (fb.phase === 'done' && syncStatus === 'cloud') { const t = setTimeout(() => setFb((f) => (f && f.t === fb.t ? null : f)), 3500); return () => clearTimeout(t); }
+    return undefined;
+  }, [fb, syncStatus]);
+
+  const flash = (key) => {
+    setFlashKey(key);
+    clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => setFlashKey(null), 1500);
+  };
+  useEffect(() => () => { clearTimeout(flashTimer.current); clearTimeout(closeTimer.current); }, []);
+
+  // ── Category tabs with a sliding underline ──
+  const tabListRef = useRef(null);
+  const tabRefs = useRef({});
+  const [ind, setInd] = useState(null);
+  const tabs = ['All', ...PL_GROUPS];
+  useLayoutEffect(() => {
+    const place = () => {
+      const el = tabRefs.current[cat];
+      if (el) setInd({ left: el.offsetLeft, width: el.offsetWidth });
+    };
+    place();
+    window.addEventListener('resize', place);
+    return () => window.removeEventListener('resize', place);
+  }, [cat, wide, counts.All, counts.Pork, counts.Chicken, counts.Beef]);
+  const onTabKey = (e) => {
+    const i = tabs.indexOf(cat);
+    let n = null;
+    if (e.key === 'ArrowRight') n = tabs[(i + 1) % tabs.length];
+    if (e.key === 'ArrowLeft') n = tabs[(i - 1 + tabs.length) % tabs.length];
+    if (e.key === 'Home') n = tabs[0];
+    if (e.key === 'End') n = tabs[tabs.length - 1];
+    if (n) { e.preventDefault(); setCat(n); const el = tabRefs.current[n]; if (el) el.focus(); }
+  };
+
+  // ── Reorder mode ──
+  const startReorder = () => {
+    stashedQuery.current = query;
+    setQuery('');
+    setExpanded(null);
+    setReorder(true);
+  };
+  const stopReorder = () => { setReorder(false); setQuery(stashedQuery.current); stashedQuery.current = ''; };
+  const move = (row, dir) => {
+    const target = row.p;
+    const group = target.group;
+    const groupIdx = catalog.map((p, i) => (p.group === group ? i : -1)).filter((i) => i >= 0);
+    const pos = groupIdx.indexOf(plLocate(catalog, target, target.name));
+    const to = dir === 'up' ? pos - 1 : pos + 1;
+    if (pos < 0 || to < 0 || to >= groupIdx.length) return;
+    // Same rule as before: swap with the nearest product in the same category.
+    setCatalog((prev) => {
+      const idx = plLocate(prev, target, target.name);
+      if (idx < 0) return prev;
+      const g = prev.map((p, i) => (p.group === prev[idx].group ? i : -1)).filter((i) => i >= 0);
+      const at = g.indexOf(idx);
+      const t2 = dir === 'up' ? at - 1 : at + 1;
+      if (t2 < 0 || t2 >= g.length) return prev;
+      const next = [...prev];
+      const j = g[t2];
+      [next[idx], next[j]] = [next[j], next[idx]];
+      return next;
+    });
+    pendingFocus.current = { key: row.key, dir };
+    setAnnounce(`${target.name} moved to position ${to + 1} of ${groupIdx.length} in ${group}.`);
+    notify('Product order updated');
+  };
+  // Keep focus on the moved product; if its arrow just became disabled, use the other one.
+  const listRef = useRef(null);
+  const prevTops = useRef({});
+  useLayoutEffect(() => {
+    const root = listRef.current;
+    if (pendingFocus.current && root) {
+      const { key, dir } = pendingFocus.current;
+      pendingFocus.current = null;
+      const esc = (s) => (window.CSS && CSS.escape ? CSS.escape(s) : s.replace(/"/g, '\\"'));
+      const rowEl = root.querySelector(`[data-plkey="${esc(key)}"]`);
+      if (rowEl) {
+        const same = rowEl.querySelector(`[data-dir="${dir}"]`);
+        const other = rowEl.querySelector(`[data-dir="${dir === 'up' ? 'down' : 'up'}"]`);
+        const el = same && !same.disabled ? same : other;
+        if (el) el.focus({ preventScroll: true });
+      }
+    }
+    // Smooth position change (FLIP) for rows in reorder mode.
+    if (!root || !reorder) { prevTops.current = {}; return; }
+    const els = root.querySelectorAll('[data-plkey]');
+    const now = {};
+    els.forEach((el) => { now[el.getAttribute('data-plkey')] = el.offsetTop; });
+    if (!prefersReducedMotion()) {
+      els.forEach((el) => {
+        const k = el.getAttribute('data-plkey');
+        const before = prevTops.current[k];
+        if (before === undefined) return;
+        const d = before - now[k];
+        if (!d) return;
+        el.style.transition = 'none';
+        el.style.transform = `translateY(${d}px)`;
+        requestAnimationFrame(() => {
+          el.style.transition = 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1)';
+          el.style.transform = '';
+        });
+      });
+    }
+    prevTops.current = now;
+  }, [catalog, reorder, cat]);
+
+  // ── Delete (same confirmation as before; past orders keep their own data) ──
+  const deleteProduct = (row) => {
+    const target = row.p;
+    if (!confirm(`Delete ${target.name}? This won't affect past orders.`)) return;
+    setCatalog((prev) => {
+      const i = plLocate(prev, target, target.name);
+      return i < 0 ? prev : prev.filter((_, j) => j !== i);
+    });
+    setExpanded(null);
+    const panel = document.getElementById('pl-panel');
+    if (panel) panel.focus({ preventScroll: true });
+    setAnnounce(`${target.name} deleted.`);
+    notify(`${target.name} deleted`);
+  };
+
+  // ── Editor ──
+  const openEditor = (row, el) => {
+    if (editor) return;
+    clearTimeout(closeTimer.current);
+    openerRef.current = el || document.activeElement;
+    savingRef.current = false;
+    setSubmitted(false);
+    setTouched({});
+    setEditorClosing(false);
+    if (!row) {
+      const draft = { name: '', group: PL_GROUPS.includes(cat) ? cat : 'Pork', unit: 'kg', cost: '', price: '', wholesalePrice: '' };
+      setEditor({ isNew: true, ref: null, origName: undefined, snapshot: null, base: { ...draft }, draft });
+      return;
+    }
+    const p = row.p;
+    const draft = {
+      name: p.name || '', group: p.group || 'Pork', unit: p.unit || 'kg',
+      cost: plStr(p.cost), price: plStr(p.price),
+      wholesalePrice: Number(p.wholesalePrice) > 0 ? String(p.wholesalePrice) : '',
+    };
+    setEditor({ isNew: false, ref: p, origName: p.name, snapshot: JSON.stringify(p), base: { ...draft }, draft });
+  };
+  const dirty = !!editor && JSON.stringify(editor.draft) !== JSON.stringify(editor.base);
+  dirtyRef.current = dirty;
+  const confirmDiscard = () => {
+    if (!dirtyRef.current) return true;
+    if (!window.confirm('You have unsaved changes to this product. Discard them?')) return false;
+    dirtyRef.current = false;
+    return true;
+  };
+  useEffect(() => {
+    if (!registerNavGuard) return undefined;
+    registerNavGuard(confirmDiscard);
+    return () => registerNavGuard(null);
+  }, [registerNavGuard]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const onBeforeUnload = (e) => { if (dirtyRef.current) { e.preventDefault(); e.returnValue = ''; } };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, []);
+  const focusKeyAfterClose = useRef(null);
+  const finishClose = () => {
+    setEditor(null);
+    setEditorClosing(false);
+    let el = openerRef.current;
+    openerRef.current = null;
+    const k = focusKeyAfterClose.current;
+    focusKeyAfterClose.current = null;
+    if ((!el || !document.contains(el)) && k) {
+      el = Array.from(document.querySelectorAll('[data-edit]')).find((b) => b.getAttribute('data-edit') === k) || null;
+    }
+    if (el && document.contains(el)) { try { el.focus({ preventScroll: true }); } catch (e) { /* ignore */ } }
+  };
+  const closeEditor = (force) => {
+    if (!editor || editorClosing) return;
+    if (!force && !confirmDiscard()) return;
+    dirtyRef.current = false;
+    if (prefersReducedMotion()) { finishClose(); return; }
+    setEditorClosing(true);
+    closeTimer.current = setTimeout(finishClose, 210);
+  };
+  const setDraft = (patch) => setEditor((ed) => (ed ? { ...ed, draft: { ...ed.draft, ...patch } } : ed));
+
+  // Where is the edited product now? (Another device may have changed or removed it.)
+  const editIdx = editor && !editor.isNew ? plLocate(catalog, editor.ref, editor.origName) : -1;
+  const editCurrent = editIdx >= 0 ? catalog[editIdx] : null;
+  const editState = !editor || editor.isNew ? 'ok' : !editCurrent ? 'missing' : (JSON.stringify(editCurrent) !== editor.snapshot ? 'changed' : 'ok');
+
+  const validate = (d) => {
+    const e = {};
+    const nm = d.name.trim();
+    if (!nm) e.name = 'Product name is required.';
+    else if (catalog.some((p, i) => i !== editIdx && (p.name || '').trim().toLowerCase() === nm.toLowerCase())) e.name = 'Another product already uses this name.';
+    const num = (s, label, required) => {
+      const t = String(s).trim();
+      if (t === '') return required ? `Enter the ${label}.` : null;
+      const n = Number(t);
+      if (!Number.isFinite(n)) return `Enter the ${label} as a number, e.g. 259 or 259.50.`;
+      if (n < 0) return `The ${label} can't be negative.`;
+      return null;
+    };
+    const c = num(d.cost, 'supplier cost', true); if (c) e.cost = c;
+    const pr = num(d.price, 'selling price', true); if (pr) e.price = pr;
+    const w = num(d.wholesalePrice, 'wholesale price', false); if (w) e.wholesalePrice = w;
+    return e;
+  };
+  const errors = editor ? validate(editor.draft) : {};
+
+  const save = () => {
+    if (!editor || savingRef.current || editorClosing) return;
+    setSubmitted(true);
+    if (Object.keys(errors).length) {
+      const first = ['name', 'cost', 'price', 'wholesalePrice'].find((k) => errors[k]);
+      const el = document.getElementById(`pl-f-${first}`);
+      if (el) el.focus();
+      return;
+    }
+    if (!editor.isNew && editState === 'missing') return;
+    if (!editor.isNew && !dirty) { closeEditor(true); return; }
+    const d = editor.draft;
+    const name = d.name.trim();
+    const cost = Number(String(d.cost).trim());
+    const price = Number(String(d.price).trim());
+    const wTxt = String(d.wholesalePrice).trim();
+    savingRef.current = true;
+    if (editor.isNew) {
+      const rec = { name, unit: d.unit, cost, price, group: d.group };
+      if (wTxt !== '') rec.wholesalePrice = Number(wTxt);
+      setCatalog((prev) => [...prev, rec]);
+      const occ = catalog.filter((p) => p.name === name).length + 1;
+      flash(name + '#' + occ);
+      setAnnounce(`${name} added.`);
+      notify(`${name} added`);
     } else {
-      const before = catalog[editing.idx];
-      const oldCost = Number(before?.cost) || 0;
-      const newCost = Number(editing.data.cost) || 0;
-      // Auto-capture a supplier price change when the cost actually moved.
-      if (before && oldCost !== newCost) {
-        const sellPrice = Number(editing.data.price) || 0;
+      const current = editCurrent;
+      const updated = { ...current, name, group: d.group, unit: d.unit, cost, price };
+      if (d.wholesalePrice === editor.base.wholesalePrice) {
+        // Untouched: keep whatever was stored (including a stored 0).
+        if (current.wholesalePrice === undefined) delete updated.wholesalePrice; else updated.wholesalePrice = current.wholesalePrice;
+      } else if (wTxt === '') delete updated.wholesalePrice;      // blank → automatic wholesale (as before)
+      else updated.wholesalePrice = Number(wTxt);
+      // Supplier cost history: only when an existing product's cost really changed.
+      const oldCost = Number(current.cost) || 0;
+      const newCost = Number(cost) || 0;
+      if (oldCost !== newCost) {
         const entry = {
           id: 'PH-' + Date.now(),
           date: today(),
-          product: editing.data.name,
+          product: name,
           oldCost,
           newCost,
           delta: Math.round((newCost - oldCost) * 100) / 100,
-          sellPrice,                       // selling price at the time of the change
-          // Margin impact in ₱ per unit, since selling price is unchanged:
-          marginImpact: Math.round((oldCost - newCost) * 100) / 100, // negative = you lose this much per kg
+          sellPrice: Number(price) || 0,                 // selling price at the time of the change
+          marginImpact: Math.round((oldCost - newCost) * 100) / 100,
         };
-        setPriceHistory([entry, ...(priceHistory || [])]);
+        setPriceHistory((prev) => [entry, ...(prev || [])]);
       }
-      updateProduct(editing.idx, editing.data);
+      setCatalog((prev) => {
+        const i = plLocate(prev, current, current.name);
+        if (i < 0) return prev;
+        const next = [...prev];
+        next[i] = updated;
+        return next;
+      });
+      const occ = catalog.slice(0, editIdx + 1).filter((p, i) => (i === editIdx ? true : p.name === name)).length;
+      const newKey = name + '#' + occ;
+      const oldKey = rows[editIdx] ? rows[editIdx].key : null;
+      setExpanded((e) => (e === oldKey ? newKey : e));
+      focusKeyAfterClose.current = newKey;
+      flash(newKey);
+      setAnnounce(`${name} saved.`);
+      notify(`${name} saved`);
     }
-    setEditing(null);
-  };
-  const removeProduct = (idx) => {
-    if (!confirm(`Delete ${catalog[idx].name}? This won't affect past orders.`)) return;
-    setCatalog(catalog.filter((_, i) => i !== idx));
+    closeEditor(true);
   };
 
-  // Move a product up or down within its group. Swaps its position in the
-  // catalog array with the nearest product that shares the same group, so
-  // the display order (which follows array order) updates accordingly.
-  const moveProduct = (idx, direction) => {
-    const group = catalog[idx].group;
-    // Find indices of all products in the same group, in array order.
-    const groupIdxs = catalog.map((p, i) => ({ i, group: p.group })).filter(x => x.group === group).map(x => x.i);
-    const posInGroup = groupIdxs.indexOf(idx);
-    const targetPos = direction === 'up' ? posInGroup - 1 : posInGroup + 1;
-    if (targetPos < 0 || targetPos >= groupIdxs.length) return; // already at edge
-    const swapWith = groupIdxs[targetPos];
-    const next = [...catalog];
-    [next[idx], next[swapWith]] = [next[swapWith], next[idx]];
-    setCatalog(next);
+  // ── Small render helpers ──
+  const priceCell = (p, big) => {
+    const s = plStats(p);
+    return (
+      <span className="whitespace-nowrap">
+        <span className={`font-semibold tabular-nums ${big ? 'text-base' : ''}`} style={{ color: THEME.ink }}>{peso(s.price)}</span>
+        <span className="text-xs ml-1" style={{ color: THEME.inkSoft }}>/ {plUnit(p.unit)}</span>
+      </span>
+    );
   };
+  const profitText = (n) => (n < 0
+    ? <span style={{ color: THEME.red }}>{plMoney(n)} <span className="text-[11px] font-medium uppercase" style={{ letterSpacing: '0.04em' }}>loss</span></span>
+    : <span style={{ color: THEME.green }}>{plMoney(n)}</span>);
+  const wholesaleText = (p) => {
+    const w = rqPricing(p);
+    return <>{peso(w.wholesale)} <span className="text-xs" style={{ color: THEME.inkSoft }}>/ {plUnit(p.unit)} · {w.custom ? 'custom' : 'automatic'}</span></>;
+  };
+  const lastChangeText = (p) => {
+    const h = lastChange[p.name];
+    if (!h) return <span style={{ color: THEME.inkSoft }}>No changes recorded</span>;
+    return <>{fmtDate(h.date)} · {peso(h.oldCost)} → {peso(h.newCost)}</>;
+  };
+  const detailGrid = (p, withMoney) => {
+    const s = plStats(p);
+    const items = [
+      withMoney && ['Supplier cost', <span className="tabular-nums">{peso(s.cost)} <span className="text-xs" style={{ color: THEME.inkSoft }}>/ {plUnit(p.unit)}</span></span>],
+      withMoney && ['Profit per unit', <span className="tabular-nums font-medium">{profitText(s.profit)}</span>],
+      withMoney && ['Margin', <span className="tabular-nums" style={{ color: s.margin !== null && s.margin < 0 ? THEME.red : THEME.ink }}>{plPct(s.margin)}</span>],
+      ['Wholesale price', <span className="tabular-nums">{wholesaleText(p)}</span>],
+      ['Category', p.group || '—'],
+      ['Unit', p.unit || 'kg'],
+      ['Last cost change', lastChangeText(p)],
+    ].filter(Boolean);
+    return (
+      <dl className="grid gap-x-6 gap-y-3" style={{ gridTemplateColumns: withMoney ? 'repeat(auto-fill, minmax(140px, 1fr))' : 'repeat(auto-fill, minmax(170px, 1fr))' }}>
+        {items.map(([k, v]) => (
+          <div key={k} className="min-w-0">
+            <dt className="text-[11px] uppercase font-medium" style={{ color: THEME.inkSoft, letterSpacing: '0.08em' }}>{k}</dt>
+            <dd className="text-sm mt-0.5 break-words" style={{ color: THEME.ink }}>{v}</dd>
+          </div>
+        ))}
+      </dl>
+    );
+  };
+  const actions = (row, full) => (
+    <div className={`flex items-center gap-2 ${full ? 'w-full' : ''}`}>
+      <button type="button" data-edit={row.key} onClick={(e) => openEditor(row, e.currentTarget)}
+        className={`pl-btn ${full ? 'flex-1' : ''} inline-flex items-center justify-center gap-1.5 px-4 rounded-xl text-sm font-semibold`}
+        style={{ minHeight: 44, background: THEME.brand, color: 'white' }}>
+        <Edit3 size={15} /> Edit product
+      </button>
+      <PLMoreMenu name={row.p.name} onReorder={startReorder} onDelete={() => deleteProduct(row)} />
+    </div>
+  );
+  const sectionHead = (g, n) => (
+    <div className="flex items-baseline gap-2">
+      <span className="font-display text-lg" style={{ color: THEME.ink }}>{g}</span>
+      <span className="text-xs" style={{ color: THEME.inkSoft }}>{n} product{n !== 1 ? 's' : ''}{q ? ' match' : ''}</span>
+    </div>
+  );
 
-  const groups = ['Pork', 'Chicken', 'Beef'];
+  // ── Views ──
+  const tableView = (
+    <div className="rounded-2xl overflow-hidden" style={{ background: THEME.card, border: `1px solid ${THEME.line}` }}>
+      <table className="w-full text-sm" style={{ tableLayout: 'fixed' }}>
+        <colgroup>
+          <col />
+          <col style={{ width: 150 }} />
+          <col style={{ width: 130 }} />
+          <col style={{ width: 140 }} />
+          <col style={{ width: 96 }} />
+          <col style={{ width: 60 }} />
+        </colgroup>
+        <thead>
+          <tr style={{ color: THEME.inkSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+            <th scope="col" className="text-left font-medium px-5 py-3">Product</th>
+            <th scope="col" className="text-right font-medium px-3 py-3">Selling price</th>
+            <th scope="col" className="text-right font-medium px-3 py-3">Supplier cost</th>
+            <th scope="col" className="text-right font-medium px-3 py-3">Profit / unit</th>
+            <th scope="col" className="text-right font-medium px-3 py-3">Margin</th>
+            <th scope="col" className="px-3 py-3"><span className="sr-only">Details</span></th>
+          </tr>
+        </thead>
+        {sections.map((sec) => (
+          <tbody key={sec.group}>
+            {cat === 'All' && (
+              <tr>
+                <th scope="colgroup" colSpan={6} className="text-left font-normal px-5 pt-5 pb-2" style={{ borderTop: `1px solid ${THEME.line}`, background: THEME.bg }}>
+                  {sectionHead(sec.group, sec.rows.length)}
+                </th>
+              </tr>
+            )}
+            {sec.rows.map((row) => {
+              const p = row.p;
+              const s = plStats(p);
+              const open = expanded === row.key;
+              const id = `pl-d-${row.i}`;
+              return (
+                <React.Fragment key={row.key}>
+                  <tr data-plkey={row.key} onClick={() => setExpanded(open ? null : row.key)}
+                    className={`pl-row cursor-pointer ${open ? '' : 'row-hover'} ${flashKey === row.key ? 'pl-flash' : ''}`}
+                    style={{ borderTop: `1px solid ${THEME.line}`, background: open ? THEME.brandBg : 'transparent' }}>
+                    <th scope="row" className="text-left font-semibold px-5 py-3.5 break-words" style={{ color: THEME.ink }}>{p.name}</th>
+                    <td className="text-right px-3 py-3.5">{priceCell(p, true)}</td>
+                    <td className="text-right px-3 py-3.5 tabular-nums whitespace-nowrap" style={{ color: THEME.ink }}>{peso(s.cost)}</td>
+                    <td className="text-right px-3 py-3.5 tabular-nums whitespace-nowrap font-medium">{profitText(s.profit)}</td>
+                    <td className="text-right px-3 py-3.5 tabular-nums whitespace-nowrap" style={{ color: s.margin !== null && s.margin < 0 ? THEME.red : THEME.inkSoft }}>{plPct(s.margin)}</td>
+                    <td className="px-2 py-2 text-right">
+                      <button type="button" aria-expanded={open} aria-controls={id} aria-label={`${open ? 'Hide' : 'Show'} details for ${p.name}`}
+                        onClick={(e) => { e.stopPropagation(); setExpanded(open ? null : row.key); }}
+                        className="pl-btn w-11 h-11 inline-flex items-center justify-center rounded-lg" style={{ color: THEME.inkSoft }}>
+                        <ChevronDown size={18} style={{ transition: 'transform 0.2s ease', transform: open ? 'rotate(180deg)' : 'none' }} />
+                      </button>
+                    </td>
+                  </tr>
+                  <tr aria-hidden={!open}>
+                    <td colSpan={6} className="p-0" style={{ background: open ? THEME.brandBg : 'transparent' }}>
+                      <div id={id} role="region" aria-label={`${p.name} details`} className={`mn-collapse ${open ? 'open' : ''}`}>
+                        <div>
+                          <div className="px-5 pb-4 pt-1 flex items-end justify-between gap-6 flex-wrap">
+                            <div className="flex-1 min-w-[280px]">{detailGrid(p, false)}</div>
+                            {actions(row)}
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                </React.Fragment>
+              );
+            })}
+          </tbody>
+        ))}
+      </table>
+    </div>
+  );
+
+  const accordionView = (
+    <div className="space-y-5">
+      {sections.map((sec) => (
+        <section key={sec.group} aria-label={sec.group}>
+          {cat === 'All' && <div className="mb-2 px-1">{sectionHead(sec.group, sec.rows.length)}</div>}
+          <ul className="rounded-2xl overflow-hidden" style={{ background: THEME.card, border: `1px solid ${THEME.line}` }}>
+            {sec.rows.map((row, k) => {
+              const p = row.p;
+              const s = plStats(p);
+              const open = expanded === row.key;
+              const id = `pl-d-${row.i}`;
+              const bid = `pl-b-${row.i}`;
+              return (
+                <li key={row.key} data-plkey={row.key} className={`pl-row ${flashKey === row.key ? 'pl-flash' : ''}`}
+                  style={{ borderTop: k ? `1px solid ${THEME.line}` : 'none', background: open ? THEME.brandBg : 'transparent' }}>
+                  <h3 className="m-0">
+                    <button type="button" id={bid} aria-expanded={open} aria-controls={id}
+                      onClick={() => setExpanded(open ? null : row.key)}
+                      className={`w-full text-left px-4 py-3.5 flex items-start gap-3 ${open ? '' : 'row-hover'}`} style={{ minHeight: 56 }}>
+                      <span className="flex-1 min-w-0">
+                        <span className="block font-semibold break-words" style={{ color: THEME.ink, fontSize: 15 }}>{p.name}</span>
+                        {!open && (
+                          <span className="block text-[13px] mt-1 tabular-nums" style={{ color: THEME.inkSoft }}>
+                            Cost {peso(s.cost)} · {s.profit < 0 ? <span style={{ color: THEME.red }}>Loss {peso(Math.abs(s.profit))}</span> : <>Profit <span style={{ color: THEME.green }}>{peso(s.profit)}</span></>} · {plPct(s.margin)}
+                          </span>
+                        )}
+                      </span>
+                      <span className="flex items-center gap-2 flex-shrink-0 pt-0.5">
+                        {priceCell(p, true)}
+                        <ChevronDown size={18} style={{ color: THEME.inkSoft, transition: 'transform 0.2s ease', transform: open ? 'rotate(180deg)' : 'none' }} />
+                      </span>
+                    </button>
+                  </h3>
+                  <div id={id} role="region" aria-labelledby={bid} className={`mn-collapse ${open ? 'open' : ''}`}>
+                    <div>
+                      <div className="px-4 pb-4 pt-0.5 space-y-4">
+                        {detailGrid(p, true)}
+                        {actions(row, phone)}
+                      </div>
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ))}
+    </div>
+  );
+
+  const reorderView = (
+    <div className="space-y-5">
+      {sections.map((sec) => (
+        <section key={sec.group} aria-label={`${sec.group}, reorder`}>
+          <div className="mb-2 px-1">{sectionHead(sec.group, sec.rows.length)}</div>
+          <ol className="rounded-2xl overflow-hidden relative" style={{ background: THEME.card, border: `1px solid ${THEME.line}` }}>
+            {sec.rows.map((row, k) => {
+              const p = row.p;
+              const n = sec.rows.length;
+              return (
+                <li key={row.key} data-plkey={row.key} className="flex items-center gap-3 px-3 sm:px-4 py-2 relative"
+                  style={{ borderTop: k ? `1px solid ${THEME.line}` : 'none', background: THEME.card }}>
+                  <span className="w-7 text-center text-sm tabular-nums flex-shrink-0" style={{ color: THEME.inkSoft }} aria-hidden="true">{k + 1}</span>
+                  <span className="flex-1 min-w-0">
+                    <span className="block font-medium break-words" style={{ color: THEME.ink }}>{p.name}</span>
+                    <span className="block text-xs mt-0.5" style={{ color: THEME.inkSoft }}>{peso(plNum(p.price))} / {plUnit(p.unit)}</span>
+                  </span>
+                  <span className="flex gap-1.5 flex-shrink-0">
+                    <button type="button" data-dir="up" disabled={k === 0} onClick={() => move(row, 'up')}
+                      aria-label={`Move ${p.name} up`} className="pl-btn w-11 h-11 inline-flex items-center justify-center rounded-xl disabled:opacity-30"
+                      style={{ border: `1px solid ${THEME.line}`, color: THEME.ink, background: THEME.card }}>
+                      <ArrowUp size={17} />
+                    </button>
+                    <button type="button" data-dir="down" disabled={k === n - 1} onClick={() => move(row, 'down')}
+                      aria-label={`Move ${p.name} down`} className="pl-btn w-11 h-11 inline-flex items-center justify-center rounded-xl disabled:opacity-30"
+                      style={{ border: `1px solid ${THEME.line}`, color: THEME.ink, background: THEME.card }}>
+                      <ArrowDown size={17} />
+                    </button>
+                  </span>
+                </li>
+              );
+            })}
+          </ol>
+        </section>
+      ))}
+    </div>
+  );
+
+  const total = catalog.length;
+  const emptySearch = !reorder && total > 0 && visible.length === 0;
 
   return (
-    <div>
-      <Header title="Price List" subtitle="Supplier cost and selling prices — updates flow to new orders"
-        right={<Btn variant="primary" onClick={addProduct}><Plus size={15} className="inline -mt-0.5 mr-1" />Add Product</Btn>} />
-
-      <div className="space-y-5">
-        {groups.map((group) => {
-          const items = catalog.map((p, i) => ({ ...p, idx: i })).filter(c => c.group === group);
-          const emoji = group === 'Pork' ? '🐷' : group === 'Chicken' ? '🐔' : '🐄';
-          return (
-            <Card key={group} className="p-5">
-              <div className="flex items-center gap-2 mb-3">
-                <span className="text-xl">{emoji}</span>
-                <span className="font-display text-lg">{group}</span>
-                <span className="text-xs ml-2" style={{ color: THEME.inkSoft }}>{items.length} product{items.length !== 1 ? 's' : ''}</span>
-              </div>
-              <table className="w-full text-sm">
-                <thead>
-                  <tr style={{ color: THEME.inkSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                    <th className="text-left pb-2 font-medium">Product</th>
-                    <th className="text-right pb-2 font-medium">Unit</th>
-                    <th className="text-right pb-2 font-medium">Cost</th>
-                    <th className="text-right pb-2 font-medium">Price</th>
-                    <th className="text-right pb-2 font-medium">Profit/Unit</th>
-                    <th className="text-right pb-2 font-medium">Margin</th>
-                    <th className="pb-2 font-medium"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((p, posInGroup) => {
-                    const margin = p.price > 0 ? ((p.price - p.cost) / p.price) * 100 : 0;
-                    return (
-                      <tr key={p.idx} style={{ borderTop: `1px solid ${THEME.line}` }}>
-                        <td className="py-2.5">{p.name}</td>
-                        <td className="py-2.5 text-right" style={{ color: THEME.inkSoft }}>{p.unit}</td>
-                        <td className="py-2.5 text-right">{peso(p.cost)}</td>
-                        <td className="py-2.5 text-right font-medium">{peso(p.price)}</td>
-                        <td className="py-2.5 text-right" style={{ color: THEME.green }}>{peso(p.price - p.cost)}</td>
-                        <td className="py-2.5 text-right" style={{ color: THEME.inkSoft }}>{margin.toFixed(1)}%</td>
-                        <td className="py-2.5 text-right whitespace-nowrap">
-                          <button onClick={() => moveProduct(p.idx, 'up')} disabled={posInGroup === 0}
-                            className="p-1" style={{ color: posInGroup === 0 ? THEME.line : THEME.inkSoft, cursor: posInGroup === 0 ? 'default' : 'pointer' }} title="Move up"><ChevronUp size={14} /></button>
-                          <button onClick={() => moveProduct(p.idx, 'down')} disabled={posInGroup === items.length - 1}
-                            className="p-1 mr-1" style={{ color: posInGroup === items.length - 1 ? THEME.line : THEME.inkSoft, cursor: posInGroup === items.length - 1 ? 'default' : 'pointer' }} title="Move down"><ChevronDown size={14} /></button>
-                          <button onClick={() => setEditing({ idx: p.idx, isNew: false, data: { ...catalog[p.idx] } })} className="p-1 mr-1" style={{ color: THEME.inkSoft }}><Edit3 size={13} /></button>
-                          <button onClick={() => removeProduct(p.idx)} className="p-1" style={{ color: THEME.red }}><Trash2 size={13} /></button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </Card>
-          );
-        })}
+    <div ref={rootRef} className="pl-root">
+      {/* ===== Header ===== */}
+      <div className="flex items-start justify-between gap-3 mb-5">
+        <div className="min-w-0">
+          <h1 className="font-display text-3xl sm:text-4xl leading-tight" style={{ color: THEME.brand }}>Price List</h1>
+          <div className="text-sm mt-1" style={{ color: THEME.inkSoft }}>Supplier cost and selling price for each product.</div>
+        </div>
+        <button type="button" onClick={(e) => openEditor(null, e.currentTarget)} disabled={reorder}
+          className="pl-btn inline-flex items-center gap-1.5 px-4 rounded-xl text-sm font-semibold flex-shrink-0 disabled:opacity-40"
+          style={{ minHeight: 44, background: THEME.brand, color: 'white', boxShadow: '0 2px 8px rgba(122,46,51,0.18)' }}>
+          <Plus size={17} /> Product
+        </button>
       </div>
 
-      <Modal open={!!editing} onClose={() => setEditing(null)} maxWidth="max-w-md">
-        {editing && (
-          <div className="px-6 py-5">
-            <div className="font-display text-xl mb-5">{editing.isNew ? 'Add Product' : 'Edit Product'}</div>
-            <div className="space-y-4">
-              <div><Label>Product Name</Label><Input value={editing.data.name} onChange={(e) => setEditing({ ...editing, data: { ...editing.data, name: e.target.value } })} /></div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div><Label>Category</Label><Select value={editing.data.group} onChange={(e) => setEditing({ ...editing, data: { ...editing.data, group: e.target.value } })} options={['Pork', 'Chicken', 'Beef']} /></div>
-                <div><Label>Unit</Label><Select value={editing.data.unit} onChange={(e) => setEditing({ ...editing, data: { ...editing.data, unit: e.target.value } })} options={['kg', 'pack', 'pcs']} /></div>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div><Label>Supplier Cost (₱)</Label><Input type="number" step="0.01" value={editing.data.cost} onChange={(e) => setEditing({ ...editing, data: { ...editing.data, cost: Number(e.target.value) } })} /></div>
-                <div><Label>Selling Price (₱)</Label><Input type="number" step="0.01" value={editing.data.price} onChange={(e) => setEditing({ ...editing, data: { ...editing.data, price: Number(e.target.value) } })} /></div>
-              </div>
-              <div>
-                <Label>Custom Wholesale Price (₱) — optional</Label>
-                <Input type="number" step="0.01" value={editing.data.wholesalePrice || ''}
-                  onChange={(e) => setEditing({ ...editing, data: { ...editing.data, wholesalePrice: e.target.value === '' ? undefined : Number(e.target.value) } })}
-                  placeholder="Leave blank to use auto-calculated wholesale price" />
-                <div className="text-xs mt-1" style={{ color: THEME.inkSoft }}>
-                  Set this only if you want a specific wholesale price that overrides the formula. Otherwise leave blank.
-                </div>
-              </div>
-              <div className="text-sm pt-2" style={{ color: THEME.inkSoft, borderTop: `1px solid ${THEME.line}` }}>
-                Profit per unit: <span style={{ color: THEME.green }} className="font-medium">{peso((editing.data.price || 0) - (editing.data.cost || 0))}</span>
-                {editing.data.price > 0 && (<> · Margin: <span className="font-medium">{(((editing.data.price - editing.data.cost) / editing.data.price) * 100).toFixed(1)}%</span></>)}
-              </div>
+      {/* ===== Search + reorder ===== */}
+      <div className="flex gap-2 mb-3">
+        <div className="relative flex-1 min-w-0">
+          <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: THEME.inkSoft }} />
+          <input value={reorder ? '' : query} onChange={(e) => setQuery(e.target.value)} disabled={reorder}
+            placeholder={reorder ? 'Search is off while reordering' : 'Search products'} aria-label="Search products"
+            className="pl-input w-full pl-10 pr-11 rounded-xl outline-none disabled:opacity-60"
+            style={{ minHeight: 44, background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink }} />
+          {query && !reorder && (
+            <button type="button" onClick={() => setQuery('')} aria-label="Clear search"
+              className="absolute right-1 top-1/2 -translate-y-1/2 w-10 h-10 inline-flex items-center justify-center rounded-lg row-hover">
+              <X size={15} style={{ color: THEME.inkSoft }} />
+            </button>
+          )}
+        </div>
+        {reorder ? (
+          <button type="button" onClick={stopReorder}
+            className="pl-btn inline-flex items-center gap-1.5 px-4 rounded-xl text-sm font-semibold flex-shrink-0"
+            style={{ minHeight: 44, background: THEME.brand, color: 'white' }}>
+            <Check size={16} /> Done
+          </button>
+        ) : (
+          <button type="button" onClick={startReorder} disabled={total < 2}
+            className="pl-btn inline-flex items-center gap-1.5 px-3.5 rounded-xl text-sm font-medium flex-shrink-0 disabled:opacity-40"
+            style={{ minHeight: 44, background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink }}>
+            <ArrowUpDown size={16} /> Reorder
+          </button>
+        )}
+      </div>
+
+      {reorder && (
+        <div className="mb-3 px-4 py-3 rounded-xl text-sm flex items-start gap-2 mn-pop-in" style={{ background: THEME.brandBg, color: THEME.ink }} role="note">
+          <ArrowUpDown size={16} className="mt-0.5 flex-shrink-0" style={{ color: THEME.brand }} />
+          <span>Use the arrows to move products within their category — this is the order they appear in everywhere. Search is off while reordering so every product stays in view.</span>
+        </div>
+      )}
+
+      {/* ===== Category tabs ===== */}
+      <div className="relative mb-4 overflow-x-auto mn-noscroll" style={{ borderBottom: `1px solid ${THEME.line}` }}>
+        <div ref={tabListRef} role="tablist" aria-label="Product categories" className="relative flex min-w-max" onKeyDown={onTabKey}>
+          {tabs.map((t) => {
+            const on = cat === t;
+            return (
+              <button key={t} type="button" role="tab" aria-selected={on} aria-controls="pl-panel" tabIndex={on ? 0 : -1}
+                ref={(el) => { tabRefs.current[t] = el; }} onClick={() => setCat(t)}
+                className="pl-tab px-3 sm:px-4 inline-flex items-center gap-1.5 text-sm"
+                style={{ minHeight: 44, color: on ? THEME.brand : THEME.inkSoft, fontWeight: on ? 600 : 500 }}>
+                {t}
+                <span className="text-xs tabular-nums px-1.5 py-0.5 rounded-full" style={{ background: on ? THEME.brandBg : 'transparent', color: on ? THEME.brand : THEME.inkSoft }}>
+                  {t === 'All' ? counts.All : (counts[t] || 0)}
+                </span>
+              </button>
+            );
+          })}
+          {ind && <span className="pl-underline" aria-hidden="true" style={{ left: ind.left, width: ind.width, background: THEME.brand }} />}
+        </div>
+      </div>
+
+      {/* ===== List ===== */}
+      <div id="pl-panel" role="tabpanel" tabIndex={-1} className="outline-none" aria-label={`${cat === 'All' ? 'All products' : cat}`} ref={listRef}>
+        {total === 0 ? (
+          <Card className="px-6 py-12 text-center">
+            <div className="font-display text-xl mb-1" style={{ color: THEME.ink }}>No products yet</div>
+            <div className="text-sm mb-5" style={{ color: THEME.inkSoft }}>Add your first product to start pricing orders.</div>
+            <Btn variant="primary" onClick={(e) => openEditor(null, e && e.currentTarget)}><Plus size={15} className="inline -mt-0.5 mr-1" />Add product</Btn>
+          </Card>
+        ) : emptySearch ? (
+          <Card className="px-6 py-12 text-center">
+            <div className="font-display text-xl mb-1" style={{ color: THEME.ink }}>{q ? `No products match “${query.trim()}”` : `No ${cat} products yet`}</div>
+            <div className="text-sm mb-5" style={{ color: THEME.inkSoft }}>
+              {q && cat !== 'All' && counts.All > 0 ? `${counts.All} match${counts.All !== 1 ? '' : 'es'} in other categories.` : 'Try a different name or category.'}
             </div>
-            <div className="flex justify-end gap-2 mt-6">
-              <Btn variant="secondary" onClick={() => setEditing(null)}>Cancel</Btn>
-              <Btn variant="primary" onClick={saveEdit}><Save size={14} className="inline -mt-0.5 mr-1" />Save</Btn>
+            <div className="flex flex-wrap justify-center gap-2">
+              {q && <Btn variant="secondary" onClick={() => setQuery('')}>Clear search</Btn>}
+              {cat !== 'All' && <Btn variant="secondary" onClick={() => setCat('All')}>Show all categories</Btn>}
             </div>
+          </Card>
+        ) : reorder ? reorderView : (wide ? tableView : accordionView)}
+        {!reorder && total > 0 && !emptySearch && (
+          <div className="text-xs mt-3 px-1" style={{ color: THEME.inkSoft }}>
+            {q || cat !== 'All' ? `Showing ${visible.length} of ${total} products` : `${total} products`}
           </div>
         )}
-      </Modal>
+      </div>
+
+      {/* Screen-reader announcements */}
+      <div className="sr-only" role="status" aria-live="polite">{announce}</div>
+
+      {/* Save feedback (real persistence state) */}
+      {fb && (
+        <div className="fixed inset-x-0 z-40 flex justify-center px-4 pointer-events-none no-print" style={{ bottom: 'max(env(safe-area-inset-bottom), 20px)' }}>
+          <div key={fb.t + fb.phase} className="pl-toast px-4 py-2.5 rounded-xl text-sm shadow-lg inline-flex items-center gap-2 max-w-full"
+            style={fb.phase === 'done' && syncStatus !== 'cloud'
+              ? { background: THEME.warnBg, color: THEME.warnInk, border: `1px solid ${THEME.amber}` }
+              : { background: THEME.ink, color: THEME.bg }}>
+            {fb.phase === 'done'
+              ? (syncStatus === 'cloud' ? <Check size={15} /> : <HardDrive size={15} />)
+              : <Loader2 size={15} className="animate-spin" />}
+            <span className="min-w-0">
+              <span className="font-semibold">{fb.label}</span>
+              <span className="opacity-85"> · {fb.phase === 'done'
+                ? (syncStatus === 'cloud' ? 'synced to cloud' : syncStatus === 'local-only' ? 'saved on this device only, not synced yet' : 'saved on this device, cloud not confirmed')
+                : 'saved on this device, syncing…'}</span>
+            </span>
+          </div>
+        </div>
+      )}
+
+      {editor && (
+        <ProductEditorSheet
+          editor={editor} closing={editorClosing} phone={phone}
+          errors={errors} showError={(k) => submitted || (touched[k] && String(editor.draft[k]).trim() !== '')} onBlurField={(k) => setTouched((t) => ({ ...t, [k]: true }))}
+          setDraft={setDraft} onSave={save} onCancel={() => closeEditor(true)} onRequestClose={() => closeEditor(false)}
+          editState={editState} dirty={dirty} />
+      )}
+    </div>
+  );
+}
+
+// Product editor: right-side sheet on larger screens, full screen on phones.
+// Modal — traps focus, locks page scroll, Escape / backdrop ask before
+// discarding. On phones it follows the visual viewport so the footer stays
+// above the on-screen keyboard.
+function ProductEditorSheet({ editor, closing, phone, errors, showError, onBlurField, setDraft, onSave, onCancel, onRequestClose, editState, dirty }) {
+  const ref = useRef(null);
+  const [vv, setVv] = useState(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (el) {
+      const target = (!phone && editor.isNew && el.querySelector('#pl-f-name')) || el.querySelector('[data-autofocus]') || el;
+      try { target.focus({ preventScroll: true }); } catch (e) { /* ignore */ }
+    }
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!phone || !window.visualViewport) { setVv(null); return undefined; }
+    const v = window.visualViewport;
+    const upd = () => setVv({ h: v.height, top: v.offsetTop });
+    upd();
+    v.addEventListener('resize', upd);
+    v.addEventListener('scroll', upd);
+    return () => { v.removeEventListener('resize', upd); v.removeEventListener('scroll', upd); };
+  }, [phone]);
+  // Escape works wherever focus is (e.g. after a click on the backdrop).
+  const closeRef = useRef(onRequestClose);
+  closeRef.current = onRequestClose;
+  useEffect(() => {
+    const onDocKey = (e) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      e.preventDefault();
+      closeRef.current();
+      // Still open (kept editing)? Put focus back inside the editor.
+      setTimeout(() => { const el = ref.current; if (el && document.contains(el) && !el.contains(document.activeElement)) el.focus({ preventScroll: true }); }, 0);
+    };
+    document.addEventListener('keydown', onDocKey);
+    return () => document.removeEventListener('keydown', onDocKey);
+  }, []);
+  const onBackdrop = () => {
+    onRequestClose();
+    setTimeout(() => { const el = ref.current; if (el && document.contains(el) && !el.contains(document.activeElement)) el.focus({ preventScroll: true }); }, 0);
+  };
+  const onKeyDown = (e) => {
+    if (e.key !== 'Tab' || !ref.current) return;
+    const nodes = Array.from(ref.current.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'))
+      .filter((n) => !n.disabled && n.offsetParent !== null);
+    if (!nodes.length) return;
+    const first = nodes[0], last = nodes[nodes.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  };
+
+  const d = editor.draft;
+  const err = (k) => (showError(k) ? errors[k] : null);
+  // Live preview from the draft — only when both numbers are valid.
+  const cTxt = String(d.cost).trim(), pTxt = String(d.price).trim();
+  const ready = cTxt !== '' && pTxt !== '' && !errors.cost && !errors.price;
+  const stats = ready ? plStats({ cost: Number(cTxt), price: Number(pTxt) }) : null;
+  const autoW = ready ? rqPricing({ cost: Number(cTxt), price: Number(pTxt) }).wholesale : null;
+  const wTxt = String(d.wholesalePrice).trim();
+  const wNum = wTxt === '' || errors.wholesalePrice ? null : Number(wTxt);
+  const unit = plUnit(d.unit);
+  const renamed = !editor.isNew && d.name.trim() !== '' && d.name.trim() !== editor.origName;
+  const title = editor.isNew ? 'Add product' : 'Edit product';
+
+  const field = (k, label, input, hint) => (
+    <div>
+      <label htmlFor={`pl-f-${k}`} className="block text-xs uppercase font-medium mb-1.5" style={{ color: THEME.inkSoft, letterSpacing: '0.08em' }}>{label}</label>
+      {input}
+      {err(k)
+        ? <div id={`pl-e-${k}`} className="text-sm mt-1.5 flex items-start gap-1.5" style={{ color: THEME.red }}><AlertCircle size={14} className="mt-0.5 flex-shrink-0" />{err(k)}</div>
+        : hint ? <div className="text-xs mt-1.5" style={{ color: THEME.inkSoft }}>{hint}</div> : null}
+    </div>
+  );
+  const inputProps = (k) => ({
+    id: `pl-f-${k}`,
+    value: d[k],
+    onChange: (e) => setDraft({ [k]: e.target.value }),
+    onBlur: () => onBlurField(k),
+    'aria-invalid': !!err(k),
+    'aria-describedby': err(k) ? `pl-e-${k}` : undefined,
+    className: 'pl-input w-full px-3.5 rounded-xl outline-none',
+    style: { minHeight: 46, background: THEME.card, border: `1px solid ${err(k) ? THEME.red : THEME.line}`, color: THEME.ink },
+  });
+  const money = (k) => (
+    <div className="relative">
+      <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm pointer-events-none" style={{ color: THEME.inkSoft }}>₱</span>
+      <input {...inputProps(k)} type="text" inputMode="decimal" autoComplete="off" placeholder={k === 'wholesalePrice' ? 'Automatic' : '0.00'}
+        className={`${inputProps(k).className} pl-8 tabular-nums`} />
+    </div>
+  );
+  const segmented = (k, options, label) => (
+    <div role="radiogroup" aria-label={label} className="grid gap-1 p-1 rounded-xl" style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0,1fr))`, background: THEME.bg, border: `1px solid ${THEME.line}` }}>
+      {options.map((o) => {
+        const on = d[k] === o;
+        return (
+          <button key={o} type="button" role="radio" aria-checked={on} onClick={() => setDraft({ [k]: o })}
+            className="pl-btn rounded-lg text-sm font-medium" style={{ minHeight: 40, background: on ? THEME.card : 'transparent', color: on ? THEME.brand : THEME.inkSoft, boxShadow: on ? '0 1px 4px rgba(42,38,36,0.12)' : 'none' }}>
+            {o}
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  const sheetStyle = phone
+    ? { left: 0, right: 0, top: vv ? vv.top : 0, height: vv ? vv.h : '100dvh' }
+    : undefined;
+  return (
+    <div className="fixed inset-0 z-[46] no-print">
+      <div className={`absolute inset-0 ${closing ? 'mn-backdrop-out' : 'mn-backdrop-in'}`} style={{ background: 'rgba(30,20,18,0.5)' }} onClick={onBackdrop} />
+      <div ref={ref} role="dialog" aria-modal="true" aria-labelledby="pl-editor-title" tabIndex={-1} onKeyDown={onKeyDown}
+        className={`absolute flex flex-col outline-none ${phone
+          ? (closing ? 'mn-sheet-out' : 'mn-sheet-in')
+          : `top-0 right-0 bottom-0 w-full max-w-[480px] ${closing ? 'mn-panel-out' : 'mn-panel-in'}`}`}
+        style={{ ...sheetStyle, background: THEME.card, boxShadow: '-12px 0 40px rgba(0,0,0,0.18)' }}>
+        {/* Header */}
+        <div className="flex-shrink-0 flex items-start gap-3 px-5 sm:px-6 pb-4" style={{ borderBottom: `1px solid ${THEME.line}`, paddingTop: phone ? 'max(env(safe-area-inset-top), 14px)' : 20 }}>
+          <div className="flex-1 min-w-0">
+            <h2 id="pl-editor-title" className="font-display text-2xl leading-tight" style={{ color: THEME.brand }}>{title}</h2>
+            {!editor.isNew && <div className="text-sm mt-0.5 break-words" style={{ color: THEME.inkSoft }}>{editor.origName}</div>}
+          </div>
+          <button type="button" data-autofocus onClick={onRequestClose} aria-label="Close product editor"
+            className="w-11 h-11 flex items-center justify-center rounded-lg row-hover flex-shrink-0" style={{ color: THEME.ink }}>
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-5 sm:px-6 py-5 space-y-5">
+          {editState === 'missing' && (
+            <div className="px-4 py-3 rounded-xl text-sm flex items-start gap-2" role="alert" style={{ background: THEME.errorBg, color: THEME.red }}>
+              <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+              <span>This product is no longer in the Price List — it may have been deleted or renamed on another device. Saving is turned off so nothing is overwritten. Close this editor to see the latest list.</span>
+            </div>
+          )}
+          {editState === 'changed' && (
+            <div className="px-4 py-3 rounded-xl text-sm flex items-start gap-2" role="note" style={{ background: THEME.warnBg, color: THEME.warnInk }}>
+              <Info size={16} className="mt-0.5 flex-shrink-0" />
+              <span>This product was updated on another device while you were editing. Saving will replace those values with yours.</span>
+            </div>
+          )}
+
+          {field('name', 'Product name',
+            <input {...inputProps('name')} type="text" autoComplete="off" placeholder="e.g. Pork Liempo" />,
+            renamed ? `Orders already placed keep the name “${editor.origName}”, so they'll keep using the cost saved on each order.` : null)}
+
+          <div>
+            <div className="block text-xs uppercase font-medium mb-1.5" style={{ color: THEME.inkSoft, letterSpacing: '0.08em' }} id="pl-l-group">Category</div>
+            {segmented('group', PL_GROUPS, 'Category')}
+          </div>
+          <div>
+            <div className="block text-xs uppercase font-medium mb-1.5" style={{ color: THEME.inkSoft, letterSpacing: '0.08em' }}>Unit</div>
+            {segmented('unit', PL_UNITS, 'Unit')}
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            {field('cost', `Supplier cost / ${unit}`, money('cost'))}
+            {field('price', `Selling price / ${unit}`, money('price'))}
+          </div>
+
+          {/* Live preview */}
+          <div className="rounded-2xl grid grid-cols-2 overflow-hidden" style={{ background: stats && stats.profit < 0 ? THEME.errorBg : THEME.bg, border: `1px solid ${THEME.line}` }} aria-live="polite">
+            <div className="px-4 py-3">
+              <div className="text-[11px] uppercase font-medium" style={{ color: THEME.inkSoft, letterSpacing: '0.08em' }}>{stats && stats.profit < 0 ? 'Loss per unit' : 'Profit per unit'}</div>
+              <div className="font-display text-2xl tabular-nums mt-0.5" style={{ color: !stats ? THEME.inkSoft : stats.profit < 0 ? THEME.red : THEME.green }}>
+                {stats ? `${plMoney(stats.profit)}` : '—'}<span className="text-sm font-sans ml-1" style={{ color: THEME.inkSoft }}>{stats ? `/ ${unit}` : ''}</span>
+              </div>
+            </div>
+            <div className="px-4 py-3" style={{ borderLeft: `1px solid ${THEME.line}` }}>
+              <div className="text-[11px] uppercase font-medium" style={{ color: THEME.inkSoft, letterSpacing: '0.08em' }}>Margin</div>
+              <div className="font-display text-2xl tabular-nums mt-0.5" style={{ color: stats && stats.margin !== null && stats.margin < 0 ? THEME.red : THEME.ink }}>{stats ? plPct(stats.margin) : '—'}</div>
+            </div>
+            {(!stats || stats.margin === null) && (
+              <div className="col-span-2 px-4 pb-3 -mt-1 text-xs" style={{ color: THEME.inkSoft }}>
+                {!stats ? 'Enter the supplier cost and selling price to see profit and margin.' : 'Margin needs a selling price above ₱0.'}
+              </div>
+            )}
+          </div>
+
+          {field('wholesalePrice', `Custom wholesale price / ${unit} — optional`, money('wholesalePrice'),
+            wNum !== null && wNum > 0
+              ? `This price will be used for wholesale orders instead of the automatic one${autoW !== null ? ` (${peso(autoW)})` : ''}.`
+              : autoW !== null
+                ? `Leave blank to use the automatic wholesale price: ${peso(autoW)} / ${unit}${wNum === 0 ? ' (0 also means automatic)' : ''}.`
+                : 'Leave blank to use the automatic wholesale price.')}
+
+          <div className="text-xs leading-relaxed pt-1" style={{ color: THEME.inkSoft }}>
+            New orders, accepted online orders and the customer app use the prices saved here. Orders already placed keep their saved prices — but editing and saving an older order re-prices its items to this list.
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex-shrink-0 grid grid-cols-2 gap-2 px-4 sm:px-5 pt-3" style={{ borderTop: `1px solid ${THEME.line}`, background: THEME.card, paddingBottom: phone ? 'max(env(safe-area-inset-bottom), 12px)' : 14 }}>
+          <button type="button" onClick={onCancel} className="pl-btn inline-flex items-center justify-center rounded-xl text-sm font-semibold"
+            style={{ minHeight: 48, background: THEME.card, color: THEME.ink, border: `1px solid ${THEME.line}` }}>
+            Cancel
+          </button>
+          <button type="button" onClick={onSave} disabled={editState === 'missing'}
+            className="pl-btn inline-flex items-center justify-center gap-1.5 rounded-xl text-sm font-semibold disabled:opacity-40"
+            style={{ minHeight: 48, background: THEME.brand, color: 'white', border: `1px solid ${THEME.brand}` }}>
+            <Save size={15} /> {editor.isNew ? 'Add product' : 'Save changes'}
+          </button>
+          {dirty && <div className="col-span-2 text-center text-[11px] -mt-0.5" style={{ color: THEME.inkSoft }}>Unsaved changes</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// "⋯" menu on an expanded product: less frequent actions; destructive last.
+function PLMoreMenu({ name, onReorder, onDelete }) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+  const btnRef = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('touchstart', onDown);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('touchstart', onDown); };
+  }, [open]);
+  const run = (fn) => { setOpen(false); fn(); };
+  return (
+    <div className="relative" ref={wrapRef}
+      onKeyDown={(e) => { if (e.key === 'Escape' && open) { e.preventDefault(); e.stopPropagation(); setOpen(false); if (btnRef.current) btnRef.current.focus(); } }}>
+      <button ref={btnRef} type="button" onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
+        aria-haspopup="true" aria-expanded={open} aria-label={`More actions for ${name}`}
+        className="pl-btn w-11 h-11 inline-flex items-center justify-center rounded-xl"
+        style={{ background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink }}>
+        <MoreHorizontal size={18} />
+      </button>
+      {open && (
+        <div role="menu" className="absolute right-0 top-full mt-2 w-52 rounded-xl p-1.5 z-20 mn-pop-in"
+          style={{ background: THEME.card, border: `1px solid ${THEME.line}`, boxShadow: '0 12px 32px rgba(42,38,36,0.18)' }}>
+          <button role="menuitem" type="button" onClick={(e) => { e.stopPropagation(); run(onReorder); }}
+            className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-left row-hover" style={{ color: THEME.ink, minHeight: 44 }}>
+            <ArrowUpDown size={15} /> Reorder products
+          </button>
+          <div className="my-1" style={{ borderTop: `1px solid ${THEME.line}` }} />
+          <button role="menuitem" type="button" onClick={(e) => { e.stopPropagation(); run(onDelete); }}
+            className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-left danger-hover" style={{ color: THEME.red, minHeight: 44 }}>
+            <Trash2 size={15} /> Delete product
+          </button>
+        </div>
+      )}
     </div>
   );
 }
