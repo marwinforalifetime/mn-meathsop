@@ -7,7 +7,7 @@ import {
   Activity, Menu, Store, Moon, Sun, CheckCircle, Inbox, MapPin, Users, MessageCircle,
   Crown, Trophy, Lightbulb, Sparkles, TrendingDown, ArrowUpRight, ArrowDownRight, CalendarDays,
   Target, Package, Info, Minus, BarChart3, ChevronLeft, MoreHorizontal, Filter, Scissors,
-  ArrowUp, ArrowDown, ArrowUpDown,
+  ArrowUp, ArrowDown, ArrowUpDown, BadgeCheck, ShoppingCart, ShieldPlus, Phone,
 } from 'lucide-react';
 import {
   BarChart, Bar, PieChart, Pie, Cell, ResponsiveContainer, XAxis, YAxis,
@@ -15,6 +15,7 @@ import {
 } from 'recharts';
 import { toPng } from 'html-to-image';
 import { LOGO_DATA_URL } from './logo.js';
+import './poster-fonts.css';
 import { GCASH_QR, GCASH_NUMBER } from './gcash-qr.js';
 import { cloudLoad, cloudSave, getSession, signIn, signOut, onAuthChange, fetchOrderRequests, updateOrderRequestStatus, deleteOrderRequest, publishCatalog } from './supabase.js';
 
@@ -54,7 +55,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v10.1 · Price List redesign';
+const APP_VERSION = 'v10.2.1 · Poster polish';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -7622,6 +7623,32 @@ function Products({ catalog, setCatalog, priceHistory, setPriceHistory, sync, re
   const pendingFocus = useRef(null);
   const phone = !useMediaQuery('(min-width: 640px)');
 
+  // ── Customer poster (reads the committed catalog only — never an editor draft) ──
+  const [posterDate, setPosterDate] = useState(() => today());
+  const [posterOpen, setPosterOpen] = useState(false);
+  const [posterBusy, setPosterBusy] = useState(false);
+  const [posterError, setPosterError] = useState('');
+  const [posterArt, setPosterArt] = useState(null);
+  const [posterFontsTick, setPosterFontsTick] = useState(0);
+  const posterBusyRef = useRef(false);
+  const posterRef = useRef(null);
+  const posterData = useMemo(() => buildPosterRows(catalog), [catalog]);
+  const posterLayout = useMemo(() => layoutPosterRows(posterData.rows), [posterData, posterFontsTick]); // eslint-disable-line react-hooks/exhaustive-deps
+  const posterIssues = [
+    ...posterData.issues,
+    ...(!posterLayout.fits && posterData.rows.length > 0
+      ? [`Too many products for the one-page poster (${posterData.rows.length}). Remove or combine some products, or ask for a two-page poster.`]
+      : []),
+    ...(posterDateLabel(posterDate) ? [] : ['Choose an effective date.']),
+  ];
+  const posterReady = posterIssues.length === 0;
+  const preparePoster = async () => {
+    const [art] = await Promise.all([loadPosterArt(), loadPosterFonts()]);
+    setPosterArt(art);
+    setPosterFontsTick((t) => t + 1); // re-measure names with the real poster font
+    return art;
+  };
+
   // ── Layout from the list's real width (sidebar, Split View, rotation) ──
   const [wide, setWide] = useState(() => { try { return window.innerWidth >= 1180; } catch (e) { return false; } });
   useLayoutEffect(() => {
@@ -7961,6 +7988,40 @@ function Products({ catalog, setCatalog, priceHistory, setPriceHistory, sync, re
     closeEditor(true);
   };
 
+  // ── Customer poster: preview + export ──
+  const unsavedPosterMsg = 'Save your product changes before previewing or exporting the customer price list.';
+  const openPosterPreview = async () => {
+    setPosterError('');
+    if (editor && dirty) { setPosterError(unsavedPosterMsg); return; }
+    try { await preparePoster(); setPosterOpen(true); } catch (e) {
+      console.error('Poster preview failed', e);
+      setPosterError('Could not load the customer price list. Please check your connection and try again.');
+    }
+  };
+  const exportPoster = async () => {
+    if (posterBusyRef.current) return;              // one capture at a time
+    setPosterError('');
+    if (editor && dirty) { setPosterError(unsavedPosterMsg); return; }
+    if (!posterReady) { setPosterError('Cannot export yet — see the items that need attention.'); return; }
+    posterBusyRef.current = true;
+    setPosterBusy(true);
+    try {
+      await preparePoster();
+      // Wait for the full-size capture copy to mount with the latest layout.
+      let node = null;
+      for (let i = 0; i < 40 && !node; i++) { await new Promise((r) => requestAnimationFrame(() => r())); node = posterRef.current; }
+      if (!node) throw new Error('Poster element was not rendered');
+      const dataUrl = await renderPosterToDataUrl(node);
+      await shareOrDownloadDataUrl(dataUrl, posterFileName(posterDate));
+    } catch (e) {
+      console.error('Customer price list export failed', e);
+      setPosterError('Could not generate the customer price list. Please try again.');
+    } finally {
+      posterBusyRef.current = false;
+      setPosterBusy(false);
+    }
+  };
+
   // ── Small render helpers ──
   const priceCell = (p, big) => {
     const s = plStats(p);
@@ -8203,6 +8264,51 @@ function Products({ catalog, setCatalog, priceHistory, setPriceHistory, sync, re
         </button>
       </div>
 
+      {/* ===== Customer price-list poster ===== */}
+      {!reorder && (
+        <section aria-labelledby="pl-poster-title" className="mb-5 rounded-2xl p-4 sm:p-5" style={{ background: THEME.card, border: `1px solid ${THEME.line}` }}>
+          <div className="flex flex-col lg:flex-row lg:items-end gap-4">
+            <div className="flex items-start gap-3 flex-1 min-w-0">
+              <div className="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: THEME.brandBg, color: THEME.brand }}>
+                <ImageIcon size={20} />
+              </div>
+              <div className="min-w-0">
+                <h2 id="pl-poster-title" className="font-display text-lg leading-tight" style={{ color: THEME.ink }}>Customer price list</h2>
+                <div className="text-sm mt-0.5" style={{ color: THEME.inkSoft }}>A ready-to-send poster made from the retail prices on this page.</div>
+                <div className="text-xs mt-1.5 flex items-start gap-1.5 font-medium" style={{ color: posterReady ? THEME.green : THEME.warnInk }}>
+                  {posterReady
+                    ? <><Check size={13} className="mt-px flex-shrink-0" /> Uses current retail prices · {posterData.rows.length} product{posterData.rows.length !== 1 ? 's' : ''}</>
+                    : <><AlertCircle size={13} className="mt-px flex-shrink-0" /> {posterIssues.length} item{posterIssues.length !== 1 ? 's need' : ' needs'} attention before export</>}
+                </div>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 sm:flex sm:items-end gap-2.5">
+              <label className="col-span-2 sm:col-span-1 block">
+                <span className="block text-xs uppercase font-medium mb-1.5" style={{ color: THEME.inkSoft, letterSpacing: '0.08em' }}>Effective date</span>
+                <input type="date" value={posterDate} onChange={(e) => setPosterDate(e.target.value)} aria-label="Effective date for the customer price list"
+                  className="pl-input w-full sm:w-44 px-3 rounded-xl outline-none" style={{ minHeight: 44, background: THEME.card, border: `1px solid ${THEME.line}`, color: THEME.ink }} />
+              </label>
+              <button type="button" onClick={openPosterPreview} disabled={posterBusy}
+                className="pl-btn inline-flex items-center justify-center gap-1.5 px-4 rounded-xl text-sm font-semibold disabled:opacity-40"
+                style={{ minHeight: 44, background: THEME.card, color: THEME.ink, border: `1px solid ${THEME.line}` }}>
+                <Eye size={16} /> Preview poster
+              </button>
+              <button type="button" onClick={exportPoster} disabled={posterBusy} aria-busy={posterBusy}
+                className="pl-btn inline-flex items-center justify-center gap-1.5 px-4 rounded-xl text-sm font-semibold disabled:opacity-60"
+                style={{ minHeight: 44, background: THEME.brand, color: 'white' }}>
+                {posterBusy ? <><Loader2 size={16} className="animate-spin" /> Generating…</> : <><Download size={16} /> Export PNG</>}
+              </button>
+            </div>
+          </div>
+          {!posterReady && <div className="mt-4"><PosterIssues issues={posterIssues} /></div>}
+          {posterError && !posterOpen && (
+            <div className="mt-3 text-sm flex items-start gap-1.5" role="alert" style={{ color: THEME.red }}>
+              <AlertCircle size={15} className="mt-0.5 flex-shrink-0" />{posterError}
+            </div>
+          )}
+        </section>
+      )}
+
       {/* ===== Search + reorder ===== */}
       <div className="flex gap-2 mb-3">
         <div className="relative flex-1 min-w-0">
@@ -8308,6 +8414,16 @@ function Products({ catalog, setCatalog, priceHistory, setPriceHistory, sync, re
                 : 'saved on this device, syncing…'}</span>
             </span>
           </div>
+        </div>
+      )}
+
+      <RetailPosterPreview open={posterOpen} onClose={() => { setPosterOpen(false); setPosterError(''); }}
+        layout={posterLayout} effectiveDate={posterDate} art={posterArt} issues={posterIssues} ready={posterReady}
+        busy={posterBusy} onExport={exportPoster} error={posterError} />
+      {(posterBusy || posterOpen) && posterArt && (
+        // Full-size copy used only for capture (the preview is scaled). Off-screen, not hidden.
+        <div aria-hidden="true" style={{ position: 'fixed', left: -99999, top: 0, pointerEvents: 'none' }}>
+          <RetailPricePoster innerRef={posterRef} layout={posterLayout} effectiveDate={posterDate} art={posterArt} />
         </div>
       )}
 
@@ -8570,6 +8686,449 @@ function PLMoreMenu({ name, onReorder, onDelete }) {
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ============================================================
+   CUSTOMER RETAIL PRICE-LIST POSTER (v10.2)
+   ============================================================
+   A fixed 1024 × 1536 poster built from the live catalog, so the Price
+   List is the single source of truth: name, retail `price`, `unit` and
+   `group` only — never cost, profit, margin or wholesale. The poster
+   geometry never changes with the screen; only the on-screen preview is
+   scaled. Exported at 2× (2048 × 3072) through the app's existing
+   iOS-safe share/download helper.                                      */
+const POSTER_W = 1024;
+const POSTER_H = 1536;
+const POSTER_PHONE = '0945 2767 661';             // public business number (from the printed poster)
+const POSTER_GROUPS = ['Pork', 'Chicken', 'Beef'];
+const POSTER_UNIT_LABEL = { kg: 'kg', pack: 'pack', pcs: 'pc' }; // same convention as Price List
+// Bundled, poster-only families (see poster-fonts.css): identical output on every device.
+const POSTER_FONT_SANS = "'MN Poster Sans', 'Arial Narrow', 'Helvetica Neue', Arial, sans-serif";
+const POSTER_FONT_SERIF = "'MN Poster Serif', Georgia, 'Times New Roman', serif";
+const PC = {                                       // poster palette — independent of light/dark mode
+  paper: '#F7EAD0', paperLight: '#FCF4E3', paperEdge: '#EBD4A8',
+  gold: '#C8953A', goldLight: '#E2B867', goldDark: '#9C6F22',
+  ink: '#22140E', burgundy: '#6E1C20', wine: '#3A0D0F', night: '#220708', cream: '#F8EAD0',
+  rule: 'rgba(176, 128, 52, 0.55)',
+};
+// Table geometry (px, poster space).
+const POSTER_TABLE = { left: 44, top: 458, width: 772, bottom: 1360, head: 62, split: 494 };
+const POSTER_BODY_H = POSTER_TABLE.bottom - POSTER_TABLE.top - POSTER_TABLE.head - 6;
+const POSTER_NAME_W = POSTER_TABLE.split - 30 - 14;  // usable width for a product name
+const POSTER_ROW_MAX = 40;                           // roomy rows when the list is short
+const POSTER_ROW_MIN = 25.5;                         // below this the text gets too small → refuse
+const POSTER_GROUP_GAP = 4;                          // extra space for a category divider
+
+const isSawdust = (p) => /^\s*sawdust\b/i.test(p.name || '');
+const posterDateLabel = (iso) => {
+  if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return '';
+  // Local midnight, never UTC, so the date can't shift by a day.
+  return new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+};
+const posterFileName = (iso) => `M&N Retail Price List - ${iso}.png`.replace(/[\\/:*?"<>|]+/g, '-');
+
+// Catalog → poster rows (+ anything that must be fixed before export).
+// Order: Pork, Chicken, Beef, each in Price List order; Sawdust always last.
+function buildPosterRows(catalog) {
+  const issues = [];
+  const valid = [];
+  (catalog || []).forEach((p, i) => {
+    const name = String(p.name || '').trim();
+    const label = name || `Product #${i + 1} (no name)`;
+    const problems = [];
+    if (!name) problems.push('name missing');
+    const raw = p.price;
+    const price = Number(raw);
+    if (raw === '' || raw === null || raw === undefined || !Number.isFinite(price)) problems.push('retail price missing');
+    else if (price === 0) problems.push('retail price is ₱0');
+    else if (price < 0) problems.push('retail price is negative');
+    if (!p.unit) problems.push('unit missing');
+    else if (!POSTER_UNIT_LABEL[p.unit]) problems.push(`unit “${p.unit}” isn't supported`);
+    if (!isSawdust(p) && !POSTER_GROUPS.includes(p.group)) problems.push(p.group ? `category “${p.group}” isn't on the poster` : 'category missing');
+    if (problems.length) { issues.push(`${label} — ${problems.join(', ')}`); return; }
+    valid.push({ name, price, unit: POSTER_UNIT_LABEL[p.unit], group: p.group, sawdust: isSawdust(p) });
+  });
+  const rows = [];
+  POSTER_GROUPS.forEach((g, gi) => {
+    valid.filter((r) => !r.sawdust && r.group === g).forEach((r, k) => rows.push({ ...r, divider: gi > 0 && k === 0 }));
+  });
+  valid.filter((r) => r.sawdust).forEach((r) => rows.push({ ...r, divider: false }));
+  if ((catalog || []).length === 0) issues.push('The Price List has no products yet.');
+  else if (rows.length === 0 && issues.length === 0) issues.push('No products can be shown on the poster.');
+  return { rows, issues };
+}
+
+// Measure text with the poster font (falls back safely if the font isn't loaded yet).
+let posterMeasureCtx = null;
+function posterTextWidth(text, px, weight = 500) {
+  try {
+    if (!posterMeasureCtx) posterMeasureCtx = document.createElement('canvas').getContext('2d');
+    posterMeasureCtx.font = `${weight} ${px}px ${POSTER_FONT_SANS}`;
+    return posterMeasureCtx.measureText(text).width;
+  } catch (e) { return text.length * px * 0.5; }
+}
+
+// Adaptive row sizing: roomy for short lists, tighter as products are added,
+// and an honest "doesn't fit" (never microscopic text) past POSTER_ROW_MIN.
+// Long names first shrink a little, then wrap onto a second line.
+function layoutPosterRows(rows) {
+  const n = rows.length;
+  const dividers = rows.filter((r) => r.divider).length;
+  let wraps = new Set();
+  let rowH = POSTER_ROW_MAX, nameSize = 27;
+  for (let pass = 0; pass < 3; pass++) {
+    rowH = Math.min(POSTER_ROW_MAX, (POSTER_BODY_H - dividers * POSTER_GROUP_GAP) / Math.max(1, n + 0.62 * wraps.size));
+    nameSize = Math.max(17, Math.min(28, rowH * 0.72));
+    const next = new Set();
+    rows.forEach((r, i) => { if (posterTextWidth(r.name, nameSize * 0.86) > POSTER_NAME_W) next.add(i); });
+    if (next.size === wraps.size) { wraps = next; break; }
+    wraps = next;
+  }
+  const priceSize = Math.max(18, Math.min(31, rowH * 0.78));
+  const laid = rows.map((r, i) => {
+    const wrap = wraps.has(i);
+    const fits = posterTextWidth(r.name, nameSize) <= POSTER_NAME_W;
+    return { ...r, wrap, nameSize: fits ? nameSize : nameSize * 0.86, height: wrap ? rowH * 1.62 : rowH };
+  });
+  return { rows: laid, rowH, priceSize, fits: n > 0 && rowH >= POSTER_ROW_MIN };
+}
+
+function PosterCleavers({ size = 56, color = PC.gold }) {
+  // One upright cleaver (blade on top, handle below), drawn twice and crossed at the handles.
+  const cleaver = (
+    <g>
+      <path d="M21 4 h20 a2 2 0 0 1 2 2 v18 a6 6 0 0 1 -6 6 h-16 a2 2 0 0 1 -2 -2 v-22 a2 2 0 0 1 2 -2 z" fill={color} />
+      <circle cx="25.5" cy="9" r="2.2" fill={PC.wine} />
+      <rect x="27.5" y="30" width="7" height="27" rx="3.2" fill={color} />
+      <rect x="27.5" y="30" width="7" height="3" fill={PC.wine} opacity="0.45" />
+    </g>
+  );
+  return (
+    <svg width={size} height={size} viewBox="0 0 64 64" aria-hidden="true">
+      <g transform="rotate(-34 32 44)">{cleaver}</g>
+      <g transform="translate(64 0) scale(-1 1) rotate(-34 32 44)">{cleaver}</g>
+    </svg>
+  );
+}
+
+const PosterDiamond = () => (
+  <span style={{ display: 'inline-block', width: 9, height: 9, background: PC.gold, transform: 'rotate(45deg)', margin: '0 16px', verticalAlign: '0.2em' }} />
+);
+const PosterStar = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" style={{ display: 'inline-block', margin: '0 12px', verticalAlign: '-0.12em' }}>
+    <path d="M12 2.5l2.9 6.1 6.6.8-4.9 4.6 1.3 6.6L12 17.3l-5.9 3.3 1.3-6.6-4.9-4.6 6.6-.8z" fill={PC.gold} />
+  </svg>
+);
+
+function PosterBadge({ icon, lines, top }) {
+  return (
+    <div style={{ position: 'absolute', left: 0, right: 0, top, textAlign: 'center' }}>
+      <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>{icon}</div>
+      {lines.map((l) => (
+        <div key={l} style={{ fontFamily: POSTER_FONT_SANS, fontWeight: 600, fontSize: 29, lineHeight: 1.12, color: PC.burgundy, letterSpacing: '0.02em', whiteSpace: 'nowrap' }}>{l}</div>
+      ))}
+    </div>
+  );
+}
+
+function PosterDots({ top }) {
+  return (
+    <div style={{ position: 'absolute', left: 4, right: 4, top, height: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+      <div style={{ flex: 1, borderTop: `3px dotted ${PC.wine}` }} />
+      <div style={{ width: 8, height: 8, transform: 'rotate(45deg)', background: PC.wine }} />
+      <div style={{ flex: 1, borderTop: `3px dotted ${PC.wine}` }} />
+    </div>
+  );
+}
+
+// The poster itself. Pure presentation: everything it shows comes in as props.
+function RetailPricePoster({ layout, effectiveDate, art, innerRef }) {
+  const dateLabel = posterDateLabel(effectiveDate);
+  const T = POSTER_TABLE;
+  const goldLine = (w, flip) => (
+    <div style={{ width: w, display: 'flex', alignItems: 'center', flexDirection: flip ? 'row-reverse' : 'row' }}>
+      <div style={{ flex: 1, height: 3, background: PC.gold }} />
+      <div style={{ width: 7, height: 7, transform: 'rotate(45deg)', background: PC.gold, margin: '0 2px' }} />
+    </div>
+  );
+  return (
+    <div ref={innerRef} style={{
+      position: 'relative', width: POSTER_W, height: POSTER_H, overflow: 'hidden', boxSizing: 'border-box',
+      background: `radial-gradient(ellipse 75% 60% at 50% 42%, ${PC.paperLight} 0%, ${PC.paper} 62%, ${PC.paperEdge} 100%)`,
+      color: PC.ink, fontFamily: POSTER_FONT_SANS, WebkitFontSmoothing: 'antialiased',
+    }}>
+      {/* Gold frame */}
+      <div style={{ position: 'absolute', inset: 12, border: `5px solid ${PC.gold}`, borderRadius: 22 }} />
+      <div style={{ position: 'absolute', inset: 23, border: `1.5px solid ${PC.goldDark}`, borderRadius: 14, opacity: 0.75 }} />
+
+      {/* Artwork + logo */}
+      {art && <img src={art.cow} alt="" style={{ position: 'absolute', left: 30, top: 34, width: 282, height: 'auto' }} />}
+      {art && <img src={art.pigChicken} alt="" style={{ position: 'absolute', right: 26, top: 54, width: 300, height: 'auto' }} />}
+      {art && art.logo ? (
+        <img src={art.logo} alt="M&N Meatshop" style={{ position: 'absolute', top: 20, height: 292,
+          width: Math.round(292 * art.logoSize.width / art.logoSize.height), left: Math.round((POSTER_W - 292 * art.logoSize.width / art.logoSize.height) / 2),
+          filter: 'drop-shadow(0 10px 16px rgba(40, 10, 10, 0.35))' }} />
+      ) : (
+        <div style={{ position: 'absolute', left: (POSTER_W - 280) / 2, top: 24, width: 280, height: 280, borderRadius: '50%',
+          padding: 6, boxSizing: 'border-box', background: `linear-gradient(145deg, ${PC.goldLight}, ${PC.goldDark})` }}>
+          <img src={LOGO_DATA_URL} alt="M&N Meatshop" style={{ width: '100%', height: '100%', borderRadius: '50%', display: 'block', objectFit: 'cover' }} />
+        </div>
+      )}
+
+      {/* Heading */}
+      <div style={{ position: 'absolute', left: 30, right: 30, top: 318, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 18 }}>
+        {goldLine(210, true)}
+        <div style={{ fontFamily: POSTER_FONT_SANS, fontWeight: 700, fontSize: 92, lineHeight: 1, letterSpacing: '0.015em', color: PC.ink, whiteSpace: 'nowrap',
+          textShadow: `2px 2px 0 ${PC.paperEdge}, 3px 4px 0 rgba(110, 28, 32, 0.25)` }}>PRICE LIST</div>
+        {goldLine(210, false)}
+      </div>
+      {dateLabel && (
+        // Freshness stamp: sits with the title so an old screenshot is obvious at a glance.
+        <div style={{ position: 'absolute', left: 0, right: 0, top: 412, display: 'flex', justifyContent: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', height: 34, padding: '0 22px', borderRadius: 17, boxSizing: 'border-box',
+            background: `linear-gradient(180deg, ${PC.burgundy}, ${PC.wine})`, border: `1.5px solid ${PC.goldLight}`,
+            fontFamily: POSTER_FONT_SANS, fontWeight: 600, fontSize: 19, letterSpacing: '0.12em', color: PC.cream, whiteSpace: 'nowrap' }}>
+            <span style={{ display: 'inline-block', width: 7, height: 7, background: PC.goldLight, transform: 'rotate(45deg)', marginRight: 12 }} />
+            PRICES EFFECTIVE {dateLabel.toUpperCase()}
+            <span style={{ display: 'inline-block', width: 7, height: 7, background: PC.goldLight, transform: 'rotate(45deg)', marginLeft: 12 }} />
+          </div>
+        </div>
+      )}
+
+      {/* Price table */}
+      <div style={{ position: 'absolute', left: T.left, top: T.top, width: T.width, height: T.bottom - T.top, boxSizing: 'border-box',
+        border: `3px solid ${PC.wine}`, borderRadius: 16, overflow: 'hidden', background: 'rgba(252, 244, 227, 0.72)' }}>
+        <div style={{ height: T.head, display: 'flex', background: `linear-gradient(180deg, ${PC.wine}, ${PC.night})`, borderBottom: `3px solid ${PC.gold}` }}>
+          {[['PRODUCT', T.split], ['PRICE', T.width - T.split - 6]].map(([label, w], i) => (
+            <div key={label} style={{ width: w, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14,
+              borderLeft: i ? `2px solid ${PC.goldDark}` : 'none' }}>
+              <div style={{ width: 54, height: 2, background: PC.goldLight }} />
+              <div style={{ fontFamily: POSTER_FONT_SERIF, fontWeight: 700, fontSize: 38, letterSpacing: '0.06em', color: PC.cream }}>{label}</div>
+              <div style={{ width: 54, height: 2, background: PC.goldLight }} />
+            </div>
+          ))}
+        </div>
+        <div style={{ position: 'relative' }}>
+          {/* column divider */}
+          <div style={{ position: 'absolute', top: 0, bottom: -2000, left: T.split - 1, width: 2, background: PC.wine, opacity: 0.85 }} />
+          {layout.rows.map((r, i) => (
+            <div key={i} style={{
+              height: r.height, display: 'flex', alignItems: 'center', boxSizing: 'border-box',
+              borderTop: i === 0 ? 'none' : r.divider ? `3px double ${PC.goldDark}` : `1px solid ${PC.rule}`,
+              marginTop: r.divider ? POSTER_GROUP_GAP : 0,
+              background: i % 2 ? 'rgba(226, 196, 140, 0.20)' : 'transparent',   // soft zebra for easy scanning
+            }}>
+              <div style={{ width: T.split, paddingLeft: 30, paddingRight: 14, boxSizing: 'border-box', fontWeight: 500, fontSize: r.nameSize,
+                lineHeight: r.wrap ? 1.08 : 1.1, color: PC.ink, whiteSpace: r.wrap ? 'normal' : 'nowrap', overflowWrap: 'break-word' }}>
+                {r.name}
+              </div>
+              <div style={{ flex: 1, display: 'flex', alignItems: 'baseline', justifyContent: 'center', gap: 8, paddingRight: 10 }}>
+                <span style={{ minWidth: 150, textAlign: 'right', fontWeight: 700, fontSize: layout.priceSize, color: PC.burgundy, letterSpacing: '0.01em' }}>
+                  {peso(r.price)}
+                </span>
+                <span style={{ minWidth: 70, fontFamily: POSTER_FONT_SERIF, fontWeight: 500, fontSize: Math.round(layout.priceSize * 0.68), color: PC.ink }}>
+                  /{r.unit}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Side column */}
+      <div style={{ position: 'absolute', left: 826, width: 172, top: T.top, height: T.bottom - T.top }}>
+        <PosterBadge top={6} lines={['QUALITY', 'GUARANTEED']}
+          icon={<BadgeCheck size={104} strokeWidth={1.3} color={PC.goldLight} fill={PC.wine} />} />
+        <PosterDots top={232} />
+        <PosterBadge top={262} lines={['RETAIL &', 'BULK ORDERS']}
+          icon={<ShoppingCart size={98} strokeWidth={2} color={PC.wine} />} />
+        <PosterDots top={484} />
+        <PosterBadge top={514} lines={['SAFE &', 'CLEAN']}
+          icon={<ShieldPlus size={102} strokeWidth={1.3} color={PC.goldLight} fill={PC.wine} />} />
+        <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 196, boxSizing: 'border-box', borderRadius: 10,
+          background: `linear-gradient(180deg, ${PC.wine}, ${PC.night})`, border: `3px solid ${PC.gold}`, boxShadow: `inset 0 0 0 4px ${PC.night}, inset 0 0 0 5px ${PC.goldDark}`,
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '10px 8px' }}>
+          <PosterCleavers size={58} />
+          <div style={{ fontFamily: POSTER_FONT_SANS, fontWeight: 700, fontSize: 31, color: PC.goldLight, lineHeight: 1.05, marginTop: 6 }}>THANK YOU</div>
+          <div style={{ fontFamily: POSTER_FONT_SANS, fontWeight: 600, fontSize: 18, color: PC.goldLight, lineHeight: 1.2, marginTop: 4, letterSpacing: '0.02em' }}>
+            FOR SUPPORTING<br />LOCAL BUSINESS!
+          </div>
+        </div>
+      </div>
+
+      {/* Contact band */}
+      <div style={{ position: 'absolute', left: 12, right: 12, top: 1374, height: 84, display: 'flex', alignItems: 'center',
+        background: `linear-gradient(180deg, ${PC.wine}, ${PC.night})`, borderTop: `2px solid ${PC.goldDark}`, borderBottom: `2px solid ${PC.goldDark}` }}>
+        <div style={{ width: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 22 }}>
+          <div style={{ width: 62, height: 62, borderRadius: '50%', border: `4px solid ${PC.goldLight}`, display: 'flex', alignItems: 'center', justifyContent: 'center', boxSizing: 'border-box' }}>
+            <Phone size={30} strokeWidth={2.4} color={PC.goldLight} />
+          </div>
+          <div style={{ fontFamily: POSTER_FONT_SANS, fontWeight: 700, fontSize: 62, color: '#FFF8EA', letterSpacing: '0.02em', lineHeight: 1 }}>{POSTER_PHONE}</div>
+        </div>
+        <div style={{ width: 3, height: 52, background: PC.goldDark }} />
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 20 }}>
+          <Truck size={64} strokeWidth={1.8} color={PC.goldLight} />
+          <div style={{ fontFamily: POSTER_FONT_SANS, fontWeight: 600, fontSize: 30, lineHeight: 1.05, color: '#FFF8EA', letterSpacing: '0.02em' }}>WE DELIVER<br />TO YOUR DOOR</div>
+        </div>
+      </div>
+
+      {/* Disclaimer */}
+      <div style={{ position: 'absolute', left: 30, right: 30, top: 1472, textAlign: 'center', fontFamily: POSTER_FONT_SERIF, fontSize: 21, color: PC.ink }}>
+        <PosterStar />Prices may change without prior notice. Message us for the latest price list.<PosterStar />
+      </div>
+    </div>
+  );
+}
+
+// Lazy-load the artwork and make sure the poster fonts are ready.
+let posterArtPromise = null;
+function loadPosterArt() {
+  if (!posterArtPromise) {
+    posterArtPromise = import('./poster-art.js')
+      .then((m) => ({ cow: m.POSTER_COW, pigChicken: m.POSTER_PIG_CHICKEN, logo: m.POSTER_LOGO, logoSize: m.POSTER_LOGO_SIZE }))
+      .catch((e) => { posterArtPromise = null; throw e; });
+  }
+  return posterArtPromise;
+}
+async function loadPosterFonts() {
+  try {
+    if (!document.fonts || !document.fonts.load) return;
+    const sample = 'AaZz09 /&!₱';
+    await Promise.all([
+      ...[500, 600, 700].map((w) => document.fonts.load(`${w} 26px ${POSTER_FONT_SANS}`, sample)),
+      ...[400, 500, 600, 700].map((w) => document.fonts.load(`${w} 26px ${POSTER_FONT_SERIF}`, sample)),
+    ]);
+    await document.fonts.ready;
+  } catch (e) { /* fall back to system fonts rather than failing */ }
+}
+
+// Capture the full-size poster node (never the scaled preview).
+async function renderPosterToDataUrl(node) {
+  await loadPosterFonts();
+  const imgs = Array.from(node.querySelectorAll('img'));
+  await Promise.all(imgs.map(async (img) => {
+    try { if (typeof img.decode === 'function') { await img.decode(); return; } } catch (e) { /* fall through */ }
+    if (img.complete && img.naturalWidth > 0) return;
+    await new Promise((res) => { img.onload = res; img.onerror = res; });
+  }));
+  if (imgs.some((img) => !img.complete || img.naturalWidth === 0)) throw new Error('Poster images did not load');
+  await new Promise((r) => setTimeout(r, 150));
+  const opts = { quality: 1, pixelRatio: 2, width: POSTER_W, height: POSTER_H, backgroundColor: PC.paper, cacheBust: true, style: { margin: '0', transform: 'none' } };
+  // Same multi-pass approach as the order documents: iOS Safari can drop
+  // base64 images on the first pass.
+  let dataUrl = await toPng(node, opts);
+  dataUrl = await toPng(node, opts);
+  dataUrl = await toPng(node, opts);
+  return dataUrl;
+}
+
+// Full-poster preview: a large centred dialog on desktop/tablet, a full-screen
+// sheet on phones. Escape or Close dismisses it; focus returns to the opener.
+function RetailPosterPreview({ open, onClose, layout, effectiveDate, art, issues, ready, busy, onExport, error }) {
+  const dialogRef = useRef(null);
+  const stageRef = useRef(null);
+  const [scale, setScale] = useState(0.3);
+  const phone = !useMediaQuery('(min-width: 640px)');
+  useEffect(() => {
+    if (!open) return undefined;
+    const opener = document.activeElement;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const el = dialogRef.current && dialogRef.current.querySelector('[data-autofocus]');
+    if (el) el.focus({ preventScroll: true });
+    const onKey = (e) => { if (e.key === 'Escape' && !e.defaultPrevented) { e.preventDefault(); onClose(); } };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = prev;
+      document.removeEventListener('keydown', onKey);
+      if (opener && document.contains(opener)) { try { opener.focus({ preventScroll: true }); } catch (e) { /* ignore */ } }
+    };
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  useLayoutEffect(() => {
+    if (!open) return undefined;
+    const el = stageRef.current;
+    if (!el) return undefined;
+    const fit = () => {
+      const w = el.clientWidth - 26;   // minus the stage's p-3 padding
+      const h = el.clientHeight - 26;
+      const s = phone ? w / POSTER_W : Math.min(w / POSTER_W, h / POSTER_H);
+      setScale(Math.max(0.15, Math.min(1, s)));
+    };
+    fit();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(fit) : null;
+    if (ro) ro.observe(el); else window.addEventListener('resize', fit);
+    return () => { if (ro) ro.disconnect(); else window.removeEventListener('resize', fit); };
+  }, [open, phone]);
+  if (!open) return null;
+  const onTab = (e) => {
+    if (e.key !== 'Tab' || !dialogRef.current) return;
+    const nodes = Array.from(dialogRef.current.querySelectorAll('button, [href], input, [tabindex]:not([tabindex="-1"])')).filter((n) => !n.disabled && n.offsetParent !== null);
+    if (!nodes.length) return;
+    const first = nodes[0], last = nodes[nodes.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  };
+  return (
+    <div className="fixed inset-0 z-[46] no-print">
+      <div className="absolute inset-0 mn-backdrop-in" style={{ background: 'rgba(20,12,10,0.62)' }} onClick={onClose} />
+      <div className={phone ? 'absolute inset-0' : 'absolute inset-0 flex items-center justify-center p-6 pointer-events-none'}>
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="poster-preview-title" onKeyDown={onTab}
+        className={`flex flex-col pointer-events-auto ${phone ? 'w-full mn-sheet-in' : 'mn-pop-in rounded-2xl overflow-hidden'}`}
+        style={phone
+          ? { background: THEME.card, height: '100dvh' }
+          : { background: THEME.card, width: 'min(760px, 100%)', height: 'min(940px, 100%)', boxShadow: '0 24px 60px rgba(0,0,0,0.35)' }}>
+        <div className="flex-shrink-0 flex items-start gap-3 px-5 pb-3" style={{ borderBottom: `1px solid ${THEME.line}`, paddingTop: phone ? 'max(env(safe-area-inset-top), 14px)' : 18 }}>
+          <div className="flex-1 min-w-0">
+            <h2 id="poster-preview-title" className="font-display text-2xl leading-tight" style={{ color: THEME.brand }}>Customer price list</h2>
+            <div className="text-sm mt-0.5" style={{ color: THEME.inkSoft }}>
+              {layout.rows.length} product{layout.rows.length !== 1 ? 's' : ''} · retail prices from the Price List{effectiveDate ? ` · effective ${posterDateLabel(effectiveDate)}` : ''}
+            </div>
+          </div>
+          <button type="button" data-autofocus onClick={onClose} aria-label="Close poster preview"
+            className="w-11 h-11 flex items-center justify-center rounded-lg row-hover flex-shrink-0" style={{ color: THEME.ink }}>
+            <X size={20} />
+          </button>
+        </div>
+        {!ready && (
+          <div className="flex-shrink-0 mx-4 mt-3"><PosterIssues issues={issues} /></div>
+        )}
+        <div ref={stageRef} className={`flex-1 min-h-0 ${phone ? 'overflow-y-auto' : 'overflow-hidden'} flex justify-center items-start p-3`}
+          style={{ background: THEME.bg }}>
+          <div style={{ width: POSTER_W * scale, height: POSTER_H * scale, flexShrink: 0, boxShadow: '0 6px 22px rgba(0,0,0,0.18)' }}>
+            <div style={{ width: POSTER_W, height: POSTER_H, transform: `scale(${scale})`, transformOrigin: 'top left' }}>
+              <RetailPricePoster layout={layout} effectiveDate={effectiveDate} art={art} />
+            </div>
+          </div>
+        </div>
+        <div className="flex-shrink-0 px-4 pt-3 flex flex-col gap-2" style={{ borderTop: `1px solid ${THEME.line}`, paddingBottom: phone ? 'max(env(safe-area-inset-bottom), 12px)' : 14 }}>
+          {error && <div className="text-sm flex items-start gap-1.5" role="alert" style={{ color: THEME.red }}><AlertCircle size={15} className="mt-0.5 flex-shrink-0" />{error}</div>}
+          <div className="grid grid-cols-2 gap-2">
+            <button type="button" onClick={onClose} className="pl-btn rounded-xl text-sm font-semibold"
+              style={{ minHeight: 48, background: THEME.card, color: THEME.ink, border: `1px solid ${THEME.line}` }}>Close</button>
+            <button type="button" onClick={onExport} disabled={!ready || busy} aria-busy={busy}
+              className="pl-btn inline-flex items-center justify-center gap-1.5 rounded-xl text-sm font-semibold disabled:opacity-40"
+              style={{ minHeight: 48, background: THEME.brand, color: 'white' }}>
+              {busy ? <><Loader2 size={16} className="animate-spin" /> Generating…</> : <><Download size={16} /> Export PNG</>}
+            </button>
+          </div>
+        </div>
+      </div>
+      </div>
+    </div>
+  );
+}
+
+function PosterIssues({ issues }) {
+  return (
+    <div className="rounded-xl px-4 py-3 text-sm" role="alert" style={{ background: THEME.warnBg, color: THEME.warnInk, border: `1px solid ${THEME.amber}` }}>
+      <div className="font-semibold flex items-center gap-1.5"><AlertCircle size={15} /> Cannot export the price list</div>
+      <div className="mt-1">The following need attention:</div>
+      <ul className="mt-1 space-y-0.5 list-disc pl-5">
+        {issues.map((t) => <li key={t} className="break-words">{t}</li>)}
+      </ul>
+      <div className="mt-1.5">Fix these in the Price List before exporting.</div>
     </div>
   );
 }
