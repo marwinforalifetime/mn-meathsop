@@ -55,7 +55,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v10.3 · Pickup select & save';
+const APP_VERSION = 'v10.3.1 · Pickup select & save';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -6222,11 +6222,6 @@ function Pickup({ orders, catalog }) {
               <div className="text-sm mt-1" style={{ color: THEME.inkSoft }}>
                 {activeBatch ? `Delivery batch: ${batchLabel(activeBatch)}` : `As of ${fmtDate(today())}`} · {selected.size} order{selected.size !== 1 ? 's' : ''}
               </div>
-              {exportOnlyChosen && (
-                <div className="text-xs mt-1 font-semibold uppercase tracking-wider" style={{ color: THEME.brand }}>
-                  Selected items · {exportRows.length} of {rollup.length} products
-                </div>
-              )}
             </div>
             <table className="w-full text-sm">
               <thead>
