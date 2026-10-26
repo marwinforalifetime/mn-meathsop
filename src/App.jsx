@@ -55,7 +55,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v10.2.1 · Poster polish';
+const APP_VERSION = 'v10.3 · Pickup select & save';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -5931,6 +5931,10 @@ function Pickup({ orders, catalog }) {
   const [picked, setPicked] = useState(new Set());   // products ticked off at the supplier (session-only)
   const [activeBatch, setActiveBatch] = useState(null);   // which batch chip is highlighted
   const [savingRollup, setSavingRollup] = useState(false);
+  // Products ticked with the row checkbox: their own subtotal and a "selected only" image.
+  // Separate from `picked` (tap a row to tick it off at the counter).
+  const [chosen, setChosen] = useState(new Set());
+  const [exportOnlyChosen, setExportOnlyChosen] = useState(false);
   const rollupExportRef = useRef(null);
   const productByName = useMemo(() => Object.fromEntries((catalog || []).map(p => [p.name, p])), [catalog]);
   // Always use the current supplier cost from the catalog (what you pay today).
@@ -5953,10 +5957,11 @@ function Pickup({ orders, catalog }) {
     else next.add(id);
     setSelected(next);
     setPicked(new Set());   // selection changed -> restart the shopping checklist
+    setChosen(new Set());
     setActiveBatch(null);   // manual change → no single batch is "active"
   };
-  const selectAll = () => { setSelected(new Set(ordersList.map(o => o.id))); setPicked(new Set()); setActiveBatch(null); };
-  const clear = () => { setSelected(new Set()); setPicked(new Set()); setActiveBatch(null); };
+  const selectAll = () => { setSelected(new Set(ordersList.map(o => o.id))); setPicked(new Set()); setChosen(new Set()); setActiveBatch(null); };
+  const clear = () => { setSelected(new Set()); setPicked(new Set()); setChosen(new Set()); setActiveBatch(null); };
   // The real workflow: "select everything for Saturday" in one tap.
   const upcomingBatches = useMemo(() => {
     const todayIso = today();
@@ -5974,6 +5979,7 @@ function Pickup({ orders, catalog }) {
   const selectBatch = (batch) => {
     setSelected(new Set(ordersList.filter(o => o.delivery_batch === batch).map(o => o.id)));
     setPicked(new Set());
+    setChosen(new Set());
     setActiveBatch(batch);
   };
   const togglePicked = (product) => {
@@ -6002,15 +6008,32 @@ function Pickup({ orders, catalog }) {
 
   const grandTotal = rollup.reduce((s, r) => s + r.totalCost, 0);
   // Total kilos across rollup (only items priced per kg, so the figure is meaningful).
-  const totalKg = rollup.reduce((s, r) => s + ((r.unit === 'kg' || !r.unit) ? r.qty : 0), 0);
+  const kgOf = (rows) => rows.reduce((s, r) => s + ((r.unit === 'kg' || !r.unit) ? r.qty : 0), 0);
+  const totalKg = kgOf(rollup);
+  const fmtKg = (n) => Number(n.toFixed(2)).toString();
+  // Selected-only subset (same numbers, just fewer rows).
+  const chosenRows = rollup.filter((r) => chosen.has(r.product));
+  const chosenTotal = chosenRows.reduce((s, r) => s + r.totalCost, 0);
+  const chosenKg = kgOf(chosenRows);
+  const allChosen = rollup.length > 0 && chosenRows.length === rollup.length;
+  const toggleChosen = (product) => {
+    const next = new Set(chosen);
+    if (next.has(product)) next.delete(product); else next.add(product);
+    setChosen(next);
+  };
+  const toggleAllChosen = () => setChosen(allChosen ? new Set() : new Set(rollup.map((r) => r.product)));
+  const exportRows = exportOnlyChosen ? chosenRows : rollup;
+  const exportKg = exportOnlyChosen ? chosenKg : totalKg;
 
   // Save the roll-up as a branded image to send straight to the supplier.
-  const saveRollupImage = async () => {
+  const saveRollupImage = async (onlyChosen = false) => {
+    if (savingRollup) return;
+    setExportOnlyChosen(onlyChosen);
     setSavingRollup(true);
     await new Promise((r) => setTimeout(r, 120)); // let the offscreen node render
     try {
       const label = activeBatch ? batchLabel(activeBatch) : fmtDate(today());
-      await captureDocNode(rollupExportRef.current, `Pickup Roll-up - ${label.replace(/[\\/:*?"<>|]+/g, '')}.png`);
+      await captureDocNode(rollupExportRef.current, `Pickup Roll-up - ${label.replace(/[\\/:*?"<>|]+/g, '')}${onlyChosen ? ' (selected)' : ''}.png`);
     } catch (e) {
       alert('Could not save the roll-up image.');
       console.error(e);
@@ -6075,14 +6098,23 @@ function Pickup({ orders, catalog }) {
             <div className="flex items-center justify-between mb-1">
               <div className="font-display text-lg">Pickup Roll-up</div>
               {rollup.length > 0 && (
-                <Btn variant="accent" size="sm" onClick={saveRollupImage} disabled={savingRollup}>
-                  {savingRollup
-                    ? <><Loader2 size={14} className="inline -mt-0.5 mr-1 animate-spin" /> Saving…</>
-                    : <><ImageIcon size={14} className="inline -mt-0.5 mr-1" /> Save Image</>}
-                </Btn>
+                <div className="flex flex-wrap justify-end gap-1.5">
+                  {chosenRows.length > 0 && (
+                    <Btn variant="accent" size="sm" onClick={() => saveRollupImage(true)} disabled={savingRollup}>
+                      {savingRollup && exportOnlyChosen
+                        ? <><Loader2 size={14} className="inline -mt-0.5 mr-1 animate-spin" /> Saving…</>
+                        : <><ImageIcon size={14} className="inline -mt-0.5 mr-1" /> Save Selected ({chosenRows.length})</>}
+                    </Btn>
+                  )}
+                  <Btn variant={chosenRows.length > 0 ? 'secondary' : 'accent'} size="sm" onClick={() => saveRollupImage(false)} disabled={savingRollup}>
+                    {savingRollup && !exportOnlyChosen
+                      ? <><Loader2 size={14} className="inline -mt-0.5 mr-1 animate-spin" /> Saving…</>
+                      : <><ImageIcon size={14} className="inline -mt-0.5 mr-1" /> {chosenRows.length > 0 ? 'Save All' : 'Save Image'}</>}
+                  </Btn>
+                </div>
               )}
             </div>
-            <div className="text-xs mb-2" style={{ color: THEME.inkSoft }}>Total quantity & cost to pick up from supplier for the selected orders. Tap a row to tick it off at the counter.</div>
+            <div className="text-xs mb-2" style={{ color: THEME.inkSoft }}>Total quantity & cost to pick up from supplier for the selected orders. Tap a row to tick it off at the counter. Use the checkbox to add up only some products.</div>
             {rollup.length > 0 && (
               <div className="mb-4">
                 <div className="flex items-center justify-between text-xs mb-1" style={{ color: THEME.inkSoft }}>
@@ -6101,6 +6133,12 @@ function Pickup({ orders, catalog }) {
                 <table className="w-full text-sm">
                   <thead>
                     <tr style={{ color: THEME.inkSoft, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                      <th className="pb-2 pr-2 w-8 text-left">
+                        <input type="checkbox" checked={allChosen} onChange={toggleAllChosen}
+                          ref={(el) => { if (el) el.indeterminate = chosenRows.length > 0 && !allChosen; }}
+                          aria-label={allChosen ? 'Unselect all products' : 'Select all products'}
+                          style={{ width: 18, height: 18, accentColor: THEME.brand, cursor: 'pointer' }} />
+                      </th>
                       <th className="text-left pb-2 font-medium">Product</th>
                       <th className="text-right pb-2 font-medium">Pickup Qty</th>
                       <th className="text-right pb-2 font-medium">Unit Cost</th>
@@ -6110,26 +6148,49 @@ function Pickup({ orders, catalog }) {
                   <tbody>
                     {rollup.map((r) => {
                       const done = picked.has(r.product);
+                      const isChosen = chosen.has(r.product);
                       return (
                       <tr key={r.product} onClick={() => togglePicked(r.product)} className="cursor-pointer"
-                        style={{ borderTop: `1px solid ${THEME.line}`, opacity: done ? 0.45 : 1 }}>
-                        <td className="py-2.5">
+                        style={{ borderTop: `1px solid ${THEME.line}`, background: isChosen ? THEME.brandBg : 'transparent' }}>
+                        <td className="py-1 pr-2 w-8" onClick={(e) => e.stopPropagation()}>
+                          <label className="flex items-center justify-center cursor-pointer" style={{ width: 32, height: 40 }}>
+                            <input type="checkbox" checked={isChosen} onChange={() => toggleChosen(r.product)}
+                              aria-label={`Select ${r.product}`} style={{ width: 18, height: 18, accentColor: THEME.brand, cursor: 'pointer' }} />
+                          </label>
+                        </td>
+                        <td className="py-2.5" style={{ opacity: done ? 0.45 : 1 }}>
                           <span className="inline-flex items-center gap-2">
-                            <span className="inline-flex items-center justify-center rounded flex-shrink-0"
+                            <span className="inline-flex items-center justify-center rounded-full flex-shrink-0" title={done ? 'Picked' : 'Tap row when picked'}
                               style={{ width: 18, height: 18, border: `1.5px solid ${done ? THEME.green : THEME.line}`, background: done ? THEME.green : 'transparent' }}>
                               {done && <Check size={12} style={{ color: 'white' }} />}
                             </span>
                             <span style={{ textDecoration: done ? 'line-through' : 'none' }}>{r.product}</span>
                           </span>
                         </td>
-                        <td className="py-2.5 text-right font-medium">{r.qty} {r.unit}</td>
-                        <td className="py-2.5 text-right">{peso(r.cost)}</td>
-                        <td className="py-2.5 text-right font-medium">{peso(r.totalCost)}</td>
+                        <td className="py-2.5 text-right font-medium whitespace-nowrap" style={{ opacity: done ? 0.45 : 1 }}>{r.qty} {r.unit}</td>
+                        <td className="py-2.5 text-right" style={{ opacity: done ? 0.45 : 1 }}>{peso(r.cost)}</td>
+                        <td className="py-2.5 text-right font-medium" style={{ opacity: done ? 0.45 : 1 }}>{peso(r.totalCost)}</td>
                       </tr>
                       );
                     })}
                   </tbody>
                 </table>
+                {chosenRows.length > 0 && (
+                  <div className="mt-4 px-4 py-3 rounded-xl flex items-center justify-between gap-3" role="status"
+                    style={{ background: THEME.brandBg, border: `1px solid ${THEME.brand}` }}>
+                    <div className="min-w-0">
+                      <div className="text-xs uppercase tracking-wider font-semibold" style={{ color: THEME.brand }}>Selected only</div>
+                      <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>
+                        {chosenRows.length} of {rollup.length} product{rollup.length !== 1 ? 's' : ''}
+                        {' · '}<button onClick={() => setChosen(new Set())} className="underline" style={{ color: THEME.brand }}>Clear</button>
+                      </div>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <div className="font-display text-2xl" style={{ color: THEME.brand }}>{peso(chosenTotal)}</div>
+                      {chosenKg > 0 && <div className="text-xs mt-0.5" style={{ color: THEME.inkSoft }}>{fmtKg(chosenKg)} kg</div>}
+                    </div>
+                  </div>
+                )}
                 <div className="mt-4 pt-4 flex items-center justify-between" style={{ borderTop: `2px solid ${THEME.brand}` }}>
                   <div>
                     <div className="text-xs uppercase tracking-wider" style={{ color: THEME.inkSoft }}>Total to pay supplier</div>
@@ -6161,6 +6222,11 @@ function Pickup({ orders, catalog }) {
               <div className="text-sm mt-1" style={{ color: THEME.inkSoft }}>
                 {activeBatch ? `Delivery batch: ${batchLabel(activeBatch)}` : `As of ${fmtDate(today())}`} · {selected.size} order{selected.size !== 1 ? 's' : ''}
               </div>
+              {exportOnlyChosen && (
+                <div className="text-xs mt-1 font-semibold uppercase tracking-wider" style={{ color: THEME.brand }}>
+                  Selected items · {exportRows.length} of {rollup.length} products
+                </div>
+              )}
             </div>
             <table className="w-full text-sm">
               <thead>
@@ -6170,7 +6236,7 @@ function Pickup({ orders, catalog }) {
                 </tr>
               </thead>
               <tbody>
-                {rollup.map((r) => (
+                {exportRows.map((r) => (
                   <tr key={r.product} style={{ borderBottom: `1px solid ${THEME.line}` }}>
                     <td className="px-3 py-3">{r.product}</td>
                     <td className="px-3 py-3 text-right font-medium whitespace-nowrap">{r.qty} {r.unit}</td>
@@ -6179,7 +6245,7 @@ function Pickup({ orders, catalog }) {
               </tbody>
             </table>
             <div className="mt-5 pt-4 text-sm" style={{ borderTop: `2px solid ${THEME.brand}`, color: THEME.inkSoft }}>
-              {rollup.length} products{totalKg > 0 ? ` · ${totalKg} kg total` : ''}
+              {exportRows.length} product{exportRows.length !== 1 ? 's' : ''}{exportKg > 0 ? ` · ${fmtKg(exportKg)} kg total` : ''}
             </div>
             <div className="text-center mt-8 pt-5 text-sm" style={{ borderTop: `1px solid ${THEME.line}`, color: THEME.inkSoft }}>
               For supplier use only · M&N Meatshop
