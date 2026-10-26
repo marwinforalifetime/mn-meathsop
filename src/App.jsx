@@ -55,7 +55,7 @@ const PAYMENT_METHODS = ['Cash', 'Gcash', 'Bank Transfer', 'Other'];
 const PAYMENT_STATUSES = ['Paid', 'Unpaid', 'Partial'];
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Cancelled'];
 
-const APP_VERSION = 'v10.3.1 · Pickup select & save';
+const APP_VERSION = 'v10.4 · Supplier copy item select';
 
 const THEME_LIGHT = {
   bg: '#FAF5EE', card: '#FFFEF8', ink: '#2A2624', inkSoft: '#6B5F58',
@@ -5876,6 +5876,18 @@ function PrintableView({ order, mode, onBack }) {
   const docRef = useRef(null);
   const [savingImg, setSavingImg] = useState(false);
   const [exporting, setExporting] = useState(false);
+  // Supplier copy only: items left off this copy (by line index). View-only —
+  // the saved order is never changed, and it resets when you leave the screen.
+  const [hiddenLines, setHiddenLines] = useState(() => new Set());
+  const allItems = order.items || [];
+  const toggleLine = (i) => setHiddenLines((prev) => {
+    const next = new Set(prev);
+    if (next.has(i)) next.delete(i); else next.add(i);
+    return next;
+  });
+  const shownItems = isInvoice ? allItems : allItems.filter((_, i) => !hiddenLines.has(i));
+  const docOrder = isInvoice || hiddenLines.size === 0 ? order : { ...order, items: shownItems };
+  const nothingToShow = !isInvoice && shownItems.length === 0;
 
   const saveAsImage = async () => {
     if (!docRef.current) return;
@@ -5902,20 +5914,55 @@ function PrintableView({ order, mode, onBack }) {
           <ArrowLeft size={16} /> <span className="hidden sm:inline">Back to order</span><span className="sm:hidden">Back</span>
         </button>
         <div className="flex gap-2">
-          <Btn variant="accent" onClick={saveAsImage} disabled={savingImg}>
+          <Btn variant="accent" onClick={saveAsImage} disabled={savingImg || nothingToShow}>
             {savingImg
               ? <><Loader2 size={15} className="inline -mt-0.5 mr-1.5 animate-spin" /> Saving…</>
               : <><ImageIcon size={15} className="inline -mt-0.5 mr-1.5" /> <span className="hidden sm:inline">{isInvoice ? 'Save Order Summary' : 'Save Supplier Copy'}</span><span className="sm:hidden">Save</span></>}
           </Btn>
-          <Btn variant="primary" onClick={() => { setExporting(true); setTimeout(() => { window.print(); setExporting(false); }, 80); }}>
+          <Btn variant="primary" disabled={nothingToShow} onClick={() => { setExporting(true); setTimeout(() => { window.print(); setExporting(false); }, 80); }}>
             <Printer size={15} className="inline -mt-0.5 sm:mr-1.5" /> <span className="hidden sm:inline">Print</span>
           </Btn>
         </div>
       </div>
 
+      {!isInvoice && allItems.length > 1 && (
+        <div className="no-print w-full max-w-3xl mx-auto px-3 sm:px-0" style={{ marginTop: 16 }}>
+          <div className="rounded-xl p-4" style={{ background: THEME.card, border: `1px solid ${THEME.line}` }}>
+            <div className="flex items-start justify-between gap-3 mb-1">
+              <div className="font-medium text-sm" style={{ color: THEME.ink }}>Items on this supplier copy</div>
+              {hiddenLines.size > 0 && (
+                <button onClick={() => setHiddenLines(new Set())} className="text-xs font-semibold flex-shrink-0" style={{ color: THEME.brand }}>Show all</button>
+              )}
+            </div>
+            <div className="text-xs mb-2" style={{ color: THEME.inkSoft }}>
+              Untick anything the supplier doesn't need to prepare. This only changes the copy you save or print; the order itself stays the same.
+            </div>
+            <div className="divide-y" style={{ borderColor: THEME.line }}>
+              {allItems.map((it, i) => {
+                const on = !hiddenLines.has(i);
+                return (
+                  <label key={i} className="flex items-center gap-3 py-2 cursor-pointer" style={{ borderColor: THEME.line, minHeight: 44 }}>
+                    <input type="checkbox" checked={on} onChange={() => toggleLine(i)}
+                      aria-label={`Show ${it.product} on the supplier copy`}
+                      style={{ width: 18, height: 18, accentColor: THEME.brand, flexShrink: 0 }} />
+                    <span className="flex-1 min-w-0 text-sm" style={{ color: on ? THEME.ink : THEME.inkSoft, textDecoration: on ? 'none' : 'line-through' }}>
+                      {it.product}{it.note ? <span className="text-xs" style={{ color: THEME.inkSoft }}> · {it.note}</span> : null}
+                    </span>
+                    <span className="text-sm whitespace-nowrap flex-shrink-0" style={{ color: on ? THEME.ink : THEME.inkSoft }}>{it.qty} {it.unit}</span>
+                  </label>
+                );
+              })}
+            </div>
+            {nothingToShow && (
+              <div className="text-xs mt-2 font-medium" style={{ color: THEME.red }}>Tick at least one item to save or print the supplier copy.</div>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="w-full max-w-3xl mx-auto px-3 sm:px-0" style={{ marginTop: 16, marginBottom: 24 }}>
         <div ref={docRef} className="p-5 sm:p-10" style={{ background: 'white', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
-          <OrderDocument order={order} mode={mode} exporting={exporting} />
+          <OrderDocument order={docOrder} mode={mode} exporting={exporting} />
         </div>
       </div>
     </div>
